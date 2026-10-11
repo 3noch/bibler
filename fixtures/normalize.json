@@ -1,0 +1,232 @@
+{
+  "_doc": [
+    "Shared test vectors for normalize(existing, intent) -> changeset. Consumed by BOTH the TS and Rust suites.",
+    "Intervals are half-open [start, end) over word ordinals. ids are ASCII. Omitted changeset keys mean [].",
+    "Survivor on merge = oldest existing tagging by (created_at, id). Output arrays are sorted by id (by `from` for move_comments).",
+    "A case has either `expected` (a changeset) or `expect_error` (an error code)."
+  ],
+  "cases": [
+    {
+      "name": "paint on empty text creates a tagging using the client-supplied id",
+      "existing": [],
+      "intent": { "kind": "paint", "tag": "t", "start": 10, "end": 20, "new_id": "n1", "now": 1000 },
+      "expected": { "create": [ { "id": "n1", "tag": "t", "start": 10, "end": 20, "created_at": 1000 } ] }
+    },
+    {
+      "name": "paint strictly inside an existing tagging is a no-op",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 15, "end": 25, "new_id": "n1", "now": 1000 },
+      "expected": {}
+    },
+    {
+      "name": "paint exactly over an existing tagging is a no-op",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 10, "end": 40, "new_id": "n1", "now": 1000 },
+      "expected": {}
+    },
+    {
+      "name": "paint overlapping the right edge extends the tagging",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 15, "end": 30, "new_id": "n1", "now": 1000 },
+      "expected": { "update": [ { "id": "a", "start": 10, "end": 30 } ] }
+    },
+    {
+      "name": "paint overlapping the left edge extends the tagging",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 5, "end": 15, "new_id": "n1", "now": 1000 },
+      "expected": { "update": [ { "id": "a", "start": 5, "end": 20 } ] }
+    },
+    {
+      "name": "paint abutting the right edge merges (half-open: end == start)",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 20, "end": 25, "new_id": "n1", "now": 1000 },
+      "expected": { "update": [ { "id": "a", "start": 10, "end": 25 } ] }
+    },
+    {
+      "name": "paint abutting the left edge merges",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 5, "end": 10, "new_id": "n1", "now": 1000 },
+      "expected": { "update": [ { "id": "a", "start": 5, "end": 20 } ] }
+    },
+    {
+      "name": "paint with a one-word gap does NOT merge",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 21, "end": 25, "new_id": "n1", "now": 1000 },
+      "expected": { "create": [ { "id": "n1", "tag": "t", "start": 21, "end": 25, "created_at": 1000 } ] }
+    },
+    {
+      "name": "paint bridging two taggings merges into the older and moves comments",
+      "existing": [
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 },
+        { "id": "b", "tag": "t", "start": 30, "end": 40, "created_at": 200 }
+      ],
+      "intent": { "kind": "paint", "tag": "t", "start": 20, "end": 30, "new_id": "n1", "now": 1000 },
+      "expected": {
+        "update": [ { "id": "a", "start": 10, "end": 40 } ],
+        "delete": [ { "id": "b", "merged_into": "a" } ],
+        "move_comments": [ { "from": "b", "to": "a" } ]
+      }
+    },
+    {
+      "name": "survivor is the OLDER tagging even when it is positioned later",
+      "existing": [
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 200 },
+        { "id": "b", "tag": "t", "start": 30, "end": 40, "created_at": 100 }
+      ],
+      "intent": { "kind": "paint", "tag": "t", "start": 15, "end": 35, "new_id": "n1", "now": 1000 },
+      "expected": {
+        "update": [ { "id": "b", "start": 10, "end": 40 } ],
+        "delete": [ { "id": "a", "merged_into": "b" } ],
+        "move_comments": [ { "from": "a", "to": "b" } ]
+      }
+    },
+    {
+      "name": "created_at tie is broken by id (lexicographic)",
+      "existing": [
+        { "id": "z", "tag": "t", "start": 10, "end": 20, "created_at": 100 },
+        { "id": "m", "tag": "t", "start": 30, "end": 40, "created_at": 100 }
+      ],
+      "intent": { "kind": "paint", "tag": "t", "start": 20, "end": 30, "new_id": "n1", "now": 1000 },
+      "expected": {
+        "update": [ { "id": "m", "start": 10, "end": 40 } ],
+        "delete": [ { "id": "z", "merged_into": "m" } ],
+        "move_comments": [ { "from": "z", "to": "m" } ]
+      }
+    },
+    {
+      "name": "paint swallowing three taggings keeps the oldest, outputs sorted by id",
+      "existing": [
+        { "id": "c", "tag": "t", "start": 50, "end": 60, "created_at": 300 },
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 200 },
+        { "id": "b", "tag": "t", "start": 30, "end": 40, "created_at": 100 }
+      ],
+      "intent": { "kind": "paint", "tag": "t", "start": 5, "end": 70, "new_id": "n1", "now": 1000 },
+      "expected": {
+        "update": [ { "id": "b", "start": 5, "end": 70 } ],
+        "delete": [ { "id": "a", "merged_into": "b" }, { "id": "c", "merged_into": "b" } ],
+        "move_comments": [ { "from": "a", "to": "b" }, { "from": "c", "to": "b" } ]
+      }
+    },
+    {
+      "name": "overlapping taggings of a different tag are ignored",
+      "existing": [ { "id": "x", "tag": "other", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "paint", "tag": "t", "start": 12, "end": 18, "new_id": "n1", "now": 1000 },
+      "expected": { "create": [ { "id": "n1", "tag": "t", "start": 12, "end": 18, "created_at": 1000 } ] }
+    },
+    {
+      "name": "paint with an empty interval is rejected",
+      "existing": [],
+      "intent": { "kind": "paint", "tag": "t", "start": 10, "end": 10, "new_id": "n1", "now": 1000 },
+      "expect_error": "empty_interval"
+    },
+    {
+      "name": "paint with an inverted interval is rejected",
+      "existing": [],
+      "intent": { "kind": "paint", "tag": "t", "start": 20, "end": 10, "new_id": "n1", "now": 1000 },
+      "expect_error": "empty_interval"
+    },
+    {
+      "name": "erase in the middle splits; right piece gets split_id and the original created_at",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 20, "end": 30, "split_id": "s1" },
+      "expected": {
+        "update": [ { "id": "a", "start": 10, "end": 20 } ],
+        "create": [ { "id": "s1", "tag": "t", "start": 30, "end": 40, "created_at": 100 } ]
+      }
+    },
+    {
+      "name": "erase that needs a split but has no split_id is rejected",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 20, "end": 30 },
+      "expect_error": "missing_split_id"
+    },
+    {
+      "name": "erase that does not split ignores a supplied split_id",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 30, "end": 50, "split_id": "s1" },
+      "expected": { "update": [ { "id": "a", "start": 10, "end": 30 } ] }
+    },
+    {
+      "name": "erase trimming the left side",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 0, "end": 20 },
+      "expected": { "update": [ { "id": "a", "start": 20, "end": 40 } ] }
+    },
+    {
+      "name": "erase covering a tagging deletes it (comments stay with the tombstone)",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 5, "end": 50 },
+      "expected": { "delete": [ { "id": "a", "merged_into": null } ] }
+    },
+    {
+      "name": "erase exactly matching a tagging deletes it",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 10, "end": 40 },
+      "expected": { "delete": [ { "id": "a", "merged_into": null } ] }
+    },
+    {
+      "name": "merge outputs are sorted by id, not by age",
+      "existing": [
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 },
+        { "id": "z", "tag": "t", "start": 25, "end": 30, "created_at": 200 },
+        { "id": "m", "tag": "t", "start": 35, "end": 40, "created_at": 300 }
+      ],
+      "intent": { "kind": "paint", "tag": "t", "start": 15, "end": 38, "new_id": "n1", "now": 1000 },
+      "expected": {
+        "update": [ { "id": "a", "start": 10, "end": 40 } ],
+        "delete": [ { "id": "m", "merged_into": "a" }, { "id": "z", "merged_into": "a" } ],
+        "move_comments": [ { "from": "m", "to": "a" }, { "from": "z", "to": "a" } ]
+      }
+    },
+    {
+      "name": "output arrays are sorted by id regardless of input order",
+      "existing": [
+        { "id": "c", "tag": "t", "start": 35, "end": 50, "created_at": 300 },
+        { "id": "b", "tag": "t", "start": 25, "end": 30, "created_at": 200 },
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 }
+      ],
+      "intent": { "kind": "erase", "tag": "t", "start": 15, "end": 40 },
+      "expected": {
+        "update": [ { "id": "a", "start": 10, "end": 15 }, { "id": "c", "start": 40, "end": 50 } ],
+        "delete": [ { "id": "b", "merged_into": null } ]
+      }
+    },
+    {
+      "name": "erase spanning several taggings trims, deletes, and trims",
+      "existing": [
+        { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 },
+        { "id": "b", "tag": "t", "start": 25, "end": 30, "created_at": 200 },
+        { "id": "c", "tag": "t", "start": 35, "end": 50, "created_at": 300 }
+      ],
+      "intent": { "kind": "erase", "tag": "t", "start": 15, "end": 40 },
+      "expected": {
+        "update": [ { "id": "a", "start": 10, "end": 15 }, { "id": "c", "start": 40, "end": 50 } ],
+        "delete": [ { "id": "b", "merged_into": null } ]
+      }
+    },
+    {
+      "name": "erase only abutting a tagging changes nothing",
+      "existing": [ { "id": "a", "tag": "t", "start": 10, "end": 20, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 20, "end": 30 },
+      "expected": {}
+    },
+    {
+      "name": "erase over empty text changes nothing",
+      "existing": [],
+      "intent": { "kind": "erase", "tag": "t", "start": 20, "end": 30 },
+      "expected": {}
+    },
+    {
+      "name": "erase leaves taggings of other tags alone",
+      "existing": [ { "id": "x", "tag": "other", "start": 10, "end": 40, "created_at": 100 } ],
+      "intent": { "kind": "erase", "tag": "t", "start": 20, "end": 30, "split_id": "s1" },
+      "expected": {}
+    },
+    {
+      "name": "erase with an empty interval is rejected",
+      "existing": [],
+      "intent": { "kind": "erase", "tag": "t", "start": 30, "end": 30 },
+      "expect_error": "empty_interval"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+# packages/app: Solid client
+
+(Moved from the root CLAUDE.md.)
+
+## UI layout (redesigned 2026-10-11; the user found the first version wordy and clunky)
+- Text is the whole screen: `Bible.tsx` = continuous scroll over chapters (window of <= 9 rendered, extended at
+  either edge within 1500px, manual scroll anchoring so edge changes never move the visible text; books are loaded
+  BEFORE a chapter is inserted so nothing renders empty). The URL hash follows the chapter under the top bar
+  (`history.replaceState`); typing a ref or `hashchange` navigates. Painting/selection work across chapter and book
+  boundaries (one hit-testing container).
+- Top bar: location field (shows "Psalm 23"; click/`/` to type a ref; at rest it is styled as a field with a
+  magnifier, outline and `/` hint because a bare label didn't read as editable), undo/redo icons, sync dot (text only when
+  offline), `?` help card. No permanent side panel, no help text.
+- Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
+  active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
+  separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user
+  found right-click too subtle; right-click / touch long-press remain as shortcuts).
+- **Palette reorder**: drag wells in the dock (mouse: press + move > 6px; touch: long-press 350ms then move; a plain
+  swipe scrolls the dock; long-press released without moving = edit). Gesture logic lives in `Dock` with pointer
+  capture on the `.wells` container (wells move in the DOM during the drag); the live order is a preview, committed
+  as ONE `palette_set` on release (so undo restores it; number keys follow the order). The click after a drag is
+  suppressed. Keyboard: Alt+←/→ on a focused well.
+- **All tags** (`Tags.tsx`): dock button (always shown; badge = tags not in the palette) opens a list: a
+  "Find or create a tag…" box (focused; an unmatched name shows "+ Create “name”", Enter creates and starts
+  painting with it; Enter on an exact match picks it), places count,
+  pin/unpin (palette max 9; pin disabled with a tooltip when full), pencil = edit. Tapping a row paints with that
+  tag. An active tag that is not in the palette shows as an extra well at the end of the dock (so a tag created when
+  the palette is full is visible); the active well scrolls into view. Panel priority: Nearby > tag editor >
+  All tags > search results (closing the editor returns to the list).
+- Tag sheet: name shown as text + pencil (click to rename; Enter/blur saves, Esc cancels), color circle with a
+  pencil badge over a hidden color input; instances use the shared `ResultList` (snippets by book, stepper, n/p).
+- Location label = the chapter at the middle of the reading area; after a navigation it is pinned to the target's
+  chapter until the user scrolls by hand (wheel/touch/scroll keys/pointer), else a centered target or a very short
+  chapter would name a neighbouring chapter.
+- Tapping tagged words opens the **Nearby** panel (`Nearby.tsx`; right drawer, bottom sheet on phones): the
+  combination of all tags at that word first (`intersectRuns`), then each tag alone, each a window of nearby
+  instances (`nearby`, +-5, "N earlier/later" to expand) shown as text snippets: <= 40 words with up to 10 words of
+  dimmed context clipped to the instance's verse(s); longer ones show 40 words and fade. Clicking one navigates
+  (centered + flashed) and re-centers the panel on it. Pairs of a 3+ tag set are NOT shown yet.
+- **Search** (`Search.tsx`; designed 2026-10-11): the top box is "go to or search". Typing suggests "Go to <ref>"
+  (default on Enter when no chips, so plain navigation is unchanged), "<ref>: search within", matching tags
+  (substring, prefix first) and book groups (`BOOK_GROUPS` in `packages/scripture/src/scopes.ts`: OT/NT, Law,
+  History, Poetry, Prophets (major/minor), Gospels, Pauline/General epistles). Picks become **chips**: tag chips
+  are ANDed (`intersectRuns`, superset semantics), scope chips ORed (`inScope` keeps instances overlapping any
+  scope). Chips instead of a typed grammar because tag names may contain spaces. Scope-only query = "what's tagged
+  here" (tags with counts; clicking adds the tag). Results panel = same sheet as Nearby: grouped by book, 50 per
+  page, stepper ‹ i/N › and `n`/`p`; Nearby sections have "Search all". Backspace removes the last chip; Esc clears.
+  Not yet: query in the URL, highlighting only matching instances in the text, "A&B and nothing else".
+- Testing UI on this machine: run a throwaway server on `127.0.0.1:<port>` (NOT `localhost`: cookies ignore ports,
+  so a test server on localhost overwrites the user's dev session cookie).
+
+## Client (Solid) notes
+- Per-verse components, one `<span data-ord>` per word. Per-verse memo computes **segments**
+  (runs of consecutive words with an identical tag set); only affected verses re-render on a change.
+- Segment styling via CSS custom properties keyed by tag-set. Precedence: exact-match overlap rule > largest matching
+  subset rule > default blend (stripes, or background + underline). Color must not be the only signal.
+- Painting: event delegation + pointer events + `elementFromPoint` (touch works). During a drag only a transient
+  stroke-preview signal changes; commit ONE tagging intent on pointer-up. Selecting nothing = native selection.
+  Also: select text normally, then click a palette tag to apply.
+- Palette: top-N pinned tags, reorderable, number keys switch tags, Esc = none.
+- Overlap segments: a space between two runs that share a tag is tagged too (no white gaps inside a tagging).
+- Spike later: CSS Custom Highlight API as an alternative to per-word spans (spans preferred for hit-testing,
+  comment markers, overlap styles).

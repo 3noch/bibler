@@ -1,0 +1,32 @@
+[package]
+name = "server"
+version = "0.0.0"
+edition.workspace = true
+
+[[bin]]
+name = "bible-tags-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+getrandom = "0.4.3"
+ops = { version = "0.0.0", path = "../ops" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.152"
+sha2 = "0.10"
+tokio = { version = "1.53.2", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["fs", "compression-gzip", "compression-br", "trace", "set-header"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tokio-tungstenite = "0.30.0"
+tower = { version = "0.5.3", features = ["util"] }
+
+[lints]
+workspace = true

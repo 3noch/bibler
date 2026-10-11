@@ -1,0 +1,6 @@
+{
+  "name": "bible-tags",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "engines": { "node": ">=22.18" }
+}

@@ -1,0 +1,278 @@
+//! End-to-end sync over real `WebSocket`s against a live server.
+mod common;
+
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use server::{router, Config};
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tower::ServiceExt;
+
+const T1: u32 = 2 << 24; // first ordinal of the fixture text's only book (100 words)
+
+struct Server {
+    app: axum::Router,
+    addr: std::net::SocketAddr,
+}
+
+async fn start(cfg: &Config) -> Server {
+    let app = router(cfg).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    Server { app, addr }
+}
+
+fn config(name: &str) -> Config {
+    let (_, text_dir, db) = common::fixture(name, 100);
+    Config { static_dir: None, text_dir, db, secure_cookies: false }
+}
+
+/// A new anonymous owner: returns its session cookie (`name=value`).
+async fn session(srv: &Server) -> String {
+    let req = Request::post("/api/session").body(Body::empty()).unwrap();
+    let res = srv.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let cookie = res.headers()[header::SET_COOKIE].to_str().unwrap().to_string();
+    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax") && !cookie.contains("Secure"));
+    cookie.split(';').next().unwrap().to_string()
+}
+
+struct Client(WebSocketStream<MaybeTlsStream<TcpStream>>);
+
+async fn connect(srv: &Server, cookie: Option<&str>, origin: Option<&str>) -> Result<Client, StatusCode> {
+    let mut req = format!("ws://{}/api/sync", srv.addr).into_client_request().unwrap();
+    if let Some(c) = cookie {
+        req.headers_mut().insert(header::COOKIE, c.parse().unwrap());
+    }
+    if let Some(o) = origin {
+        req.headers_mut().insert(header::ORIGIN, o.parse().unwrap());
+    }
+    match tokio_tungstenite::connect_async(req).await {
+        Ok((ws, _)) => Ok(Client(ws)),
+        Err(tokio_tungstenite::tungstenite::Error::Http(res)) => Err(res.status()),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+impl Client {
+    async fn send(&mut self, v: Value) {
+        self.0.send(Message::text(v.to_string())).await.unwrap();
+    }
+    async fn recv(&mut self) -> Value {
+        let msg =
+            tokio::time::timeout(Duration::from_secs(3), self.0.next()).await.expect("timed out").unwrap().unwrap();
+        serde_json::from_str(msg.to_text().unwrap()).unwrap()
+    }
+    /// Nothing else arrives within a short wait.
+    async fn quiet(&mut self) {
+        let r = tokio::time::timeout(Duration::from_millis(200), self.0.next()).await;
+        assert!(r.is_err(), "unexpected message: {r:?}");
+    }
+    async fn hello(&mut self, after: u64) -> Vec<Value> {
+        self.send(json!({"type": "hello", "after": after})).await;
+        let mut changes = vec![];
+        loop {
+            let msg = self.recv().await;
+            match msg["type"].as_str() {
+                Some("change") => changes.push(msg["change"].clone()),
+                Some("ready") => return changes,
+                _ => panic!("unexpected {msg}"),
+            }
+        }
+    }
+    async fn op(&mut self, op: Value) {
+        self.send(json!({"type": "op", "op": op})).await;
+    }
+}
+
+fn tag_create(op_id: &str, id: &str, name: &str) -> Value {
+    json!({"op_id": op_id, "kind": "tag_create", "id": id, "name": name, "color": "#336699", "now": 1})
+}
+
+fn paint(op_id: &str, tag: &str, start: u32, end: u32, new_id: &str) -> Value {
+    json!({"op_id": op_id, "kind": "paint", "tag": tag, "text_id": "t1", "start": start, "end": end, "new_id": new_id, "now": 2})
+}
+
+#[tokio::test]
+async fn ops_fan_out_to_every_socket_of_the_owner_in_seq_order() {
+    let srv = start(&config("fanout")).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    let mut b = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(a.hello(0).await, Vec::<Value>::new());
+    assert_eq!(b.hello(0).await, Vec::<Value>::new());
+
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.op(paint("op2", "T", T1 + 10, T1 + 20, "g1")).await;
+    // `a` gets acks and changes (interleaving between the two kinds is unspecified); `b` gets the changes in order.
+    let mut acks = vec![];
+    let mut seqs = vec![];
+    while acks.len() < 2 || seqs.len() < 2 {
+        let msg = a.recv().await;
+        match msg["type"].as_str().unwrap() {
+            "ack" => acks.push((msg["op_id"].as_str().unwrap().to_string(), msg["seq"].as_u64().unwrap())),
+            "change" => seqs.push(msg["change"]["seq"].as_u64().unwrap()),
+            t => panic!("unexpected {t}"),
+        }
+    }
+    assert_eq!(acks, [("op1".to_string(), 1), ("op2".to_string(), 2)]);
+    assert_eq!(seqs, [1, 2]);
+    for seq in [1, 2] {
+        let msg = b.recv().await;
+        assert_eq!((msg["type"].as_str(), msg["change"]["seq"].as_u64()), (Some("change"), Some(seq)));
+    }
+    b.quiet().await;
+}
+
+#[tokio::test]
+async fn reconnect_replays_exactly_what_was_missed() {
+    let srv = start(&config("replay")).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.op(paint("op2", "T", T1, T1 + 5, "g1")).await;
+    a.op(paint("op3", "T", T1 + 50, T1 + 55, "g2")).await;
+    for _ in 0..6 {
+        a.recv().await; // 3 acks + 3 changes
+    }
+    let mut late = connect(&srv, Some(&cookie), None).await.unwrap();
+    let replay = late.hello(1).await;
+    assert_eq!(replay.iter().map(|c| c["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [2, 3]);
+    assert_eq!(replay[0]["rows"][0]["after"]["id"], "g1");
+    late.quiet().await;
+}
+
+#[tokio::test]
+async fn duplicate_ops_are_acked_once_and_never_reapplied() {
+    let srv = start(&config("dup")).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.recv().await;
+    a.recv().await;
+    a.op(tag_create("op1", "T", "Grace")).await; // resent after a reconnect, say
+    let msg = a.recv().await;
+    assert_eq!((msg["type"].as_str(), msg["seq"].as_u64()), (Some("ack"), Some(1)));
+    a.quiet().await;
+}
+
+#[tokio::test]
+async fn invalid_ops_are_rejected_with_stable_codes() {
+    let srv = start(&config("reject")).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.recv().await;
+    a.recv().await;
+    let cases = [
+        (paint("p1", "nope", T1, T1 + 1, "g1"), "unknown_tag"),
+        (paint("p2", "T", T1 + 99, T1 + 101, "g2"), "bad_text"), // runs past the book's end (a gap)
+        (paint("p3", "T", 0, 5, "g3"), "bad_text"),
+        (
+            json!({"op_id": "p4", "kind": "paint", "tag": "T", "text_id": "other", "start": T1, "end": T1 + 1, "new_id": "g4", "now": 1}),
+            "bad_text",
+        ),
+        (paint("p5", "T", T1, T1 + 1, "has space"), "bad_id"),
+        (tag_create("p6", "U", "grace"), "name_taken"),
+        (json!({"op_id": "p7", "kind": "revert", "target": "nope", "now": 1}), "unknown_op"),
+    ];
+    for (op, code) in cases {
+        let id = op["op_id"].as_str().unwrap().to_string();
+        a.op(op).await;
+        let msg = a.recv().await;
+        assert_eq!(
+            (msg["type"].as_str(), msg["op_id"].as_str(), msg["code"].as_str()),
+            (Some("reject"), Some(id.as_str()), Some(code))
+        );
+    }
+    a.quiet().await;
+}
+
+#[tokio::test]
+async fn owners_are_isolated() {
+    let srv = start(&config("owners")).await;
+    let (alice, bob) = (session(&srv).await, session(&srv).await);
+    assert_ne!(alice, bob);
+    let mut a = connect(&srv, Some(&alice), None).await.unwrap();
+    let mut b = connect(&srv, Some(&bob), None).await.unwrap();
+    a.hello(0).await;
+    b.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.recv().await;
+    a.recv().await;
+    b.quiet().await; // nothing of alice's reaches bob
+    b.op(paint("op1", "T", T1, T1 + 1, "g1")).await; // alice's tag id, alice's op id
+    let msg = b.recv().await;
+    assert_eq!(msg["code"], "unknown_tag");
+    b.op(tag_create("op2", "T", "Mine")).await; // alice's tag id: ids are global
+    let msg = b.recv().await;
+    assert_eq!(msg["code"], "id_exists");
+    b.op(tag_create("op1", "T2", "Mine")).await; // same op_id as alice's is fine: op ids are per owner
+    let msg = b.recv().await;
+    assert_eq!((msg["type"].as_str(), msg["seq"].as_u64()), (Some("ack"), Some(1)));
+}
+
+#[tokio::test]
+async fn revert_round_trips_through_the_server() {
+    let srv = start(&config("revert")).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.op(paint("op2", "T", T1, T1 + 5, "g1")).await;
+    a.op(json!({"op_id": "op3", "kind": "revert", "target": "op2", "now": 9})).await;
+    let mut changes = vec![];
+    while changes.len() < 3 {
+        let msg = a.recv().await;
+        if msg["type"] == "change" {
+            changes.push(msg["change"].clone());
+        }
+    }
+    assert_eq!(changes[2]["kind"], "revert");
+    assert_eq!(changes[2]["rows"][0]["after"]["deleted_at"], 9);
+}
+
+#[tokio::test]
+async fn sync_requires_a_session_and_same_origin() {
+    let srv = start(&config("auth")).await;
+    assert_eq!(connect(&srv, None, None).await.err(), Some(StatusCode::UNAUTHORIZED));
+    assert_eq!(connect(&srv, Some("bt_session=forged"), None).await.err(), Some(StatusCode::UNAUTHORIZED));
+    let cookie = session(&srv).await;
+    assert_eq!(connect(&srv, Some(&cookie), Some("https://evil.example")).await.err(), Some(StatusCode::FORBIDDEN));
+    let same = format!("http://{}", srv.addr);
+    assert!(connect(&srv, Some(&cookie), Some(&same)).await.is_ok());
+    // An existing session is reused, not replaced.
+    let req = Request::post("/api/session").header(header::COOKIE, &cookie).body(Body::empty()).unwrap();
+    let res = srv.app.clone().oneshot(req).await.unwrap();
+    assert!(res.headers().get(header::SET_COOKIE).is_none());
+}
+
+#[tokio::test]
+async fn changes_survive_a_restart() {
+    let cfg = config("restart");
+    let cookie = {
+        let srv = start(&cfg).await;
+        let cookie = session(&srv).await;
+        let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+        a.hello(0).await;
+        a.op(tag_create("op1", "T", "Grace")).await;
+        a.recv().await;
+        a.recv().await;
+        cookie
+    };
+    let srv = start(&cfg).await; // a new store on the same database file
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    let replay = a.hello(0).await;
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0]["rows"][0]["after"]["name"], "Grace");
+}
