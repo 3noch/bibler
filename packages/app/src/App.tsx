@@ -84,6 +84,21 @@ function Main(props: { text: Text; store: TagStore }) {
     setActiveTag(null);
     setEraser(false);
   };
+  // The eraser and a selected tag are exclusive: the eraser erases every tag (Alt-drag with a tag erases just it).
+  const toggleEraser = () => {
+    const on = !eraser();
+    setEraser(on);
+    if (on) setActiveTag(null);
+  };
+  const selectTag = (id: string) => {
+    setActiveTag(id);
+    setEraser(false);
+  };
+  // A selected tag that no longer exists (deleted here or on another device, or its creation undone) is deselected.
+  createEffect(() => {
+    const id = activeTag();
+    if (id && !store.tagById().has(id)) setActiveTag(null);
+  });
   const chooseTag = (tag: Tag, erase = false) => {
     const range = selectionRange();
     if (range) {
@@ -93,7 +108,8 @@ function Main(props: { text: Text; store: TagStore }) {
       return;
     }
     setNear(null);
-    setActiveTag((cur) => (cur === tag.id ? null : tag.id));
+    if (activeTag() === tag.id) setActiveTag(null);
+    else selectTag(tag.id);
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -121,7 +137,7 @@ function Main(props: { text: Text; store: TagStore }) {
       } else if (tagsOpen()) setTagsOpen(false); else if (chips().length) setChips([]);
       else stopPainting();
     } else if (key === "e") {
-      setEraser((x) => !x);
+      toggleEraser();
     } else if (key === "[" && here() > 0) {
       goTo(here() - 1);
     } else if (key === "]" && here() < index.chapters - 1) {
@@ -218,13 +234,11 @@ function Main(props: { text: Text; store: TagStore }) {
           store={store}
           active={activeTag()}
           onChoose={(t) => {
-            setActiveTag(t.id);
-            setEraser(false);
+            selectTag(t.id);
             setTagsOpen(false);
           }}
           onCreated={(t) => {
-            setActiveTag(t.id);
-            setEraser(false);
+            selectTag(t.id);
             setTagsOpen(false);
           }}
           onEdit={setSheetTag}
@@ -241,7 +255,7 @@ function Main(props: { text: Text; store: TagStore }) {
         active={activeTag()}
         eraser={eraser()}
         onChoose={chooseTag}
-        onEraser={() => setEraser((x) => !x)}
+        onEraser={toggleEraser}
         onAllTags={() => {
           setNear(null);
           setSheetTag(null);
@@ -251,7 +265,7 @@ function Main(props: { text: Text; store: TagStore }) {
           setNear(null);
           setSheetTag(id);
         }}
-        onCreated={(t) => setActiveTag(t.id)}
+        onCreated={(t) => selectTag(t.id)}
       />
 
       <Show when={store.tagById().get(sheetTag() ?? "")}>
@@ -262,8 +276,8 @@ function Main(props: { text: Text; store: TagStore }) {
             text={props.text}
             onGo={goInterval}
             onClose={() => setSheetTag(null)}
-            onDeleted={() => {
-              if (activeTag() === tag().id) setActiveTag(null);
+            onDeleted={(id) => {
+              if (activeTag() === id) setActiveTag(null);
               setSheetTag(null);
             }}
           />
@@ -563,7 +577,7 @@ function Well(props: {
   );
 }
 
-function TagSheet(props: { tag: Tag; store: TagStore; text: Text; onGo: (iv: Interval) => void; onClose: () => void; onDeleted: () => void }) {
+function TagSheet(props: { tag: Tag; store: TagStore; text: Text; onGo: (iv: Interval) => void; onClose: () => void; onDeleted: (id: string) => void }) {
   const [confirming, setConfirming] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const instances = createMemo(() => (props.store.byTag().get(props.tag.id) ?? []).map((t) => [t.start, t.end] as Interval));
@@ -635,7 +649,15 @@ function TagSheet(props: { tag: Tag; store: TagStore; text: Text; onGo: (iv: Int
           }
         >
           <span>Delete “{props.tag.name}”?</span>
-          <button class="danger" onClick={() => (props.store.deleteTag(props.tag.id), props.onDeleted())}>
+          <button
+            class="danger"
+            onClick={() => {
+              // Read the id first: deleting unmounts this sheet, after which props.tag is stale.
+              const id = props.tag.id;
+              props.store.deleteTag(id);
+              props.onDeleted(id);
+            }}
+          >
             Delete
           </button>
           <button onClick={() => setConfirming(false)}>Cancel</button>

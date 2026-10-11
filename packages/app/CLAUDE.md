@@ -15,6 +15,11 @@
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user
   found right-click too subtle; right-click / touch long-press remain as shortcuts).
+- Selection rules (`Main` in `App.tsx`): the eraser and a selected tag are exclusive (eraser on deselects the tag
+  and erases ALL tags; picking a tag turns the eraser off; Alt-drag with a tag erases just that tag). All selection
+  goes through `selectTag`/`toggleEraser`. An effect deselects the active tag whenever it stops existing (deleted
+  here or elsewhere, creation undone). Gotcha: deleting from the tag sheet unmounts it, so read ids before calling
+  the store, never after (a stale `<Show>` accessor silently broke this once).
 - **Palette reorder**: drag wells in the dock (mouse: press + move > 6px; touch: long-press 350ms then move; a plain
   swipe scrolls the dock; long-press released without moving = edit). Gesture logic lives in `Dock` with pointer
   capture on the `.wells` container (wells move in the DOM during the drag); the live order is a preview, committed
