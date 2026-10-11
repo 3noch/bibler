@@ -36,6 +36,10 @@ Tag-painting Bible reader. Local-first Solid.js client, Rust server, SQLite.
     make serve           # production-like on http://localhost:8080
     make test            # Rust + TS tests        make check   fmt, clippy, typecheck
 
+    make pages           # offline-only static site (no server) in build/pages/; make pages-serve to preview
+                         # GitHub Pages: .github/workflows/pages.yml deploys it on push to main
+                         # (one-time: repo Settings -> Pages -> Source: GitHub Actions)
+
     nix-build -A app     # production build: result/bin/bible-tags
     result/bin/bible-tags --db /var/lib/bible-tags/db.sqlite --addr 0.0.0.0:443 \
                           --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80

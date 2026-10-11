@@ -6,6 +6,8 @@
 #   make serve   production-like: release server serving the built client + text on http://localhost:8080
 #   make test    all tests (Rust + TS)        make check   fmt, clippy, typecheck
 #   make nix     nix-build default.nix        make clean   remove build outputs
+#   make pages   offline-only static site (no server; data stays in the browser) in build/pages/, as deployed to
+#                GitHub Pages by .github/workflows/pages.yml;   make pages-serve  previews it on :8000
 
 SHELL := bash
 TEXT_ID := kjv-1769-v1
@@ -13,7 +15,7 @@ TEXT := build/text/$(TEXT_ID)/manifest.json
 SERVER_ADDR ?= 127.0.0.1:8080
 NPM := npm
 
-.PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check
+.PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve
 
 dev: $(TEXT) node_modules/.installed
 	@echo "==> http://localhost:5173  (API/text served by the Rust dev server on $(SERVER_ADDR))"
@@ -72,6 +74,18 @@ fmt:
 
 nix:
 	nix-build default.nix -A app
+
+# Static, server-less build: the client in local mode (VITE_SYNC=local, relative paths) + the text artifacts.
+pages: $(TEXT) node_modules/.installed
+	rm -rf build/pages
+	VITE_SYNC=local VITE_BASE=./ $(NPM) run -w @bible-tags/app build -- --outDir ../../build/pages --emptyOutDir
+	mkdir -p build/pages/text
+	cp -R build/text/$(TEXT_ID) build/pages/text/
+	touch build/pages/.nojekyll
+
+pages-serve: pages
+	@echo "==> http://127.0.0.1:8000"
+	python3 -m http.server 8000 --bind 127.0.0.1 --directory build/pages
 
 clean:
 	rm -rf build packages/app/dist result

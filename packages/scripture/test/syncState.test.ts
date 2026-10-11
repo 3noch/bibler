@@ -333,3 +333,19 @@ test("sync: two tabs sharing an outbox never lose or double-apply ops", () => {
   b.adopt(snap.pending);
   assert.deepEqual(b.pending, []);
 });
+
+test("sync: reset replaces the confirmed state and rebases pending ops onto it", () => {
+  const a = client();
+  a.connected(() => {});
+  a.receive({ type: "ready", seq: 0 });
+  a.submit([createTag("T", "Grace")]); // pending, never confirmed by this "server"
+  const other: Row[] = [{ table: "tag", id: "U", name: "Hope", color: "#123456", created_at: 1, updated_at: 1, deleted_at: null }];
+  const ch: Change = { seq: 7, op_id: "elsewhere", kind: "tag_create", rows: [{ before: null, after: other[0]! }] };
+  assert.equal(a.receive({ type: "reset", seq: 7, rows: other, changes: [ch] }), true);
+  assert.equal(a.seq, 7);
+  assert.ok(a.view.tags.get("U"), "the reset state is shown");
+  assert.ok(a.view.tags.get("T"), "the pending op is replayed on top");
+  assert.equal(a.pending.length, 1);
+  a.adopt([{ op_id: "elsewhere", kind: "tag_create", id: "U", name: "Hope", color: "#123456", now: 1 }]);
+  assert.equal(a.pending.length, 1, "ops in the reset's changes count as confirmed");
+});

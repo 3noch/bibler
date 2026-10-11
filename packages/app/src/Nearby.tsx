@@ -5,7 +5,7 @@ import { formatInterval, intersectRuns, nearby, type Interval } from "@bible-tag
 import { loadBook, type Text } from "./text.ts";
 import type { Tag, TagStore } from "./store.ts";
 import { segStyle } from "./Verse.tsx";
-import { CloseIcon, PencilIcon } from "./icons.tsx";
+import { CloseIcon, EraserIcon, PencilIcon } from "./icons.tsx";
 
 /** Show at most this many words of an instance; shorter ones get up to CONTEXT words on each side. */
 const LIMIT = 40;
@@ -23,6 +23,8 @@ interface Props {
   onEdit: (tagId: string) => void;
   /** Open full search results for this tag set. */
   onSearch: (tagIds: string[]) => void;
+  /** Remove one tag's highlight (a whole tagging) without touching overlapping tags. */
+  onUnhighlight: (tagId: string, iv: Interval) => void;
   onClose: () => void;
 }
 
@@ -43,10 +45,10 @@ export function NearbyPanel(props: Props) {
       </div>
       <div class="nearby-body">
         <Show when={combo()}>
-          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
+          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
         </Show>
         <For each={tags()}>
-          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
+          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
         </For>
       </div>
     </aside>
@@ -64,6 +66,7 @@ function Section(props: {
   onGo: (iv: Interval) => void;
   onEdit: (tagId: string) => void;
   onSearch: (tagIds: string[]) => void;
+  onUnhighlight: (tagId: string, iv: Interval) => void;
 }) {
   const [before, setBefore] = createSignal(STEP);
   const [after, setAfter] = createSignal(STEP);
@@ -94,7 +97,15 @@ function Section(props: {
         <For each={view().items}>
           {(iv, i) => (
             <li>
-              <Snippet text={props.text} iv={iv} tags={props.members} current={i() === view().current} onClick={() => props.onGo(iv)} />
+              <Snippet
+                text={props.text}
+                iv={iv}
+                tags={props.members}
+                current={i() === view().current}
+                onClick={() => props.onGo(iv)}
+                // A single tag's instances are its taggings; a combination is not removable as one thing.
+                onUnhighlight={props.members.length === 1 ? () => props.onUnhighlight(props.members[0]!.id, iv) : undefined}
+              />
             </li>
           )}
         </For>
@@ -108,7 +119,15 @@ function Section(props: {
   );
 }
 
-export function Snippet(props: { text: Text; iv: Interval; tags: Tag[]; current: boolean; onClick: () => void }) {
+export function Snippet(props: {
+  text: Text;
+  iv: Interval;
+  tags: Tag[];
+  current: boolean;
+  onClick: () => void;
+  /** Remove this highlight (only for a single tag's tagging, never for a combination). */
+  onUnhighlight?: () => void;
+}) {
   const { index } = props.text;
   const [bt] = createResource(
     () => props.iv,
@@ -130,9 +149,11 @@ export function Snippet(props: { text: Text; iv: Interval; tags: Tag[]; current:
     const to = Math.min(verseEnd, end + ctx);
     return { before: words(from, s), inside: words(s, end), after: words(end, to), cutBefore: from > verseStart, cutAfter: to < verseEnd, long: false };
   });
+  const ref = () => formatInterval(index, props.iv, "short");
   return (
+    <div class="snippet-row" classList={{ current: props.current, removable: !!props.onUnhighlight }}>
     <button class="snippet" classList={{ current: props.current }} onClick={props.onClick} aria-current={props.current ? "location" : undefined}>
-      <span class="snip-ref">{formatInterval(index, props.iv, "short")}</span>
+      <span class="snip-ref">{ref()}</span>
       <Show when={parts()} fallback={<span class="snip-text muted">…</span>}>
         {(p) => (
           <span class="snip-text" classList={{ long: p().long }}>
@@ -154,5 +175,16 @@ export function Snippet(props: { text: Text; iv: Interval; tags: Tag[]; current:
         )}
       </Show>
     </button>
+      <Show when={props.onUnhighlight}>
+        <button
+          class="snip-remove"
+          onClick={() => props.onUnhighlight!()}
+          title={`Remove ${props.tags[0]?.name ?? "tag"} from ${ref()}`}
+          aria-label={`Remove ${props.tags[0]?.name ?? "tag"} from ${ref()}`}
+        >
+          <EraserIcon />
+        </button>
+      </Show>
+    </div>
   );
 }

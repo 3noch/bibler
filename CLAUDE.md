@@ -8,6 +8,10 @@ Stack: **Solid.js** client (plain Vite SPA, no SSR), **Rust** server (axum + tok
 local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep them honest with shared fixtures).
 
 ## Dev workflow (Makefile) and deployment (default.nix)
+- **GitHub Pages (offline-only build)**: `make pages` -> `build/pages/` (client built with `VITE_SYNC=local`,
+  `VITE_BASE=./`, plus the text artifacts and `.nojekyll`); `make pages-serve` previews it. `.github/workflows/pages.yml`
+  builds and deploys it on push to `main` (repo Settings -> Pages -> Source: GitHub Actions). No server there: the
+  app shows a "Local only" badge and help note; data lives only in that browser (see `packages/app/CLAUDE.md`).
 - `default.nix` (independent of the Makefile): `textBuild` + `text` (runCommand), `server`
   (buildRustPackage, `-p server`), `client` (buildNpmPackage, `npmWorkspace = packages/app`; update
   `npmDepsHash` with `prefetch-npm-deps package-lock.json` after lockfile changes), `app` = server wrapped with

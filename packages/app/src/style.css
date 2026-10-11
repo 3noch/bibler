@@ -319,3 +319,31 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .create-icon { display: grid; place-items: center; width: 14px; }
 .create-icon svg { width: 16px; height: 16px; }
 .create-row kbd { color: var(--muted); }
+
+/* ---------------------------------------------------------------- unhighlight from panels */
+.snippet-row { position: relative; }
+.snippet-row.removable .snippet { padding-right: 40px; }
+.snip-remove {
+  position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  color: var(--muted); opacity: 0; transition: opacity 0.12s;
+}
+.snip-remove svg { width: 17px; height: 17px; }
+.snippet-row:hover .snip-remove, .snippet-row:focus-within .snip-remove, .snippet-row.current .snip-remove { opacity: 1; }
+.snip-remove:hover { background: color-mix(in srgb, #c2410c 12%, transparent); color: #c2410c; }
+@media (hover: none) { .snip-remove { opacity: 1; } }
+
+/* ---------------------------------------------------------------- offline-only build */
+.local-badge {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; margin: 0 4px; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 600; color: #8a5a00; background: #fdf0d2; border: 1px solid #f0d08a;
+}
+.local-badge:hover { background: #fbe6b5; }
+@media (prefers-color-scheme: dark) {
+  .local-badge { color: #f3c969; background: #3a2f17; border-color: #6b5420; }
+  .local-badge:hover { background: #47391b; }
+}
+.local-note {
+  margin: 0 28px 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 0.88rem; line-height: 1.45;
+  background: #fdf0d2; color: #5c4200; border: 1px solid #f0d08a;
+}
+@media (prefers-color-scheme: dark) { .local-note { background: #3a2f17; color: #f3dfaa; border-color: #6b5420; } }

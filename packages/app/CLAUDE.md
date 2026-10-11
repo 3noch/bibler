@@ -15,6 +15,10 @@
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user
   found right-click too subtle; right-click / touch long-press remain as shortcuts).
+- **Unhighlight** (the primary way to remove ONE tag from an overlap; the eraser removes everything): every
+  snippet of a single tag's instances (Nearby single-tag sections, tag sheet, single-tag search) has an eraser
+  button that erases exactly that tagging (`store.erase(tag, start, end)`; undoable). Combination rows get none (a
+  combination isn't one tagging). Visible on the current row and on hover; always on touch devices.
 - Selection rules (`Main` in `App.tsx`): the eraser and a selected tag are exclusive (eraser on deselects the tag
   and erases ALL tags; picking a tag turns the eraser off; Alt-drag with a tag erases just that tag). All selection
   goes through `selectTag`/`toggleEraser`. An effect deselects the active tag whenever it stops existing (deleted
@@ -51,6 +55,15 @@
   here" (tags with counts; clicking adds the tag). Results panel = same sheet as Nearby: grouped by book, 50 per
   page, stepper ‹ i/N › and `n`/`p`; Nearby sections have "Search all". Backspace removes the last chip; Esc clears.
   Not yet: query in the URL, highlighting only matching instances in the text, "A&B and nothing else".
+- **Offline-only build** (`VITE_SYNC=local`; GitHub Pages): `localServer.ts` stands in for the sync server inside
+  the browser (same protocol and canonical `effect`), storing the confirmed state (rows + last 1000 changes = undo
+  targets) in localStorage `bible-tags/local-db/v1` under a Web Lock; tabs exchange changes over a BroadcastChannel
+  and a tab that falls behind gets a `reset` (a SyncState message added for this). `BASE_KEY` is not written in this
+  mode. Text/asset paths use Vite's `BASE_URL` ("./" here) so any subpath works; routing is in the hash. The UI shows
+  an amber "Local only" badge instead of the sync dot, and the help card explains that tags are kept only in this
+  browser (not saved elsewhere, not backed up, not synced; clearing site data erases them). Browser-tested under a
+  `/pages/` subpath: no `/api` requests, persistence across reloads, live sync between two tabs, per-tab undo.
+  Limits: localStorage (~5 MB) holds everything; IndexedDB and export/import are the natural next steps.
 - Testing UI on this machine: run a throwaway server on `127.0.0.1:<port>` (NOT `localhost`: cookies ignore ports,
   so a test server on localhost overwrites the user's dev session cookie).
 

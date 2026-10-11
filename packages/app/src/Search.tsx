@@ -185,6 +185,7 @@ export function SearchPanel(props: {
   chips: Chip[];
   onChips: (chips: Chip[]) => void;
   onGo: (iv: Interval) => void;
+  onUnhighlight: (tagId: string, iv: Interval) => void;
   onClose: () => void;
 }) {
   const tags = createMemo(() =>
@@ -227,6 +228,7 @@ export function SearchPanel(props: {
             tags={tags()}
             results={results()}
             onGo={props.onGo}
+            onUnhighlight={tags().length === 1 ? (iv) => props.onUnhighlight(tags()[0]!.id, iv) : undefined}
             empty={`No places where ${tags().length > 1 ? "all of these overlap" : "this tag is used"}${scopeLabel() ? ` in ${scopeLabel()}` : ""}.`}
           />
         </Show>
@@ -256,7 +258,15 @@ export function SearchPanel(props: {
  * Instances as text snippets grouped by book (in text order), 50 at a time, with a ‹ i/N › stepper (also `n`/`p`)
  * that jumps the reader to each one. Used by search results and the tag sheet.
  */
-export function ResultList(props: { text: Text; tags: Tag[]; results: Interval[]; onGo: (iv: Interval) => void; empty: string }) {
+export function ResultList(props: {
+  text: Text;
+  tags: Tag[];
+  results: Interval[];
+  onGo: (iv: Interval) => void;
+  empty: string;
+  /** Offered only when the results are one tag's taggings. */
+  onUnhighlight?: (iv: Interval) => void;
+}) {
   const { index } = props.text;
   const [limit, setLimit] = createSignal(PAGE);
   const [cur, setCur] = createSignal(-1);
@@ -322,7 +332,14 @@ export function ResultList(props: { text: Text; tags: Tag[]; results: Interval[]
                 <For each={g.items}>
                   {(it) => (
                     <li data-i={it.i}>
-                      <Snippet text={props.text} iv={it.iv} tags={props.tags} current={it.i === cur()} onClick={() => open(it.i)} />
+                      <Snippet
+                        text={props.text}
+                        iv={it.iv}
+                        tags={props.tags}
+                        current={it.i === cur()}
+                        onClick={() => open(it.i)}
+                        onUnhighlight={props.onUnhighlight && props.tags.length === 1 ? () => props.onUnhighlight!(it.iv) : undefined}
+                      />
                     </li>
                   )}
                 </For>

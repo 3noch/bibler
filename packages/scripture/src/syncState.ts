@@ -19,7 +19,10 @@ export type ServerMsg =
   | { type: "ready"; seq: number }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** Replace the confirmed state wholesale (the client is behind and the log can't be replayed, e.g. the
+   *  browser-local store in offline-only builds). Pending ops are rebased onto it. */
+  | { type: "reset"; seq: number; rows: Row[]; changes: Change[] };
 
 export interface Snapshot {
   owner: string;
@@ -200,6 +203,14 @@ export class SyncState {
         return true;
       case "error":
         return false;
+      case "reset": {
+        this.base = new MemRows(msg.rows, msg.changes);
+        this.seq = msg.seq;
+        for (const c of msg.changes) this.confirm(c.op_id);
+        this.rebuild();
+        this.changed();
+        return true;
+      }
     }
   }
 

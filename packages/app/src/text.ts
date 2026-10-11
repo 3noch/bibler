@@ -3,7 +3,9 @@
 import { TextIndex, type Interval } from "@bible-tags/scripture";
 
 export const TEXT_ID = "kjv-1769-v1";
-const base = `/text/${TEXT_ID}/`;
+// Vite's base: "/" for server builds (absolute, so the SPA fallback at deep paths still finds the text) and "./"
+// for the static GitHub Pages build (works under any subpath, e.g. /<repo>/).
+const base = `${import.meta.env.BASE_URL}text/${TEXT_ID}/`;
 
 export interface ManifestBook {
   code: string;

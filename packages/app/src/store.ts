@@ -7,12 +7,20 @@
 //   localStorage  OUTBOX_KEY  unconfirmed ops of every tab (union; an op leaves only once confirmed or dropped),
 //                             updated under a Web Lock. Any tab may (re)send any op: ops are idempotent.
 //   sessionStorage UNDO_KEY   this tab's undo/redo history
+//
+// Offline-only builds (VITE_SYNC=local, e.g. GitHub Pages): no server, no account. `localServer.ts` stands in for the
+// sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
+// is not written. Data then lives only in this browser.
 import { createMemo, createSignal } from "solid-js";
 import { SyncState, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
+import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
 
 export type Tag = TagRow;
+
+/** Built without a server (offline-only): see localServer.ts. */
+export const LOCAL_ONLY = import.meta.env.VITE_SYNC === "local";
 
 const BASE_KEY = "bible-tags/base/v1";
 const OUTBOX_KEY = "bible-tags/outbox/v1";
@@ -48,13 +56,20 @@ async function sessionOwner(): Promise<string> {
 export type TagStore = Awaited<ReturnType<typeof openTagStore>>;
 
 export async function openTagStore() {
-  const base = read<Base>(localStorage, BASE_KEY);
+  let base: Base | undefined;
   let owner: string;
-  try {
-    owner = await sessionOwner();
-  } catch (e) {
-    if (!base) throw e; // first run needs the server once
-    owner = base.owner; // offline: keep working on local state
+  if (LOCAL_ONLY) {
+    const db = loadLocalDb();
+    owner = "local";
+    base = { owner, seq: db.seq, rows: db.rows, changes: db.changes, confirmed: db.changes.map((c) => c.op_id) };
+  } else {
+    base = read<Base>(localStorage, BASE_KEY);
+    try {
+      owner = await sessionOwner();
+    } catch (e) {
+      if (!base) throw e; // first run needs the server once
+      owner = base.owner; // offline: keep working on local state
+    }
   }
   const undo = read<Undo>(sessionStorage, UNDO_KEY);
   const snap: Snapshot | undefined = base && {
@@ -82,8 +97,8 @@ export async function openTagStore() {
     withStorageLock(() => {
       try {
         const snap = sync.snapshot();
-        const stored = read<Base>(localStorage, BASE_KEY);
-        if (!stored || stored.owner !== owner || stored.seq <= snap.seq) {
+        const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, BASE_KEY);
+        if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq)) {
           const { owner: o, seq, rows, changes, confirmed } = snap;
           localStorage.setItem(BASE_KEY, JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
         }
@@ -111,7 +126,8 @@ export async function openTagStore() {
   });
 
   importLegacy(sync);
-  connectForever(sync);
+  if (LOCAL_ONLY) connectLocal(sync, notify);
+  else connectForever(sync);
 
   const view = createMemo(() => (version(), sync.view), undefined, { equals: false });
   const tags = createMemo(() => [...view().tags.values()].filter((t) => t.deleted_at === null));
@@ -132,6 +148,7 @@ export async function openTagStore() {
   };
 
   return {
+    mode: LOCAL_ONLY ? ("local" as const) : ("server" as const),
     tags,
     taggings,
     tagById,

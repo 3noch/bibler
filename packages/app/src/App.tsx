@@ -90,6 +90,8 @@ function Main(props: { text: Text; store: TagStore }) {
     setEraser(on);
     if (on) setActiveTag(null);
   };
+  /** Remove one tag from one place (a whole tagging), leaving overlapping tags alone. Undoable like any edit. */
+  const unhighlight = (tagId: string, iv: Interval) => store.erase(tagId, iv[0], iv[1]);
   const selectTag = (id: string) => {
     setActiveTag(id);
     setEraser(false);
@@ -175,14 +177,18 @@ function Main(props: { text: Text; store: TagStore }) {
           <button class="icon" disabled={!store.canRedo()} onClick={() => store.redo()} title="Redo (⇧⌘Z)" aria-label="Redo">
             <RedoIcon />
           </button>
-          <SyncDot store={store} />
+          <Show when={store.mode === "local"} fallback={<SyncDot store={store} />}>
+            <button class="local-badge" onClick={() => setHelp((h) => !h)} title="Your tags are only stored in this browser. Click for details.">
+              <span aria-hidden="true">⚠</span> Local only
+            </button>
+          </Show>
           <button class="icon" classList={{ on: help() }} onClick={() => setHelp((h) => !h)} title="Help" aria-label="Help">
             <HelpIcon />
           </button>
         </div>
       </header>
       <Show when={help()}>
-        <Help onClose={() => setHelp(false)} />
+        <Help local={store.mode === "local"} onClose={() => setHelp(false)} />
       </Show>
 
       <main class="page">
@@ -220,6 +226,7 @@ function Main(props: { text: Text; store: TagStore }) {
               setNear(null);
               setSheetTag(id);
             }}
+            onUnhighlight={unhighlight}
             onSearch={(ids) => {
               setNear(null);
               setChips(ids.map((id): Chip => ({ kind: "tag", id })));
@@ -247,7 +254,7 @@ function Main(props: { text: Text; store: TagStore }) {
       </Show>
 
       <Show when={chips().length > 0 && !near() && !sheetTag() && !tagsOpen()}>
-        <SearchPanel text={props.text} store={store} chips={chips()} onChips={setChips} onGo={goInterval} onClose={() => setChips([])} />
+        <SearchPanel text={props.text} store={store} chips={chips()} onChips={setChips} onGo={goInterval} onUnhighlight={unhighlight} onClose={() => setChips([])} />
       </Show>
 
       <Dock
@@ -275,6 +282,7 @@ function Main(props: { text: Text; store: TagStore }) {
             store={store}
             text={props.text}
             onGo={goInterval}
+            onUnhighlight={unhighlight}
             onClose={() => setSheetTag(null)}
             onDeleted={(id) => {
               if (activeTag() === id) setActiveTag(null);
@@ -293,6 +301,7 @@ function Main(props: { text: Text; store: TagStore }) {
 
 function SyncDot(props: { store: TagStore }) {
   const title = () => {
+    if (props.store.mode === "local") return "Saved in this browser only (no account or sync in this version)";
     const n = props.store.pendingCount();
     switch (props.store.status()) {
       case "synced":
@@ -312,12 +321,19 @@ function SyncDot(props: { store: TagStore }) {
   );
 }
 
-function Help(props: { onClose: () => void }) {
+function Help(props: { local: boolean; onClose: () => void }) {
   return (
     <div class="help" role="dialog" aria-label="Help">
       <button class="icon close" onClick={props.onClose} aria-label="Close">
         <CloseIcon />
       </button>
+      <Show when={props.local}>
+        <div class="local-note">
+          <strong>Local only.</strong> This version has no account and no server. Your tags are kept only in this
+          browser on this device: they are not saved anywhere else, not backed up, and not synced to your other
+          devices. Clearing this site's data (or using a private window) erases them.
+        </div>
+      </Show>
       <dl>
         <dt>Tag</dt>
         <dd>Pick a tag below, then drag over words. On a phone: tap a word, or long-press and drag.</dd>
@@ -577,7 +593,15 @@ function Well(props: {
   );
 }
 
-function TagSheet(props: { tag: Tag; store: TagStore; text: Text; onGo: (iv: Interval) => void; onClose: () => void; onDeleted: (id: string) => void }) {
+function TagSheet(props: {
+  tag: Tag;
+  store: TagStore;
+  text: Text;
+  onGo: (iv: Interval) => void;
+  onUnhighlight: (tagId: string, iv: Interval) => void;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+}) {
   const [confirming, setConfirming] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const instances = createMemo(() => (props.store.byTag().get(props.tag.id) ?? []).map((t) => [t.start, t.end] as Interval));
@@ -637,7 +661,14 @@ function TagSheet(props: { tag: Tag; store: TagStore; text: Text; onGo: (iv: Int
         </button>
       </div>
       <div class="nearby-body">
-        <ResultList text={props.text} tags={[props.tag]} results={instances()} onGo={props.onGo} empty="Not used anywhere yet." />
+        <ResultList
+          text={props.text}
+          tags={[props.tag]}
+          results={instances()}
+          onGo={props.onGo}
+          onUnhighlight={(iv) => props.onUnhighlight(props.tag.id, iv)}
+          empty="Not used anywhere yet."
+        />
       </div>
       <div class="sheet-foot">
         <Show
