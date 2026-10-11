@@ -69,7 +69,7 @@ export function connectLocal(sync: SyncState, onError: (msg: string) => void) {
       rows.applyChange(change);
       const next: LocalDb = {
         seq: change.seq,
-        rows: [...rows.tags.values(), ...rows.taggings.values(), ...(rows.pal ? [rows.pal] : [])],
+        rows: rows.allRows(),
         changes: [...db.changes, change].slice(-KEEP_CHANGES),
       };
       try {

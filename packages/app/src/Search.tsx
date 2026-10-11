@@ -1,10 +1,10 @@
 // Tag search. Query = chips: tag chips are ANDed (places where all of them overlap, superset semantics), scope chips
 // (references or book groups) are ORed and keep the instances overlapping them. With scope chips only, the panel
 // lists what is tagged in that scope. The omnibox also stays the "go to" box: a plain reference + Enter navigates.
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, onMount, Show } from "solid-js";
 import { BOOKS, formatInterval, groupInterval, inScope, intersectRuns, matchGroups, parseRef, type Interval } from "@bible-tags/scripture";
 import type { Text } from "./text.ts";
-import type { Tag, TagStore } from "./store.ts";
+import { intervalOf, type Tag, type TagStore } from "./store.ts";
 import { Snippet } from "./Nearby.tsx";
 import { CloseIcon, NextIcon, PrevIcon, SearchIcon } from "./icons.tsx";
 
@@ -193,7 +193,7 @@ export function SearchPanel(props: {
   );
   const scope = createMemo(() => props.chips.flatMap((c) => (c.kind === "scope" ? c.intervals : [])));
   const scopeLabel = createMemo(() => props.chips.flatMap((c) => (c.kind === "scope" ? [c.label] : [])).join(", "));
-  const listOf = (id: string) => (props.store.byTag().get(id) ?? []).map((t) => [t.start, t.end] as Interval);
+  const listOf = (id: string) => (props.store.byTag().get(id) ?? []).map(intervalOf);
 
   const results = createMemo(() => (tags().length ? inScope(intersectRuns(tags().map((t) => listOf(t.id))), scope()) : []));
   /** Scope-only query: every tag with its number of instances in scope. */
@@ -224,6 +224,7 @@ export function SearchPanel(props: {
       <div class="nearby-body">
         <Show when={tags().length}>
           <ResultList
+            store={props.store}
             text={props.text}
             tags={tags()}
             results={results()}
@@ -259,6 +260,8 @@ export function SearchPanel(props: {
  * that jumps the reader to each one. Used by search results and the tag sheet.
  */
 export function ResultList(props: {
+  /** Given: single-tag results show comment counts, and the current one its comment thread. */
+  store?: TagStore;
   text: Text;
   tags: Tag[];
   results: Interval[];
@@ -270,16 +273,23 @@ export function ResultList(props: {
   const { index } = props.text;
   const [limit, setLimit] = createSignal(PAGE);
   const [cur, setCur] = createSignal(-1);
-  createEffect(on(() => props.results, () => (setLimit(PAGE), setCur(-1))));
+  // Results are rebuilt on every edit (e.g. posting a comment); only a different list resets paging and the cursor.
+  const results = createMemo(() => props.results, undefined, {
+    equals: (a, b) => a.length === b.length && a.every((iv, i) => iv[0] === b[i]![0] && iv[1] === b[i]![1]),
+  });
+  createEffect(on(results, () => (setLimit(PAGE), setCur(-1)), { defer: true }));
+  // Groups by position (<Index>) and snippets by interval (<For>; intervals are stable per tagging, see
+  // intervalOf), so an edit elsewhere doesn't remount rows.
   const groups = createMemo(() => {
-    const out: { book: number; items: { iv: Interval; i: number }[] }[] = [];
-    props.results.slice(0, limit()).forEach((iv, i) => {
+    const out: { book: number; items: Interval[] }[] = [];
+    for (const iv of props.results.slice(0, limit())) {
       const book = index.locate(iv[0]).book;
       if (out[out.length - 1]?.book !== book) out.push({ book, items: [] });
-      out[out.length - 1]!.items.push({ iv, i });
-    });
+      out[out.length - 1]!.items.push(iv);
+    }
     return out;
   });
+  const position = createMemo(() => new Map(props.results.map((iv, i) => [iv, i])));
 
   let list!: HTMLDivElement;
   const open = (i: number) => {
@@ -324,29 +334,33 @@ export function ResultList(props: {
             </button>
           </div>
         </div>
-        <For each={groups()}>
+        <Index each={groups()}>
           {(g) => (
             <section class="result-group">
-              <h3 class="result-book">{BOOKS[g.book]!.name}</h3>
+              <h3 class="result-book">{BOOKS[g().book]!.name}</h3>
               <ol class="snippets">
-                <For each={g.items}>
-                  {(it) => (
-                    <li data-i={it.i}>
-                      <Snippet
-                        text={props.text}
-                        iv={it.iv}
-                        tags={props.tags}
-                        current={it.i === cur()}
-                        onClick={() => open(it.i)}
-                        onUnhighlight={props.onUnhighlight && props.tags.length === 1 ? () => props.onUnhighlight!(it.iv) : undefined}
-                      />
-                    </li>
-                  )}
+                <For each={g().items}>
+                  {(iv) => {
+                    const i = () => position().get(iv) ?? -1;
+                    return (
+                      <li data-i={i()}>
+                        <Snippet
+                          store={props.store}
+                          text={props.text}
+                          iv={iv}
+                          tags={props.tags}
+                          current={i() === cur()}
+                          onClick={() => open(i())}
+                          onUnhighlight={props.onUnhighlight && props.tags.length === 1 ? () => props.onUnhighlight!(iv) : undefined}
+                        />
+                      </li>
+                    );
+                  }}
                 </For>
               </ol>
             </section>
           )}
-        </For>
+        </Index>
         <Show when={limit() < props.results.length}>
           <button class="more" onClick={() => setLimit((n) => n + PAGE)}>
             Show {Math.min(PAGE, props.results.length - limit())} more

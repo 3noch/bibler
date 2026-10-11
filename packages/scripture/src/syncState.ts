@@ -282,7 +282,7 @@ export class SyncState {
     return {
       owner: this.owner,
       seq: this.seq,
-      rows: [...this.base.tags.values(), ...this.base.taggings.values(), ...(this.base.pal ? [this.base.pal] : [])],
+      rows: this.base.allRows(),
       changes: recent.filter((c, i) => i < KEEP_CHANGES || needed.has(c.op_id)),
       pending: this.pending,
       undo: this.undo,

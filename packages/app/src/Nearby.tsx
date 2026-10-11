@@ -3,9 +3,10 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { formatInterval, intersectRuns, nearby, type Interval } from "@bible-tags/scripture";
 import { loadBook, type Text } from "./text.ts";
-import type { Tag, TagStore } from "./store.ts";
+import { intervalOf, type Tag, type TagStore } from "./store.ts";
 import { segStyle } from "./Verse.tsx";
-import { CloseIcon, EraserIcon, PencilIcon } from "./icons.tsx";
+import { CloseIcon, CommentIcon, EraserIcon, PencilIcon } from "./icons.tsx";
+import { CommentThread } from "./Comments.tsx";
 
 /** Show at most this many words of an instance; shorter ones get up to CONTEXT words on each side. */
 const LIMIT = 40;
@@ -32,7 +33,7 @@ export function NearbyPanel(props: Props) {
   const tags = createMemo(() => props.tags.map((id) => props.store.tagById().get(id)).filter((t): t is Tag => !!t));
   const lists = createMemo(() => {
     const byTag = props.store.byTag();
-    return new Map(tags().map((t) => [t.id, (byTag.get(t.id) ?? []).map((x) => [x.start, x.end] as Interval)]));
+    return new Map(tags().map((t) => [t.id, (byTag.get(t.id) ?? []).map(intervalOf)]));
   });
   const combo = createMemo(() => (tags().length > 1 ? intersectRuns(tags().map((t) => lists().get(t.id)!)) : null));
   return (
@@ -45,10 +46,10 @@ export function NearbyPanel(props: Props) {
       </div>
       <div class="nearby-body">
         <Show when={combo()}>
-          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
+          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
         </Show>
         <For each={tags()}>
-          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
+          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
         </For>
       </div>
     </aside>
@@ -61,6 +62,7 @@ function Section(props: {
   members: Tag[];
   instances: Interval[];
   editable?: string;
+  store: TagStore;
   text: Text;
   pos: number;
   onGo: (iv: Interval) => void;
@@ -98,6 +100,7 @@ function Section(props: {
           {(iv, i) => (
             <li>
               <Snippet
+                store={props.store}
                 text={props.text}
                 iv={iv}
                 tags={props.members}
@@ -120,6 +123,8 @@ function Section(props: {
 }
 
 export function Snippet(props: {
+  /** Given: a single tag's snippet shows its tagging's comment count, and the current one its thread. */
+  store?: TagStore;
   text: Text;
   iv: Interval;
   tags: Tag[];
@@ -150,10 +155,23 @@ export function Snippet(props: {
     return { before: words(from, s), inside: words(s, end), after: words(end, to), cutBefore: from > verseStart, cutAfter: to < verseEnd, long: false };
   });
   const ref = () => formatInterval(index, props.iv, "short");
+  const tagging = createMemo(() => (props.store && props.tags.length === 1 ? props.store.taggingAt(props.tags[0]!.id, props.iv[0]) : undefined));
+  const count = () => {
+    const t = tagging();
+    return t ? (props.store!.commentsByTagging().get(t.id)?.length ?? 0) : 0;
+  };
   return (
     <div class="snippet-row" classList={{ current: props.current, removable: !!props.onUnhighlight }}>
     <button class="snippet" classList={{ current: props.current }} onClick={props.onClick} aria-current={props.current ? "location" : undefined}>
-      <span class="snip-ref">{ref()}</span>
+      <span class="snip-ref">
+        {ref()}
+        <Show when={count()}>
+          <span class="snip-count" title={`${count()} comment${count() === 1 ? "" : "s"}`}>
+            <CommentIcon />
+            {count()}
+          </span>
+        </Show>
+      </span>
       <Show when={parts()} fallback={<span class="snip-text muted">…</span>}>
         {(p) => (
           <span class="snip-text" classList={{ long: p().long }}>
@@ -185,6 +203,7 @@ export function Snippet(props: {
           <EraserIcon />
         </button>
       </Show>
+      <Show when={props.current && tagging()}>{(t) => <CommentThread store={props.store!} tagging={t().id} />}</Show>
     </div>
   );
 }

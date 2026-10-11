@@ -15,6 +15,8 @@ export const EraserIcon = () => <Icon><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6
 export const PlusIcon = () => <Icon><path d="M12 5v14M5 12h14" /></Icon>;
 export const CloseIcon = () => <Icon><path d="M18 6 6 18M6 6l12 12" /></Icon>;
 export const PencilIcon = () => <Icon><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></Icon>;
+export const CommentIcon = () => <Icon><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12Z" /></Icon>;
+export const TrashIcon = () => <Icon><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></Icon>;
 export const PrevIcon = () => <Icon><path d="m15 18-6-6 6-6" /></Icon>;
 export const NextIcon = () => <Icon><path d="m9 18 6-6-6-6" /></Icon>;
 export const HelpIcon = () => <Icon><circle cx="12" cy="12" r="9.5" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></Icon>;

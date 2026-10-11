@@ -41,7 +41,8 @@ pub struct AppState {
 
 const COOKIE: &str = "bt_session";
 const REPLAY_PAGE: usize = 500;
-const MAX_FRAME: usize = 64 * 1024;
+/// Incoming frames: an op is small, except a comment (<= 10,000 code points, up to 4 bytes each, plus JSON escaping).
+const MAX_FRAME: usize = 128 * 1024;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -252,7 +253,12 @@ fn check_op(st: &AppState, op: &Op) -> Result<(), (&'static str, String)> {
         Intent::Erase { tag, split_id, .. } => {
             [Some(tag.as_str()), split_id.as_deref()].into_iter().flatten().collect()
         }
-        Intent::TagCreate { id, .. } | Intent::TagUpdate { id, .. } | Intent::TagDelete { id, .. } => vec![id],
+        Intent::TagCreate { id, .. }
+        | Intent::TagUpdate { id, .. }
+        | Intent::TagDelete { id, .. }
+        | Intent::CommentUpdate { id, .. }
+        | Intent::CommentDelete { id, .. } => vec![id],
+        Intent::CommentCreate { id, tagging, .. } => vec![id, tagging],
         Intent::PaletteSet { tags, .. } => tags.iter().map(String::as_str).collect(),
         Intent::Revert { target, .. } => vec![target],
     };

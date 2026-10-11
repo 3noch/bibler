@@ -347,3 +347,28 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   background: #fdf0d2; color: #5c4200; border: 1px solid #f0d08a;
 }
 @media (prefers-color-scheme: dark) { .local-note { background: #3a2f17; color: #f3dfaa; border-color: #6b5420; } }
+
+/* ---------------------------------------------------------------- comments */
+.snip-count { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; font-weight: 600; color: var(--accent); }
+.snip-count svg { width: 13px; height: 13px; }
+.comments { margin: 2px 6px 10px 12px; padding-left: 12px; border-left: 2px solid var(--line); font-family: var(--sans); }
+.comment-list { list-style: none; margin: 0; padding: 0; }
+.comment { padding: 6px 0; }
+.comment + .comment { border-top: 1px solid var(--line); }
+.comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; line-height: 1.45; }
+.comment-meta { display: flex; align-items: center; justify-content: space-between; min-height: 24px; font-size: 0.75rem; color: var(--muted); }
+.comment-tools { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.comment-tools .icon svg { width: 15px; height: 15px; }
+.comment:hover .comment-tools, .comment:focus-within .comment-tools { opacity: 1; }
+@media (hover: none) { .comment-tools { opacity: 1; } }
+.comment-editor { padding-top: 6px; }
+.comment-editor textarea {
+  display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; min-height: 34px; max-height: 40vh;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink);
+  font: 0.9rem/1.4 var(--sans);
+}
+.comment-editor textarea:focus { outline: none; border-color: var(--accent); }
+.comment-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 6px; }
+button.primary { border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
+button.primary.small { padding: 4px 12px; font-size: 0.8rem; }
+button.primary:disabled { opacity: 0.45; cursor: default; }

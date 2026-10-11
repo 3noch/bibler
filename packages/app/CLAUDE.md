@@ -64,6 +64,16 @@
   browser (not saved elsewhere, not backed up, not synced; clearing site data erases them). Browser-tested under a
   `/pages/` subpath: no `/api` requests, persistence across reloads, live sync between two tabs, per-tab undo.
   Limits: localStorage (~5 MB) holds everything; IndexedDB and export/import are the natural next steps.
+- **Comments** (`Comments.tsx`): a single tag's snippets (Nearby single-tag sections, tag sheet, single-tag search)
+  show a speech-bubble count; the **current** one shows its thread (oldest first, "edited", hover pencil/trash, always
+  visible on touch) and an "Add a comment…" box (never autofocused; Enter = newline, ⌘/Ctrl+Enter or Post posts; Esc
+  cancels an edit). Combination rows have no comments. `store.commentsByTagging` follows merge chains. Browser-tested:
+  post (focus stays), multi-line, edit, delete, undo of each, merge shows all comments on the survivor and undo splits
+  them back, local-only build persists them. Not yet: a marker in the text itself, comments in the Nearby combo rows.
+- **Keep list identity stable** (found while building comments): every edit rebuilds the view, so lists of fresh
+  `[start, end]` arrays made Solid's `<For>` remount every snippet (a comment box lost focus mid-post). Use
+  `intervalOf(tagging)` (one array per row object) for interval lists; `ResultList` groups with `<Index>`, keys
+  snippets by interval, and resets its cursor only when the places actually change.
 - **PWA** (installable, offline reading; both builds): `public/manifest.webmanifest` + icons (`icon.svg` drawn by
   hand, PNGs rasterized from it with `rsvg-convert`; the maskable/Apple ones are full-bleed with the art at 80%).
   `src/sw.js` is a template: the `serviceWorker()` plugin in `vite.config.ts` fills in this build's file list,

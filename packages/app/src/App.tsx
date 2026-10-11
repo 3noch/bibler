@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { BOOKS, parseRef, type Interval } from "@bible-tags/scripture";
 import { loadText, type Text } from "./text.ts";
-import { openTagStore, type Tag, type TagStore } from "./store.ts";
+import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
@@ -604,7 +604,7 @@ function TagSheet(props: {
 }) {
   const [confirming, setConfirming] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
-  const instances = createMemo(() => (props.store.byTag().get(props.tag.id) ?? []).map((t) => [t.start, t.end] as Interval));
+  const instances = createMemo(() => (props.store.byTag().get(props.tag.id) ?? []).map(intervalOf));
   let cancelled = false;
   const saveName = (value: string) => {
     if (!cancelled && value.trim() && value.trim() !== props.tag.name) props.store.updateTag(props.tag.id, { name: value });
@@ -662,6 +662,7 @@ function TagSheet(props: {
       </div>
       <div class="nearby-body">
         <ResultList
+          store={props.store}
           text={props.text}
           tags={[props.tag]}
           results={instances()}

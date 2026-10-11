@@ -1,6 +1,6 @@
 #![allow(dead_code)] // each test binary uses a different subset
 
-use ops::{Change, PaletteRow, Row, RowSource, TagRow, TaggingRow};
+use ops::{Change, CommentRow, PaletteRow, Row, RowSource, TagRow, TaggingRow};
 use serde::Deserialize;
 
 /// In-memory rows for one owner; the reference semantics every `RowSource` must match.
@@ -26,6 +26,12 @@ impl RowSource for Mem {
     fn palette(&self) -> Option<PaletteRow> {
         self.rows.iter().find_map(|r| match r {
             Row::Palette(p) => Some(p.clone()),
+            _ => None,
+        })
+    }
+    fn comment(&self, id: &str) -> Option<CommentRow> {
+        self.rows.iter().find_map(|r| match r {
+            Row::Comment(c) if c.id == id => Some(c.clone()),
             _ => None,
         })
     }

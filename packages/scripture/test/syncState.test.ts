@@ -90,7 +90,7 @@ const client = () => new SyncState("owner", newId, now);
 
 /** All rows, sorted, for comparing a client's view with the server. */
 const dump = (m: MemRows): Row[] =>
-  [...m.tags.values(), ...m.taggings.values(), ...(m.pal ? [m.pal] : [])].sort((a, b) => {
+  m.allRows().sort((a, b) => {
     const ka = a.table + (a.table === "palette" ? "" : a.id);
     const kb = b.table + (b.table === "palette" ? "" : b.id);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
@@ -250,14 +250,26 @@ test("sync: random multi-device interleavings always converge", () => {
         const tags = [...c.view.tags.values()].filter((t) => t.deleted_at === null).map((t) => t.id);
         const tag = tags[int(tags.length)];
         const s = int(50);
-        const intent: OpIntent =
-          !tag || int(8) === 0
+        // Comments: on a tagging this client sees (another client may have merged or erased it meanwhile).
+        const taggings = [...c.view.taggings.values()].filter((t) => t.deleted_at === null).map((t) => t.id);
+        const comments = [...c.view.comments.values()].filter((x) => x.deleted_at === null).map((x) => x.id);
+        const commentOp = (): OpIntent | null => {
+          if (comments.length && int(2)) {
+            const id = comments[int(comments.length)]!;
+            return int(2) ? { kind: "comment_update", id, body: `edit ${step}`, now: step } : { kind: "comment_delete", id, now: step };
+          }
+          if (!taggings.length) return null;
+          return { kind: "comment_create", id: `c${seed}_${step}`, tagging: taggings[int(taggings.length)]!, body: `note ${step}`, now: step };
+        };
+        const comment = int(4) === 0 ? commentOp() : null;
+        const intent: OpIntent = comment ??
+          (!tag || int(8) === 0
             ? createTag(`t${seed}_${step}`, `n${int(4)}`)
             : int(10) === 0
               ? { kind: "tag_delete", id: tag, now: step }
               : int(3) === 0
                 ? { kind: "erase", tag, text_id: K, start: s, end: s + 1 + int(8), split_id: `s${seed}_${step}`, now: step }
-                : paint(tag, s, s + 1 + int(8), `p${seed}_${step}`);
+                : paint(tag, s, s + 1 + int(8), `p${seed}_${step}`));
         c.submit([intent]);
       } else if (roll < 4) {
         if (int(2)) c.undoStep();
@@ -348,4 +360,18 @@ test("sync: reset replaces the confirmed state and rebases pending ops onto it",
   assert.equal(a.pending.length, 1);
   a.adopt([{ op_id: "elsewhere", kind: "tag_create", id: "U", name: "Hope", color: "#123456", now: 1 }]);
   assert.equal(a.pending.length, 1, "ops in the reset's changes count as confirmed");
+});
+
+test("sync: confirmed comments survive a snapshot (the persisted base includes every table)", () => {
+  const server = new FakeServer();
+  const a = client();
+  server.connect(a).flush();
+  a.submit([createTag("T", "Grace")]);
+  a.submit([paint("T", 3, 9, "g1")]);
+  a.submit([{ kind: "comment_create", id: "c1", tagging: "g1", body: "Note", now: 1 }]);
+  server.connect(a).flush();
+  assert.equal(a.pending.length, 0, "all confirmed");
+  const snap = JSON.parse(JSON.stringify(a.snapshot()));
+  const reloaded = new SyncState("owner", newId, now, snap);
+  assert.equal(reloaded.view.comments.get("c1")?.body, "Note");
 });

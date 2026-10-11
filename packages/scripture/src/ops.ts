@@ -1,12 +1,15 @@
 /**
  * ops: what a client op does to a user's rows. TS twin of `crates/ops` (the server's canonical version); both are
  * verified against fixtures/ops.json. The client runs this optimistically; the server's result is authoritative.
- * See the Rust crate docs for the model (row {before, after} changes, soft deletes, revert = undo/redo).
+ * See the Rust crate docs for the model (row {before, after} changes, soft deletes, revert = undo/redo, comments
+ * following `merged_into` to the surviving tagging).
  */
 import { normalize, NormalizeError, type Intent as NormalizeIntent, type Tagging } from "./normalize.ts";
 
 export const MAX_PALETTE = 9;
 export const MAX_TAG_NAME = 100;
+export const MAX_COMMENT = 10_000;
+const MAX_CHAIN = 10_000;
 export const PALETTE_ID = "palette";
 
 export interface TagRow {
@@ -37,7 +40,18 @@ export interface PaletteRow {
   updated_at: number;
 }
 
-export type Row = TagRow | TaggingRow | PaletteRow;
+/** A comment on a tagging (shown on the live end of that tagging's `merged_into` chain). */
+export interface CommentRow {
+  table: "comment";
+  id: string;
+  tagging: string;
+  body: string;
+  created_at: number;
+  edited_at: number | null;
+  deleted_at: number | null;
+}
+
+export type Row = TagRow | TaggingRow | PaletteRow | CommentRow;
 
 export interface RowChange {
   /** null = the row did not exist. */
@@ -50,7 +64,7 @@ export interface Change {
   seq: number;
   op_id: string;
   kind: OpIntent["kind"];
-  /** Sorted by (table: tag < tagging < palette, id). */
+  /** Sorted by (table: tag < tagging < palette < comment, id). */
   rows: RowChange[];
 }
 
@@ -61,7 +75,10 @@ export type OpIntent =
   | { kind: "tag_update"; id: string; name?: string | null; color?: string | null; now: number }
   | { kind: "tag_delete"; id: string; now: number }
   | { kind: "palette_set"; tags: string[]; now: number }
-  | { kind: "revert"; target: string; now: number };
+  | { kind: "revert"; target: string; now: number }
+  | { kind: "comment_create"; id: string; tagging: string; body: string; now: number }
+  | { kind: "comment_update"; id: string; body: string; now: number }
+  | { kind: "comment_delete"; id: string; now: number };
 
 export type Op = { op_id: string } & OpIntent;
 
@@ -76,7 +93,12 @@ export type OpErrorCode =
   | "bad_color"
   | "bad_palette"
   | "unknown_op"
-  | "conflict";
+  | "conflict"
+  | "unknown_tagging"
+  | "tagging_deleted"
+  | "unknown_comment"
+  | "comment_deleted"
+  | "bad_body";
 
 export class OpError extends Error {
   readonly code: OpErrorCode;
@@ -92,6 +114,7 @@ export interface RowSource {
   tag(id: string): TagRow | undefined;
   tagging(id: string): TaggingRow | undefined;
   palette(): PaletteRow | undefined;
+  comment(id: string): CommentRow | undefined;
   /** Live tag whose name equals `name` case-insensitively. */
   liveTagNamed(name: string): TagRow | undefined;
   /** Live taggings of `tag` in `textId` overlapping or abutting [start, end]. */
@@ -100,7 +123,7 @@ export interface RowSource {
   change(opId: string): Change | undefined;
 }
 
-const TABLE_ORDER = { tag: 0, tagging: 1, palette: 2 } as const;
+const TABLE_ORDER = { tag: 0, tagging: 1, palette: 2, comment: 3 } as const;
 export const rowKey = (r: Row): string => (r.table === "palette" ? "palette:" : `${r.table}:${r.id}`);
 const cmpKey = (a: Row, b: Row) => {
   const t = TABLE_ORDER[a.table] - TABLE_ORDER[b.table];
@@ -122,6 +145,8 @@ export function tombstone(r: Row, now: number): Row {
       return { ...r, deleted_at: now };
     case "palette":
       return { table: "palette", tags: [], updated_at: now };
+    case "comment":
+      return { ...r, deleted_at: now };
   }
 }
 
@@ -133,7 +158,36 @@ function current(src: RowSource, r: Row): Row | undefined {
       return src.tagging(r.id);
     case "palette":
       return src.palette();
+    case "comment":
+      return src.comment(r.id);
   }
+}
+
+/** The live tagging a comment on `id` shows on: `id` itself, or the survivor its merges led to. Throws
+ *  `unknown_tagging` if `id` does not exist, `tagging_deleted` if the chain ends in a deletion (not a merge). */
+export function resolveTagging(src: Pick<RowSource, "tagging">, id: string): TaggingRow {
+  let t = src.tagging(id);
+  if (!t) throw new OpError("unknown_tagging");
+  for (let i = 0; i < MAX_CHAIN; i++) {
+    if (t.deleted_at === null) return t;
+    if (t.merged_into === null) throw new OpError("tagging_deleted");
+    t = src.tagging(t.merged_into);
+    if (!t) throw new OpError("unknown_tagging");
+  }
+  throw new OpError("tagging_deleted");
+}
+
+function liveComment(src: RowSource, id: string): CommentRow {
+  const c = src.comment(id);
+  if (!c) throw new OpError("unknown_comment");
+  if (c.deleted_at !== null) throw new OpError("comment_deleted");
+  return c;
+}
+
+function checkBody(body: string): string {
+  const t = trim(body);
+  if (t.length === 0 || [...t].length > MAX_COMMENT) throw new OpError("bad_body");
+  return t;
 }
 
 function liveTag(src: RowSource, id: string): TagRow {
@@ -215,6 +269,25 @@ export function effect(src: RowSource, op: Op): Change {
     case "revert":
       rows = revertRows(src, op.target, op.now);
       break;
+    case "comment_create": {
+      const body = checkBody(op.body);
+      if (src.comment(op.id)) throw new OpError("id_exists");
+      // Stored on the live survivor (a client may still be looking at a tagging merged away since).
+      const tagging = resolveTagging(src, op.tagging).id;
+      rows = [{ before: null, after: { table: "comment", id: op.id, tagging, body, created_at: op.now, edited_at: null, deleted_at: null } }];
+      break;
+    }
+    case "comment_update": {
+      const before = liveComment(src, op.id);
+      const body = checkBody(op.body);
+      rows = body === before.body ? [] : [{ before, after: { ...before, body, edited_at: op.now } }];
+      break;
+    }
+    case "comment_delete": {
+      const before = liveComment(src, op.id);
+      rows = [{ before, after: { ...before, deleted_at: op.now } }];
+      break;
+    }
   }
   return { seq: 0, op_id: op.op_id, kind: op.kind, rows: rows.sort((a, b) => cmpKey(a.after, b.after)) };
 }
@@ -329,6 +402,7 @@ export class MemRows implements RowSource {
   tags = new Map<string, TagRow>();
   taggings = new Map<string, TaggingRow>();
   pal: PaletteRow | undefined;
+  comments = new Map<string, CommentRow>();
   changes = new Map<string, Change>();
 
   constructor(rows: Row[] = [], changes: Change[] = []) {
@@ -341,6 +415,7 @@ export class MemRows implements RowSource {
     m.tags = new Map(this.tags);
     m.taggings = new Map(this.taggings);
     m.pal = this.pal;
+    m.comments = new Map(this.comments);
     m.changes = new Map(this.changes);
     return m;
   }
@@ -348,7 +423,13 @@ export class MemRows implements RowSource {
   put(r: Row) {
     if (r.table === "tag") this.tags.set(r.id, r);
     else if (r.table === "tagging") this.taggings.set(r.id, r);
+    else if (r.table === "comment") this.comments.set(r.id, r);
     else this.pal = r;
+  }
+
+  /** Every row (live and deleted), e.g. for persisting. */
+  allRows(): Row[] {
+    return [...this.tags.values(), ...this.taggings.values(), ...(this.pal ? [this.pal] : []), ...this.comments.values()];
   }
 
   /** Upsert a change's `after` rows and remember it (as a revert target). */
@@ -365,6 +446,9 @@ export class MemRows implements RowSource {
   }
   palette() {
     return this.pal;
+  }
+  comment(id: string) {
+    return this.comments.get(id);
   }
   liveTagNamed(name: string) {
     const n = name.toLowerCase();

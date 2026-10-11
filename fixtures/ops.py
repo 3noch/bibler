@@ -20,6 +20,11 @@ def tg(id, t, s, e, c, d=None, m=None, text=K):
             "created_at": c, "deleted_at": d, "merged_into": m}
 
 
+def cm(id, tagging, body, c, e=None, d=None):
+    return {"table": "comment", "id": id, "tagging": tagging, "body": body, "created_at": c, "edited_at": e,
+            "deleted_at": d}
+
+
 def pal(tags, u=1):
     return {"table": "palette", "tags": tags, "updated_at": u}
 
@@ -29,7 +34,7 @@ def rc(before, after):
 
 
 def key(row):
-    return (["tag", "tagging", "palette"].index(row["table"]), row.get("id", "palette"))
+    return (["tag", "tagging", "palette", "comment"].index(row["table"]), row.get("id", "palette"))
 
 
 def apply(rows, change):
@@ -215,12 +220,85 @@ case("revert of a revert redoes", revert("u1", now=3000),
      [rc(a1, tg("a1", "A", 10, 40, 100)), rc(a2, tg("a2", "A", 30, 40, 200, d=1000, m="a1"))],
      state=apply(S1, undo), changes=[merge, undo])
 
+# ---- comments (on taggings; a merged-away tagging's comments show on its survivor via merged_into)
+a3 = tg("a3", "A", 60, 70, 300, d=900, m="a1")   # merged into a1
+a5 = tg("a5", "A", 62, 64, 350, d=950, m="a3")   # merged into a3, so (transitively) into a1
+a4 = tg("a4", "A", 80, 90, 400, d=900)           # plain delete
+k1 = cm("k1", "a1", "Hello", 500)
+kx = cm("kx", "a1", "Gone", 500, d=600)
+SC = S0 + [a3, a4, a5, k1, kx]
+
+
+def ccreate(id, tagging, body, now=1000, op="op"):
+    return {"op_id": op, "kind": "comment_create", "id": id, "tagging": tagging, "body": body, "now": now}
+
+
+def cupdate(id, body, now=1000):
+    return {"op_id": "op", "kind": "comment_update", "id": id, "body": body, "now": now}
+
+
+def cdelete(id, now=1000):
+    return {"op_id": "op", "kind": "comment_delete", "id": id, "now": now}
+
+
+case("comment_create on a live tagging", ccreate("n", "a1", "Note"), [rc(None, cm("n", "a1", "Note", 1000))], state=SC)
+case("comment_create trims the body (keeps inner newlines)", ccreate("n", "a1", "\n  Line 1\nLine 2  \n"),
+     [rc(None, cm("n", "a1", "Line 1\nLine 2", 1000))], state=SC)
+case("comment_create with a blank body", ccreate("n", "a1", " \n\t "), error="bad_body", state=SC)
+case("comment_create with a too-long body", ccreate("n", "a1", "x" * 10001), error="bad_body", state=SC)
+case("comment_create counts code points (6000 astral chars = 12000 UTF-16 units is fine)",
+     ccreate("n", "a1", "\U0001D504" * 6000), [rc(None, cm("n", "a1", "\U0001D504" * 6000, 1000))], state=SC)
+case("comment_create on a merged-away tagging is stored on the survivor", ccreate("n", "a3", "Note"),
+     [rc(None, cm("n", "a1", "Note", 1000))], state=SC)
+case("comment_create follows a chain of merges", ccreate("n", "a5", "Note"),
+     [rc(None, cm("n", "a1", "Note", 1000))], state=SC)
+case("comment_create on a deleted tagging", ccreate("n", "a4", "Note"), error="tagging_deleted", state=SC)
+case("comment_create on an unknown tagging", ccreate("n", "zz", "Note"), error="unknown_tagging", state=SC)
+case("comment_create reusing a comment id (even a deleted one)", ccreate("kx", "a1", "Note"), error="id_exists",
+     state=SC)
+case("comment_update edits the body and sets edited_at", cupdate("k1", " Hi "),
+     [rc(k1, cm("k1", "a1", "Hi", 500, e=1000))], state=SC)
+case("comment_update to the same body (after trimming) changes nothing", cupdate("k1", "Hello  "), [], state=SC)
+case("comment_update to a blank body", cupdate("k1", "  "), error="bad_body", state=SC)
+case("comment_update of a deleted comment", cupdate("kx", "Back"), error="comment_deleted", state=SC)
+case("comment_update of an unknown comment", cupdate("zz", "Hi"), error="unknown_comment", state=SC)
+case("comment_delete tombstones the comment", cdelete("k1"), [rc(k1, cm("k1", "a1", "Hello", 500, d=1000))], state=SC)
+case("comment_delete of a deleted comment", cdelete("kx"), error="comment_deleted", state=SC)
+case("paint that merges never touches comments (they follow merged_into)", paint("A", 18, 32),
+     [rc(a1, tg("a1", "A", 10, 40, 100)), rc(a2, tg("a2", "A", 30, 40, 200, d=1000, m="a1"))],
+     state=SC + [cm("k2", "a2", "On a2", 500)])
+case("erase that deletes a tagging leaves its comments on the tombstone", erase("A", 5, 25),
+     [rc(a1, tg("a1", "A", 10, 20, 100, d=1000))], state=SC)
+case("tag_delete leaves comments alone",
+     {"op_id": "op", "kind": "tag_delete", "id": "A", "now": 1000},
+     [rc(A, tag("A", "Alpha", c=1, u=1000, d=1000)),
+      rc(a1, tg("a1", "A", 10, 20, 100, d=1000)),
+      rc(a2, tg("a2", "A", 30, 40, 200, d=1000)),
+      rc(P0, pal(["B"], 1000))], state=SC)
+
+kmade = ch(1, "k", "comment_create", [rc(None, cm("n", "a1", "Note", 1000))])
+case("revert of comment_create tombstones it", revert("k"),
+     [rc(cm("n", "a1", "Note", 1000), cm("n", "a1", "Note", 1000, d=2000))],
+     state=apply(SC, kmade), changes=[kmade])
+case("revert of comment_create is refused once the comment was edited", revert("k"), error="conflict",
+     state=replace(apply(SC, kmade), cm("n", "a1", "Edited", 1000, e=1500)), changes=[kmade])
+kdel = ch(1, "kd", "comment_delete", [rc(k1, cm("k1", "a1", "Hello", 500, d=1000))])
+case("revert of comment_delete restores it", revert("kd"),
+     [rc(cm("k1", "a1", "Hello", 500, d=1000), k1)], state=apply(SC, kdel), changes=[kdel])
+kedit = ch(1, "ke", "comment_update", [rc(k1, cm("k1", "a1", "Hi", 500, e=1000))])
+case("revert of comment_update restores the old body", revert("ke"),
+     [rc(cm("k1", "a1", "Hi", 500, e=1000), k1)], state=apply(SC, kedit), changes=[kedit])
+case("revert of a merge works after a comment was added to the survivor", revert("m1"),
+     [rc(tg("a1", "A", 10, 40, 100), a1), rc(tg("a2", "A", 30, 40, 200, d=1000, m="a1"), a2)],
+     state=apply(S1, ch(2, "k", "comment_create", [rc(None, cm("n", "a1", "Note", 1500))])), changes=[merge])
+
 doc = {
     "_doc": [
         "Behavioral spec for ops.effect, consumed by the Rust (crates/ops) and TS (packages/scripture) suites.",
         "Generated by fixtures/ops.py (expected values written by hand there). Do not edit the JSON directly.",
         "state.rows = the owner's rows (live and deleted); state.changes = recorded changes (revert targets).",
-        "Expected `rows` are the change's {before, after} pairs sorted by (table: tag < tagging < palette, id).",
+        "Expected `rows` are the change's {before, after} pairs sorted by (table: tag < tagging < palette < comment,",
+        "id).",
     ],
     "cases": cases,
 }

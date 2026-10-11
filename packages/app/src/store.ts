@@ -12,12 +12,23 @@
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { createMemo, createSignal } from "solid-js";
-import { SyncState, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow } from "@bible-tags/scripture";
+import { resolveTagging, SyncState, type CommentRow, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
 
 export type Tag = TagRow;
+export type Comment = CommentRow;
+
+const intervals = new WeakMap<TaggingRow, Interval>();
+/** A tagging's [start, end), the same array for the same row object. Unchanged rows keep their objects across
+ *  edits, so lists built from these keep their identity and keyed UI (Solid `<For>`) doesn't remount rows (which
+ *  would, e.g., drop focus from a comment box while posting). */
+export function intervalOf(t: TaggingRow): Interval {
+  let iv = intervals.get(t);
+  if (!iv) intervals.set(t, (iv = [t.start, t.end]));
+  return iv;
+}
 
 /** Built without a server (offline-only): see localServer.ts. */
 export const LOCAL_ONLY = import.meta.env.VITE_SYNC === "local";
@@ -140,10 +151,33 @@ export async function openTagStore() {
     return m;
   });
   const palette = createMemo(() => (view().pal?.tags ?? []).map((id) => tagById().get(id)).filter((t): t is Tag => !!t));
+  /** Live comments by the live tagging they show on (following merges), oldest first. */
+  const commentsByTagging = createMemo(() => {
+    const v = view();
+    const m = new Map<string, Comment[]>();
+    for (const c of v.comments.values()) {
+      if (c.deleted_at !== null) continue;
+      let on: string;
+      try {
+        on = resolveTagging(v, c.tagging).id;
+      } catch {
+        continue; // on a deleted tagging: hidden until that deletion is undone
+      }
+      m.set(on, [...(m.get(on) ?? []), c]);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+    return m;
+  });
 
+  const MESSAGES: Record<string, string> = {
+    name_taken: "A tag with that name already exists",
+    bad_body: "A comment can't be empty or longer than 10,000 characters",
+    tagging_deleted: "That highlight was removed",
+    comment_deleted: "That comment was deleted",
+  };
   const submit = (intents: OpIntent[]) => {
     const err = sync.submit(intents);
-    if (err) notify(err.code === "name_taken" ? "A tag with that name already exists" : `Not applied: ${err.code}`);
+    if (err) notify(MESSAGES[err.code] ?? `Not applied: ${err.code}`);
     return !err;
   };
 
@@ -154,6 +188,9 @@ export async function openTagStore() {
     tagById,
     byTag,
     palette,
+    commentsByTagging,
+    /** The live tagging of `tag` starting at `start` (a single tag's instances are its taggings). */
+    taggingAt: (tag: string, start: number) => byTag().get(tag)?.find((t) => t.start === start),
     notices,
     status: () => (version(), sync.status),
     pendingCount: () => (version(), sync.pending.length),
@@ -187,6 +224,10 @@ export async function openTagStore() {
     /** Palette tag ids, in order (at most MAX_PALETTE). */
     paletteIds: () => view().pal?.tags ?? [],
     setPalette: (tags: string[]) => submit([{ kind: "palette_set", tags, now: Date.now() }]),
+    addComment: (tagging: string, body: string) =>
+      submit([{ kind: "comment_create", id: ulid(), tagging, body, now: Date.now() }]),
+    editComment: (id: string, body: string) => submit([{ kind: "comment_update", id, body, now: Date.now() }]),
+    deleteComment: (id: string) => submit([{ kind: "comment_delete", id, now: Date.now() }]),
     undo: () => sync.undoStep(),
     redo: () => sync.redoStep(),
   };

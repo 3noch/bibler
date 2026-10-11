@@ -5,7 +5,7 @@
 //! one transaction: idempotency check, `ops::effect` against the owner's rows, row upserts, change append, commit,
 //! then the commit listener runs on the writer thread (so listeners see changes in seq order).
 
-use ops::{effect, Change, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
+use ops::{effect, Change, CommentRow, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::cell::RefCell;
 use std::path::Path;
@@ -100,6 +100,17 @@ CREATE TABLE IF NOT EXISTS palettes (
   tags TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- Ownership of `tagging_id` is checked by ops::effect (owner-scoped reads); the FK is a backstop.
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES owners(id),
+  tagging_id TEXT NOT NULL REFERENCES taggings(id),
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  edited_at INTEGER,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS comments_by_tagging ON comments (owner_id, tagging_id);
 CREATE TABLE IF NOT EXISTS changes (
   owner_id TEXT NOT NULL,
   seq INTEGER NOT NULL,
@@ -110,7 +121,7 @@ CREATE TABLE IF NOT EXISTS changes (
   PRIMARY KEY (owner_id, seq),
   UNIQUE (owner_id, op_id)
 );
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 ";
 
 fn connect(path: &Path) -> rusqlite::Result<Connection> {
@@ -315,6 +326,14 @@ fn write_row(tx: &Transaction, owner: &str, row: &Row) -> rusqlite::Result<bool>
              WHERE taggings.owner_id = excluded.owner_id",
             params![t.id, owner, t.tag, t.text_id, t.start, t.end, t.created_at, t.deleted_at, t.merged_into],
         )?,
+        Row::Comment(c) => tx.execute(
+            "INSERT INTO comments (id, owner_id, tagging_id, body, created_at, edited_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (id) DO UPDATE SET body = excluded.body, edited_at = excluded.edited_at,
+               deleted_at = excluded.deleted_at
+             WHERE comments.owner_id = excluded.owner_id",
+            params![c.id, owner, c.tagging, c.body, c.created_at, c.edited_at, c.deleted_at],
+        )?,
         Row::Palette(p) => tx.execute(
             "INSERT INTO palettes (owner_id, tags, updated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT (owner_id) DO UPDATE SET tags = excluded.tags, updated_at = excluded.updated_at",
@@ -398,6 +417,25 @@ impl RowSource for TxRows<'_> {
             .optional();
         self.ok(r)
             .map(|(tags, updated_at)| PaletteRow { tags: serde_json::from_str(&tags).unwrap_or_default(), updated_at })
+    }
+
+    fn comment(&self, id: &str) -> Option<CommentRow> {
+        let sql = "SELECT id, tagging_id, body, created_at, edited_at, deleted_at FROM comments
+                   WHERE owner_id = ?1 AND id = ?2";
+        let r = self
+            .tx
+            .query_row(sql, [self.owner, id], |r| {
+                Ok(CommentRow {
+                    id: r.get(0)?,
+                    tagging: r.get(1)?,
+                    body: r.get(2)?,
+                    created_at: r.get(3)?,
+                    edited_at: r.get(4)?,
+                    deleted_at: r.get(5)?,
+                })
+            })
+            .optional();
+        self.ok(r)
     }
 
     fn live_tag_named(&self, name: &str) -> Option<TagRow> {

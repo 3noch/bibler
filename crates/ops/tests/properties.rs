@@ -33,6 +33,7 @@ fn live(rows: &[Row]) -> Vec<Row> {
             Row::Tag(t) => t.deleted_at.is_none(),
             Row::Tagging(t) => t.deleted_at.is_none(),
             Row::Palette(_) => true,
+            Row::Comment(c) => c.deleted_at.is_none(),
         })
         .cloned()
         .collect();
@@ -65,6 +66,15 @@ fn check_invariants(mem: &Mem, ctx: &str) {
             assert!(w[0].end < w[1].start, "{ctx}: {} and {} overlap or abut", w[0].id, w[1].id);
         }
     }
+    // Comments never dangle: each one's tagging exists, and its merged_into chain ends in a live tagging or a
+    // plain deletion (never a missing row).
+    for r in &mem.rows {
+        if let Row::Comment(c) = r {
+            assert!(!c.body.is_empty(), "{ctx}: empty comment");
+            let resolved = ops::resolve_tagging(mem, &c.tagging);
+            assert_ne!(resolved.err(), Some(ops::OpError::UnknownTagging), "{ctx}: comment {} dangles", c.id);
+        }
+    }
     let mut names = HashSet::new();
     for t in tags.values().filter(|t| t.deleted_at.is_none()) {
         assert!(names.insert(t.name.to_lowercase()), "{ctx}: duplicate live name {}", t.name);
@@ -86,7 +96,22 @@ fn random_op(rng: &mut Rng, mem: &Mem, step: usize, own: &[String]) -> Op {
             _ => None,
         })
         .collect();
-    let intent = match rng.below(20) {
+    let ids = |table: Table| -> Vec<String> {
+        mem.rows.iter().filter(|r| r.key().0 == table).map(|r| r.key().1.to_string()).collect()
+    };
+    let (tagging_ids, comment_ids) = (ids(Table::Tagging), ids(Table::Comment));
+    let intent = match rng.below(26) {
+        // Any tagging, including merged and deleted ones (exercises resolve + tagging_deleted).
+        20..=21 if !tagging_ids.is_empty() => Intent::CommentCreate {
+            id: format!("c{step}"),
+            tagging: rng.pick(&tagging_ids).clone(),
+            body: format!("note {}", rng.below(3)),
+            now,
+        },
+        22..=23 if !comment_ids.is_empty() => {
+            Intent::CommentUpdate { id: rng.pick(&comment_ids).clone(), body: format!("note {}", rng.below(3)), now }
+        }
+        24..=25 if !comment_ids.is_empty() => Intent::CommentDelete { id: rng.pick(&comment_ids).clone(), now },
         0..=1 => Intent::TagCreate {
             id: format!("t{step}"),
             name: format!("name{}", rng.below(6)),
@@ -126,7 +151,9 @@ fn random_op(rng: &mut Rng, mem: &Mem, step: usize, own: &[String]) -> Op {
     Op { op_id: format!("op{step}"), intent }
 }
 
-fn run(seed: u64, steps: usize) {
+/// Returns how many applied changes were of each kind (so the test can check every kind is exercised).
+fn run(seed: u64, steps: usize) -> HashMap<String, usize> {
+    let mut kinds = HashMap::new();
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut mem = Mem::default();
     let start = live(&mem.rows);
@@ -138,6 +165,7 @@ fn run(seed: u64, steps: usize) {
         for rc in &change.rows {
             assert_eq!(rc.before.as_ref(), mem.row(rc.after.key()), "{ctx}: `before` must be the prior row");
         }
+        *kinds.entry(change.kind.clone()).or_default() += 1;
         mem.apply(change);
         applied.push(op.op_id);
         check_invariants(&mem, &ctx);
@@ -152,11 +180,29 @@ fn run(seed: u64, steps: usize) {
     let mut end = live(&mem.rows);
     end.retain(|r| !matches!(r, Row::Palette(p) if p.tags.is_empty()));
     assert_eq!(end, start, "seed {seed}: undoing everything must restore the starting state");
+    kinds
 }
 
 #[test]
 fn random_ops_keep_invariants_and_undo_all_restores() {
+    let mut kinds: HashMap<String, usize> = HashMap::new();
     for seed in 1..=300 {
-        run(seed, 120);
+        for (k, n) in run(seed, 120) {
+            *kinds.entry(k).or_default() += n;
+        }
+    }
+    for k in [
+        "paint",
+        "erase",
+        "tag_create",
+        "tag_update",
+        "tag_delete",
+        "palette_set",
+        "revert",
+        "comment_create",
+        "comment_update",
+        "comment_delete",
+    ] {
+        assert!(kinds.get(k).copied().unwrap_or(0) >= 100, "{k} applied only {:?} times: {kinds:?}", kinds.get(k));
     }
 }

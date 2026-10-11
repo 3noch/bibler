@@ -6,6 +6,10 @@
 //!   Deletes are soft (`deleted_at`), so every change is reversible.
 //! * Undo/redo is [`Intent::Revert`]: apply a past change's `before` rows, only if those rows are still exactly as
 //!   that change left them and the per-tag disjointness invariant still holds; otherwise `conflict`.
+//! * Comments hang on taggings. A paint that merges tagging B into A does not touch B's comments: B's tombstone
+//!   points at A (`merged_into`), and readers follow that chain to show the comment on the live survivor. So undoing
+//!   the merge needs no comment rows (and still works after a comment was edited). A plain delete leaves comments on
+//!   the tombstone, hidden, until the deletion is undone.
 //! * Rows are read through [`RowSource`] (SQLite transaction on the server, in-memory maps on the client), always
 //!   scoped to one owner. Ids and timestamps come from the op, never from clocks or RNG here.
 
@@ -15,6 +19,9 @@ use std::collections::{BTreeMap, HashSet};
 
 pub const MAX_PALETTE: usize = 9;
 pub const MAX_TAG_NAME: usize = 100;
+pub const MAX_COMMENT: usize = 10_000;
+/// Longest `merged_into` chain followed (chains only grow by merges, so this is a corruption guard).
+const MAX_CHAIN: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagRow {
@@ -38,6 +45,17 @@ pub struct TaggingRow {
     pub merged_into: Option<String>,
 }
 
+/// A comment on a tagging (shown on the live end of that tagging's `merged_into` chain).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentRow {
+    pub id: String,
+    pub tagging: String,
+    pub body: String,
+    pub created_at: i64,
+    pub edited_at: Option<i64>,
+    pub deleted_at: Option<i64>,
+}
+
 /// The owner's palette (one row per owner).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaletteRow {
@@ -51,13 +69,16 @@ pub enum Row {
     Tag(TagRow),
     Tagging(TaggingRow),
     Palette(PaletteRow),
+    Comment(CommentRow),
 }
 
+/// Sort order of rows in a change: tag < tagging < palette < comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Table {
     Tag,
     Tagging,
     Palette,
+    Comment,
 }
 
 pub const PALETTE_ID: &str = "palette";
@@ -69,6 +90,7 @@ impl Row {
             Row::Tag(t) => (Table::Tag, &t.id),
             Row::Tagging(t) => (Table::Tagging, &t.id),
             Row::Palette(_) => (Table::Palette, PALETTE_ID),
+            Row::Comment(c) => (Table::Comment, &c.id),
         }
     }
 
@@ -79,6 +101,7 @@ impl Row {
             Row::Tag(t) => Row::Tag(TagRow { deleted_at: Some(now), updated_at: now, ..t.clone() }),
             Row::Tagging(t) => Row::Tagging(TaggingRow { deleted_at: Some(now), ..t.clone() }),
             Row::Palette(_) => Row::Palette(PaletteRow { tags: vec![], updated_at: now }),
+            Row::Comment(c) => Row::Comment(CommentRow { deleted_at: Some(now), ..c.clone() }),
         }
     }
 }
@@ -111,6 +134,9 @@ pub enum Intent {
     TagDelete { id: String, now: i64 },
     PaletteSet { tags: Vec<String>, now: i64 },
     Revert { target: String, now: i64 },
+    CommentCreate { id: String, tagging: String, body: String, now: i64 },
+    CommentUpdate { id: String, body: String, now: i64 },
+    CommentDelete { id: String, now: i64 },
 }
 
 impl Intent {
@@ -124,6 +150,9 @@ impl Intent {
             Intent::TagDelete { .. } => "tag_delete",
             Intent::PaletteSet { .. } => "palette_set",
             Intent::Revert { .. } => "revert",
+            Intent::CommentCreate { .. } => "comment_create",
+            Intent::CommentUpdate { .. } => "comment_update",
+            Intent::CommentDelete { .. } => "comment_delete",
         }
     }
 }
@@ -149,6 +178,11 @@ pub enum OpError {
     BadPalette,
     UnknownOp,
     Conflict,
+    UnknownTagging,
+    TaggingDeleted,
+    UnknownComment,
+    CommentDeleted,
+    BadBody,
 }
 
 impl OpError {
@@ -166,6 +200,11 @@ impl OpError {
             OpError::BadPalette => "bad_palette",
             OpError::UnknownOp => "unknown_op",
             OpError::Conflict => "conflict",
+            OpError::UnknownTagging => "unknown_tagging",
+            OpError::TaggingDeleted => "tagging_deleted",
+            OpError::UnknownComment => "unknown_comment",
+            OpError::CommentDeleted => "comment_deleted",
+            OpError::BadBody => "bad_body",
         }
     }
 }
@@ -193,6 +232,7 @@ pub trait RowSource {
     fn tag(&self, id: &str) -> Option<TagRow>;
     fn tagging(&self, id: &str) -> Option<TaggingRow>;
     fn palette(&self) -> Option<PaletteRow>;
+    fn comment(&self, id: &str) -> Option<CommentRow>;
     /// Live tag whose name equals `name` case-insensitively (ASCII + Unicode lowercase).
     fn live_tag_named(&self, name: &str) -> Option<TagRow>;
     /// Live taggings of `tag` in `text_id` overlapping or abutting `[start, end]`.
@@ -208,7 +248,40 @@ fn current(src: &dyn RowSource, table: Table, id: &str) -> Option<Row> {
         Table::Tag => src.tag(id).map(Row::Tag),
         Table::Tagging => src.tagging(id).map(Row::Tagging),
         Table::Palette => src.palette().map(Row::Palette),
+        Table::Comment => src.comment(id).map(Row::Comment),
     }
+}
+
+/// The live tagging a comment on `id` shows on: `id` itself, or the survivor its merges led to.
+///
+/// # Errors
+/// `UnknownTagging` if `id` does not exist; `TaggingDeleted` if the chain ends in a deletion (not a merge).
+pub fn resolve_tagging(src: &dyn RowSource, id: &str) -> Result<TaggingRow, OpError> {
+    let mut t = src.tagging(id).ok_or(OpError::UnknownTagging)?;
+    for _ in 0..MAX_CHAIN {
+        match (&t.deleted_at, &t.merged_into) {
+            (None, _) => return Ok(t),
+            (Some(_), Some(next)) => t = src.tagging(next).ok_or(OpError::UnknownTagging)?,
+            (Some(_), None) => return Err(OpError::TaggingDeleted),
+        }
+    }
+    Err(OpError::TaggingDeleted)
+}
+
+fn live_comment(src: &dyn RowSource, id: &str) -> Result<CommentRow, OpError> {
+    let c = src.comment(id).ok_or(OpError::UnknownComment)?;
+    if c.deleted_at.is_some() {
+        return Err(OpError::CommentDeleted);
+    }
+    Ok(c)
+}
+
+fn check_body(body: &str) -> Result<String, OpError> {
+    let body = body.trim();
+    if body.is_empty() || body.chars().count() > MAX_COMMENT {
+        return Err(OpError::BadBody);
+    }
+    Ok(body.to_string())
 }
 
 fn live_tag(src: &dyn RowSource, id: &str) -> Result<TagRow, OpError> {
@@ -312,6 +385,31 @@ pub fn effect(src: &dyn RowSource, op: &Op) -> Result<Change, OpError> {
         Intent::TagDelete { id, now } => tag_delete_rows(src, id, *now)?,
         Intent::PaletteSet { tags, now } => palette_rows(src, tags, *now)?,
         Intent::Revert { target, now } => revert_rows(src, target, *now)?,
+        Intent::CommentCreate { id, tagging, body, now } => {
+            let body = check_body(body)?;
+            if src.comment(id).is_some() {
+                return Err(OpError::IdExists);
+            }
+            // Stored on the live survivor (a client may still be looking at a tagging merged away since).
+            let tagging = resolve_tagging(src, tagging)?.id;
+            let row = CommentRow { id: id.clone(), tagging, body, created_at: *now, edited_at: None, deleted_at: None };
+            vec![RowChange { before: None, after: Row::Comment(row) }]
+        }
+        Intent::CommentUpdate { id, body, now } => {
+            let before = live_comment(src, id)?;
+            let body = check_body(body)?;
+            if body == before.body {
+                vec![]
+            } else {
+                let after = CommentRow { body, edited_at: Some(*now), ..before.clone() };
+                vec![RowChange { before: Some(Row::Comment(before)), after: Row::Comment(after) }]
+            }
+        }
+        Intent::CommentDelete { id, now } => {
+            let before = live_comment(src, id)?;
+            let after = CommentRow { deleted_at: Some(*now), ..before.clone() };
+            vec![RowChange { before: Some(Row::Comment(before)), after: Row::Comment(after) }]
+        }
     };
     Ok(Change { seq: 0, op_id: op.op_id.clone(), kind: op.intent.kind().to_string(), rows: sorted(rows) })
 }
@@ -481,7 +579,8 @@ fn check_revert_invariants(src: &dyn RowSource, target: &Change, rows: &[RowChan
                     return Err(OpError::Conflict);
                 }
             }
-            Row::Tagging(_) => {}
+            // Comments need no checks: a live comment on a deleted tagging is an ordinary state (erase keeps them).
+            Row::Tagging(_) | Row::Comment(_) => {}
         }
     }
     Ok(())
