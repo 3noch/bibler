@@ -64,6 +64,15 @@
   browser (not saved elsewhere, not backed up, not synced; clearing site data erases them). Browser-tested under a
   `/pages/` subpath: no `/api` requests, persistence across reloads, live sync between two tabs, per-tab undo.
   Limits: localStorage (~5 MB) holds everything; IndexedDB and export/import are the natural next steps.
+- **PWA** (installable, offline reading; both builds): `public/manifest.webmanifest` + icons (`icon.svg` drawn by
+  hand, PNGs rasterized from it with `rsvg-convert`; the maskable/Apple ones are full-bleed with the art at 80%).
+  `src/sw.js` is a template: the `serviceWorker()` plugin in `vite.config.ts` fills in this build's file list,
+  a version hash and `TEXT_ID` (`src/textId.ts`) and emits `sw.js`; `main.tsx` registers it in production only.
+  Shell precached per version (old versions deleted); text precached after activation into `text-<TEXT_ID>`;
+  hashed files cache-first; navigations and other files network-first with cache fallback; `/api/` untouched.
+  Browser-tested under `/pages/`: 9 shell + 68 text files cached, and with the server stopped an unvisited book
+  (Obadiah) opened. iOS gives an installed app storage separate from Safari (matters for local-only tags).
+- Touch screens don't autofocus the All-tags box (the keyboard covered the list): `matchMedia("(pointer: fine)")`.
 - Testing UI on this machine: run a throwaway server on `127.0.0.1:<port>` (NOT `localhost`: cookies ignore ports,
   so a test server on localhost overwrites the user's dev session cookie).
 

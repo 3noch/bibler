@@ -7,6 +7,10 @@ commentable, recallable. Text is the main UI element; tags sit in a palette (lik
 Stack: **Solid.js** client (plain Vite SPA, no SSR), **Rust** server (axum + tokio + rusqlite, SQLite WAL),
 local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep them honest with shared fixtures).
 
+## Git
+- Commit to `main` by default whenever a piece of work is done and checked (no feature branches during initial
+  development). **Push only when the user says so.**
+
 ## Dev workflow (Makefile) and deployment (default.nix)
 - **GitHub Pages (offline-only build)**: `make pages` -> `build/pages/` (client built with `VITE_SYNC=local`,
   `VITE_BASE=./`, plus the text artifacts and `.nojekyll`); `make pages-serve` previews it. `.github/workflows/pages.yml`
@@ -127,7 +131,7 @@ Rust: `crates/normalize/src/lib.rs`).
 - Tests: end-to-end WebSocket tests (fan-out, replay, duplicates, rejects, owner isolation, revert, auth/origin,
   restart); a client convergence property test (3 clients, random edits/delivery/disconnects, 120 seeds);
   browser-tested with two tabs incl. offline -> reconnect. Not yet: comments, real auth, rate limits, retention of
-  the changes log, service worker.
+  the changes log.
 
 ## Sync engine choice
 - Decided 2026-10-10: our own per-owner event log (requirement: free OSS, self-hostable, no paid tier). The

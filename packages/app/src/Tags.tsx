@@ -78,7 +78,8 @@ export function TagsSheet(props: {
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
           aria-label="Find or create a tag"
-          ref={(el) => queueMicrotask(() => el.focus())}
+          // Not on touch screens: the on-screen keyboard would cover the list (tapping the box still focuses it).
+          ref={(el) => matchMedia("(pointer: fine)").matches && queueMicrotask(() => el.focus())}
         />
       </form>
       <ul class="tags-list nearby-body">

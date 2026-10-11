@@ -1,8 +1,9 @@
 // Loads text-build artifacts (manifest, index, per-book JSON) from /text/<text_id>/. Files other than the manifest
-// are content-hashed, so the browser cache (and later a service worker) can keep them forever.
+// are content-hashed, so the browser cache and the service worker (src/sw.js) keep them forever.
 import { TextIndex, type Interval } from "@bible-tags/scripture";
+import { TEXT_ID } from "./textId.ts";
 
-export const TEXT_ID = "kjv-1769-v1";
+export { TEXT_ID };
 // Vite's base: "/" for server builds (absolute, so the SPA fallback at deep paths still finds the text) and "./"
 // for the static GitHub Pages build (works under any subpath, e.g. /<repo>/).
 const base = `${import.meta.env.BASE_URL}text/${TEXT_ID}/`;

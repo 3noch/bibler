@@ -83,6 +83,7 @@ let
         ./packages/app/vite.config.ts
         ./packages/app/index.html
         ./packages/app/src
+        ./packages/app/public
       ];
     };
     npmDepsHash = "sha256-Vcqq0oBzOX0MuWMRwquVGkYeUBoB9wrjZNnwteTqhe0=";
