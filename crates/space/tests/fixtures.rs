@@ -3,7 +3,7 @@
 use ops::{Change, Op, Row, RowChange};
 use rusqlite::Connection;
 use serde::Deserialize;
-use space::{apply, changes_since, import, init, members, ApplyError};
+use space::{apply, apply_by, changes_since, import, init, members, ApplyError};
 
 #[derive(Deserialize)]
 struct State {
@@ -53,7 +53,14 @@ fn ops_fixtures_through_sqlite() {
                 assert_eq!(db.total_changes(), writes, "{}: a rejected op wrote", c.name);
             }
             (Ok(a), None) => {
-                assert_eq!(&a.change.rows, c.rows.as_ref().unwrap(), "{}", c.name);
+                // The server stamps new comments with their author; `effect` (the fixture) does not.
+                let mut rows = a.change.rows.clone();
+                for rc in &mut rows {
+                    if let (None, Row::Comment(after)) = (&rc.before, &mut rc.after) {
+                        assert_eq!(after.author.take().as_deref(), Some("o1"), "{}: author", c.name);
+                    }
+                }
+                assert_eq!(&rows, c.rows.as_ref().unwrap(), "{}", c.name);
                 assert_eq!(a.change.seq, max_seq + 1, "{}: next seq", c.name);
                 assert!(!a.duplicate);
                 let again = apply(&db, "o1", &c.op, 0).unwrap();
@@ -99,6 +106,37 @@ fn a_shared_space_has_one_seq_and_owner_scoped_rows() {
     assert!(apply(&db, "carol", &paint, 7).is_err());
     assert_eq!(changes_since(&db, 0, 10).unwrap().len(), 3);
     assert_eq!(members(&db).unwrap(), ["alice", "bob"]);
+}
+
+#[test]
+fn group_members_share_rows_but_only_edit_their_own_comments() {
+    let db = open();
+    let g = "group";
+    let ops = [
+        (r##"{"op_id": "1", "kind": "tag_create", "id": "T", "name": "Grace", "color": "#123456", "now": 1}"##, "ann"),
+        (
+            r#"{"op_id": "2", "kind": "paint", "tag": "T", "text_id": "t", "start": 1, "end": 5, "new_id": "g1", "now": 2}"#,
+            "bob",
+        ),
+        (r#"{"op_id": "3", "kind": "comment_create", "id": "c1", "tagging": "g1", "body": "Hi", "now": 3}"#, "ann"),
+    ];
+    for (o, by) in ops {
+        apply_by(&db, g, by, &op(serde_json::from_str(o).unwrap()), 0).unwrap();
+    }
+    let created = &changes_since(&db, 2, 1).unwrap()[0].rows[0].after;
+    assert!(matches!(created, Row::Comment(c) if c.author.as_deref() == Some("ann")));
+    let edit = |op_id: &str| {
+        op(serde_json::json!({"op_id": op_id, "kind": "comment_update", "id": "c1", "body": "Yo", "now": 4}))
+    };
+    let writes = db.total_changes();
+    assert!(matches!(apply_by(&db, g, "bob", &edit("4"), 0), Err(ApplyError::Refused("not_author"))));
+    assert_eq!(db.total_changes(), writes, "a refused op wrote");
+    let del = op(serde_json::json!({"op_id": "5", "kind": "comment_delete", "id": "c1", "now": 5}));
+    assert!(matches!(apply_by(&db, g, "bob", &del, 0), Err(ApplyError::Refused("not_author"))));
+    // The author keeps their name on edits.
+    let edited = apply_by(&db, g, "ann", &edit("6"), 0).unwrap().change;
+    assert!(matches!(&edited.rows[0].after, Row::Comment(c) if c.author.as_deref() == Some("ann") && c.body == "Yo"));
+    assert_eq!(members(&db).unwrap(), [g]);
 }
 
 #[test]

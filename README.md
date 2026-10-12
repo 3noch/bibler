@@ -7,6 +7,9 @@ place a tag (or a combination of tags) appears.
 - **Tag** by picking a color from the dock and dragging over words (tap or long-press on phones).
 - **Look up** any tagged words to see nearby places with the same tags, as text snippets.
 - **Search** tags and combinations, optionally within books or groups (Gospels, Pauline epistles, …).
+- **Hide** tags you don't want to see right now (Hide all / Show all, then pick).
+- **Groups**: tag and comment together. Invite people with a link that lets them edit or only view; switch between
+  your own tags and each group's from the top bar.
 - **Undo** everything; edits work offline and sync to the server when it comes back.
 - **Sign in with Google** (optional) to keep tags safe and use them on every device; tags made before signing in
   come along.

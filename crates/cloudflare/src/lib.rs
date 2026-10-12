@@ -5,15 +5,18 @@
 //! ```text
 //! GET  /api/health
 //! POST /api/session                  -> {owner, account, providers}   (creates an anonymous owner if needed)
-//! GET  /api/sync                     -> WebSocket, forwarded to the owner's space
+//! GET  /api/sync?space=              -> WebSocket, forwarded to the space (default: the owner's own)
+//! *    /api/groups..., POST /api/join   groups (api::groups)
 //! POST /api/logout
 //! GET  /api/auth/google[/callback]   Sign in with Google (api::google)
 //! ```
 
 mod object;
 
+use ::space::Value;
 use api::accounts::{self as sql, Identity, SignIn};
 use api::google::{self, Google, TokenResponse};
+use api::groups;
 use api::session::{self, random_hex, token_hash};
 use object::now_ms;
 use wasm_bindgen::JsValue;
@@ -39,6 +42,8 @@ async fn route(req: Request, env: &Env) -> Result<Response> {
         (Method::Post, "/api/logout") => logout(&req, env).await,
         (Method::Get, "/api/auth/google") => google_start(&req, env),
         (Method::Get, "/api/auth/google/callback") => google_callback(&req, env).await,
+        (_, "/api/join") => groups(req, env).await,
+        (_, p) if p == "/api/groups" || p.starts_with("/api/groups/") => groups(req, env).await,
         _ => Response::error("no such API route", 404),
     }
 }
@@ -78,7 +83,7 @@ async fn accounts(env: &Env) -> Result<D1Database> {
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     let db = env.d1("ACCOUNTS")?;
     if !READY.get() {
-        let statements = sql::SCHEMA.split(';').filter(|s| !s.trim().is_empty()).map(|s| db.prepare(s)).collect();
+        let statements = sql::schema_statements().into_iter().map(|s| db.prepare(s)).collect();
         db.batch(statements).await?;
         READY.set(true);
     }
@@ -170,13 +175,22 @@ fn space_stub(env: &Env, space: &str) -> Result<Stub> {
     env.durable_object("SPACES")?.id_from_name(space)?.get_stub()
 }
 
-/// `GET /api/sync`: authenticate, then hand the WebSocket upgrade to the owner's space.
+/// `GET /api/sync?space=`: authenticate, check the role, then hand the WebSocket upgrade to the space.
 async fn sync(req: Request, env: &Env) -> Result<Response> {
     if !same_origin(&req)? {
         return forbidden();
     }
-    let Some(owner) = session_owner(&accounts(env).await?, &req).await? else {
+    let db = accounts(env).await?;
+    let Some(owner) = session_owner(&db, &req).await? else {
         return Response::error("no session", 401);
+    };
+    let space = req.url()?.query_pairs().find(|(k, _)| k == "space").map(|(_, v)| v.into_owned());
+    let space = space.unwrap_or_else(|| owner.clone());
+    if !api::check::valid_id(&space) {
+        return Response::error("bad space", 400);
+    }
+    let Some(role) = groups::role_of(&D1Accounts(db), &space, &owner).await.map_err(worker::Error::RustError)? else {
+        return Response::error("not a member", 403);
     };
     let headers = Headers::new();
     for name in ["Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version"] {
@@ -185,10 +199,70 @@ async fn sync(req: Request, env: &Env) -> Result<Response> {
         }
     }
     headers.set("x-owner", &owner)?;
+    headers.set("x-space", &space)?;
+    headers.set("x-role", role.as_str())?;
     let mut init = RequestInit::new();
     init.with_headers(headers);
-    // The owner's personal space (shared spaces will be chosen in `hello`).
-    space_stub(env, &owner)?.fetch_with_request(Request::new_with_init("https://space/sync", &init)?).await
+    space_stub(env, &space)?.fetch_with_request(Request::new_with_init("https://space/sync", &init)?).await
+}
+
+/// `space::Value` rows over D1.
+struct D1Accounts(D1Database);
+
+fn js_value(v: &Value) -> JsValue {
+    match v {
+        Value::Null => JsValue::NULL,
+        Value::Int(n) => js_int(*n),
+        Value::Text(s) => js(s),
+    }
+}
+
+impl groups::AccountsDb for D1Accounts {
+    async fn exec(&self, sql: &str, params: Vec<Value>) -> std::result::Result<(), String> {
+        let params: Vec<JsValue> = params.iter().map(js_value).collect();
+        let stmt = self.0.prepare(sql).bind(&params).map_err(|e| e.to_string())?;
+        stmt.run().await.map(drop).map_err(|e| e.to_string())
+    }
+
+    async fn query(&self, sql: &str, params: Vec<Value>) -> std::result::Result<Vec<Vec<Value>>, String> {
+        let params: Vec<JsValue> = params.iter().map(js_value).collect();
+        let stmt = self.0.prepare(sql).bind(&params).map_err(|e| e.to_string())?;
+        let rows = stmt.raw::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                r.into_iter()
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => Value::Text(s),
+                        serde_json::Value::Number(n) => Value::Int(n.as_i64().unwrap_or_default()),
+                        _ => Value::Null,
+                    })
+                    .collect()
+            })
+            .collect())
+    }
+}
+
+/// `/api/groups...` and `/api/join` (`api::groups`).
+async fn groups(mut req: Request, env: &Env) -> Result<Response> {
+    if req.method() != Method::Get && !same_origin(&req)? {
+        return forbidden();
+    }
+    let db = accounts(env).await?;
+    let Some(owner) = session_owner(&db, &req).await? else { return Response::error("no session", 401) };
+    let body = req.text().await.unwrap_or_default();
+    let (method, path) = (req.method().to_string(), req.path());
+    let path = path.trim_start_matches("/api");
+    let reply = groups::handle(&D1Accounts(db), &owner, &method, path, &body, now_ms())
+        .await
+        .map_err(worker::Error::RustError)?;
+    for (space, who) in &reply.kicks {
+        let url = format!("https://space/kick?owner={who}");
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        space_stub(env, space)?.fetch_with_request(Request::new_with_init(&url, &init)?).await?;
+    }
+    Ok(Response::from_json(&reply.body)?.with_status(reply.status))
 }
 
 /// Copy anonymous owner `from`'s live data (its personal space) into `into`'s personal space.

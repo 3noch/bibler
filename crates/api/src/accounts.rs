@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS identities (
 CREATE INDEX IF NOT EXISTS identities_by_owner ON identities (owner_id);
 ";
 
+/// Every statement of the accounts schema (this module's and [`crate::groups::SCHEMA`]), in order.
+#[must_use]
+pub fn schema_statements() -> Vec<&'static str> {
+    [SCHEMA, crate::groups::SCHEMA].iter().flat_map(|s| s.split(';')).filter(|s| !s.trim().is_empty()).collect()
+}
+
 // Positional parameters, in the order given.
 /// `(id, created_at)`
 pub const CREATE_OWNER: &str = "INSERT INTO owners (id, created_at) VALUES (?, ?)";

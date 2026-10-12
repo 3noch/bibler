@@ -24,6 +24,7 @@ fn has_table(c: &Connection, name: &str) -> R<bool> {
 ///
 /// # Errors
 /// If the old database cannot be read or the import fails.
+#[allow(clippy::too_many_lines)] // one straight-line import
 pub fn migrate(old: &Path, store: &SqliteStore) -> R<usize> {
     let c = Connection::open_with_flags(old, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| format!("{}: {e}", old.display()))?;
@@ -105,6 +106,7 @@ pub fn migrate(old: &Path, store: &SqliteStore) -> R<usize> {
                         created_at: r.get(3)?,
                         edited_at: r.get(4)?,
                         deleted_at: r.get(5)?,
+                        author: None,
                     }))
                 })
                 .map_err(e)?

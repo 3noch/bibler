@@ -132,13 +132,22 @@ pub const SCHEMA: &[&str] = &[
 /// # Errors
 /// On SQL failure.
 pub fn init(db: &impl Db) -> Result<(), String> {
-    SCHEMA.iter().try_for_each(|s| db.exec(s, &[]))
+    SCHEMA.iter().try_for_each(|s| db.exec(s, &[]))?;
+    let version = db.query("SELECT value FROM meta WHERE key = 'schema'", &[])?;
+    if version.first().map(|r| &r[0]) == Some(&Value::Text("1".into())) {
+        // v2: comment authors (shared spaces show who wrote what).
+        db.exec("ALTER TABLE comments ADD COLUMN author_id TEXT", &[])?;
+        db.exec("UPDATE meta SET value = '2' WHERE key = 'schema'", &[])?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
 pub enum ApplyError {
     /// The op is invalid against the owner's rows (a stable code the client understands).
     Op(OpError),
+    /// Not allowed for this author (e.g. `not_author`: editing someone else's comment); nothing was written.
+    Refused(&'static str),
     /// Storage failure; the op had no effect.
     Internal(String),
 }
@@ -161,6 +170,16 @@ pub struct Applied {
 /// # Errors
 /// `ApplyError::Op` if the op is invalid (nothing was written); `ApplyError::Internal` on storage failure.
 pub fn apply(db: &impl Db, owner: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
+    apply_by(db, owner, owner, op, now)
+}
+
+/// Apply an op to `owner`'s rows on behalf of `author`, a member of a shared space whose rows all belong to one
+/// data owner (the space). New comments are stamped with `author`, and a change may only modify comments that
+/// `author` wrote.
+///
+/// # Errors
+/// As [`apply`], plus `ApplyError::Refused("not_author")`.
+pub fn apply_by(db: &impl Db, owner: &str, author: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
     let existing =
         db.query("SELECT payload FROM changes WHERE owner_id = ? AND op_id = ?", &[owner.into(), (&op.op_id).into()])?;
     if let Some(row) = existing.first() {
@@ -174,6 +193,17 @@ pub fn apply(db: &impl Db, owner: &str, op: &Op, now: i64) -> Result<Applied, Ap
         }
         result.map_err(ApplyError::Op)?
     };
+    for rc in &mut change.rows {
+        if let Row::Comment(after) = &mut rc.after {
+            match &rc.before {
+                None => after.author = Some(author.to_string()),
+                Some(Row::Comment(b)) if b.author.as_deref().is_some_and(|a| a != author) => {
+                    return Err(ApplyError::Refused("not_author"));
+                }
+                _ => {}
+            }
+        }
+    }
     for rc in &change.rows {
         if let Some(other) = owner_of(db, &rc.after)? {
             if other != owner {
@@ -291,8 +321,8 @@ fn write_row(db: &impl Db, owner: &str, row: &Row) -> Result<(), String> {
             ],
         ),
         Row::Comment(c) => db.exec(
-            "INSERT INTO comments (id, owner_id, tagging_id, body, created_at, edited_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO comments (id, owner_id, tagging_id, body, created_at, edited_at, deleted_at, author_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET body = excluded.body, edited_at = excluded.edited_at,
                deleted_at = excluded.deleted_at",
             &[
@@ -303,6 +333,7 @@ fn write_row(db: &impl Db, owner: &str, row: &Row) -> Result<(), String> {
                 c.created_at.into(),
                 c.edited_at.into(),
                 c.deleted_at.into(),
+                c.author.as_ref().into(),
             ],
         ),
         Row::Palette(p) => db.exec(
@@ -359,7 +390,7 @@ struct Rows<'a, D: Db> {
 
 const TAG_COLS: &str = "id, name, color, created_at, updated_at, deleted_at";
 const TAGGING_COLS: &str = "id, tag_id, text_id, start_ord, end_ord, created_at, deleted_at, merged_into";
-const COMMENT_COLS: &str = "id, tagging_id, body, created_at, edited_at, deleted_at";
+const COMMENT_COLS: &str = "id, tagging_id, body, created_at, edited_at, deleted_at, author_id";
 
 fn tag_row(r: &[Value]) -> Result<TagRow, String> {
     Ok(TagRow {
@@ -393,6 +424,7 @@ fn comment_row(r: &[Value]) -> Result<CommentRow, String> {
         created_at: int(&r[3])?,
         edited_at: opt_int(&r[4])?,
         deleted_at: opt_int(&r[5])?,
+        author: opt_text(&r[6])?,
     })
 }
 
@@ -529,7 +561,7 @@ pub fn merge(db: &impl Db, owner: &str, from: &str, rows: &[Row], now: i64) -> R
                 Ok(Some(a.change))
             }
             Ok(a) => Ok(Some(a.change)),
-            Err(ApplyError::Op(_)) => Ok(None),
+            Err(ApplyError::Op(_) | ApplyError::Refused(_)) => Ok(None),
             Err(ApplyError::Internal(e)) => Err(e),
         }
     };

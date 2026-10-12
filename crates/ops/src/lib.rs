@@ -46,7 +46,7 @@ pub struct TaggingRow {
 }
 
 /// A comment on a tagging (shown on the live end of that tagging's `merged_into` chain).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommentRow {
     pub id: String,
     pub tagging: String,
@@ -54,6 +54,9 @@ pub struct CommentRow {
     pub created_at: i64,
     pub edited_at: Option<i64>,
     pub deleted_at: Option<i64>,
+    /// Who wrote it: stamped by the server (`space::apply`) on creation, never by `effect`; absent while optimistic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 /// The owner's palette (one row per owner).
@@ -392,7 +395,7 @@ pub fn effect(src: &dyn RowSource, op: &Op) -> Result<Change, OpError> {
             }
             // Stored on the live survivor (a client may still be looking at a tagging merged away since).
             let tagging = resolve_tagging(src, tagging)?.id;
-            let row = CommentRow { id: id.clone(), tagging, body, created_at: *now, edited_at: None, deleted_at: None };
+            let row = CommentRow { id: id.clone(), tagging, body, created_at: *now, ..CommentRow::default() };
             vec![RowChange { before: None, after: Row::Comment(row) }]
         }
         Intent::CommentUpdate { id, body, now } => {

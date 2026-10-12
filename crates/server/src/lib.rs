@@ -1,6 +1,7 @@
 //! bible-tags server: serves the client bundle, the scripture text artifacts, sessions and the sync WebSocket.
 
 pub mod auth;
+pub mod groups;
 pub mod hub;
 pub mod legacy;
 pub mod store;
@@ -11,7 +12,7 @@ use axum::extract::Request;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,6 +64,9 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         .route("/session", post(sync::session))
         .route("/sync", get(sync::sync))
         .route("/logout", post(auth::logout))
+        .route("/groups", any(groups::groups))
+        .route("/groups/{*rest}", any(groups::groups))
+        .route("/join", post(groups::groups))
         .route("/auth/google", get(auth::google_start))
         .route("/auth/google/callback", get(auth::google_callback))
         .fallback(|| async { (StatusCode::NOT_FOUND, "no such API route") })

@@ -13,6 +13,11 @@ ops = { path = "../ops" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+space = { path = "../space" }
+
+[dev-dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+space = { path = "../space", features = ["rusqlite"] }
 
 [lints]
 workspace = true

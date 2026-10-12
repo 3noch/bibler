@@ -1,9 +1,10 @@
-// All tags: find or create a tag, pick one to paint with, pin/unpin it in the palette, or open its editor. The
-// palette holds at most MAX_PALETTE tags; everything else lives here.
+// All tags: find or create a tag, pick one to paint with, pin/unpin it in the palette, hide it from the text, or
+// open its editor. The palette holds at most MAX_PALETTE tags; everything else lives here. Hiding is per device and
+// per space: "Hide all" then show a few, or "Show all" then hide a few.
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { MAX_PALETTE } from "@bible-tags/scripture";
 import type { Tag, TagStore } from "./store.ts";
-import { CloseIcon, PencilIcon, PinIcon, PlusIcon } from "./icons.tsx";
+import { CloseIcon, EyeIcon, EyeOffIcon, PencilIcon, PinIcon, PlusIcon } from "./icons.tsx";
 
 export function TagsSheet(props: {
   store: TagStore;
@@ -35,10 +36,18 @@ export function TagsSheet(props: {
     if (pal.includes(t.id)) props.store.setPalette(pal.filter((id) => id !== t.id));
     else if (!full()) props.store.setPalette([...pal, t.id]);
   };
+  const isHidden = (id: string) => props.store.hidden().has(id);
+  const toggleHidden = (id: string) => {
+    const next = new Set(props.store.hidden());
+    if (!next.delete(id)) next.add(id);
+    props.store.setHidden(next);
+  };
+  const hiddenCount = () => props.store.tags().filter((t) => isHidden(t.id)).length;
   const places = (id: string) => props.store.byTag().get(id)?.length ?? 0;
   /** The typed name, if no tag has it yet (names are unique case-insensitively). */
   const newName = createMemo(() => {
     const name = filter().trim();
+    if (props.store.readOnly()) return null;
     return name && !props.store.tags().some((t) => t.name.toLowerCase() === name.toLowerCase()) ? name : null;
   });
   const create = () => {
@@ -58,6 +67,7 @@ export function TagsSheet(props: {
           <h2>Tags</h2>
           <p class="muted">
             {props.store.tags().length} · {props.store.paletteIds().length}/{MAX_PALETTE} in the palette
+            <Show when={hiddenCount()}> · {hiddenCount()} hidden</Show>
           </p>
         </div>
         <button class="icon" onClick={props.onClose} aria-label="Close">
@@ -74,7 +84,7 @@ export function TagsSheet(props: {
       >
         <input
           class="tags-filter"
-          placeholder="Find or create a tag…"
+          placeholder={props.store.readOnly() ? "Find a tag…" : "Find or create a tag…"}
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
           aria-label="Find or create a tag"
@@ -82,6 +92,16 @@ export function TagsSheet(props: {
           ref={(el) => matchMedia("(pointer: fine)").matches && queueMicrotask(() => el.focus())}
         />
       </form>
+        <Show when={props.store.tags().length}>
+          <div class="visibility">
+            <button class="link" disabled={hiddenCount() === props.store.tags().length} onClick={() => props.store.setHidden(props.store.tags().map((t) => t.id))}>
+              Hide all
+            </button>
+            <button class="link" disabled={hiddenCount() === 0} onClick={() => props.store.setHidden([])}>
+              Show all
+            </button>
+          </div>
+        </Show>
       <ul class="tags-list nearby-body">
         <Show when={newName()}>
           <li class="create-row">
@@ -96,12 +116,13 @@ export function TagsSheet(props: {
         </Show>
         <For each={rows()} fallback={<Show when={!newName()}><li class="empty">No tags yet — type a name above to create one.</li></Show>}>
           {(t) => (
-            <li classList={{ active: props.active === t.id }} style={{ "--c": t.color }}>
+            <li classList={{ active: props.active === t.id, hidden: isHidden(t.id) }} style={{ "--c": t.color }}>
               <button class="tag-row" onClick={() => props.onChoose(t)} title={`Paint with ${t.name}`}>
                 <span class="swatch" />
                 <span class="nearby-name">{t.name}</span>
                 <span class="muted">{places(t.id)}</span>
               </button>
+              <Show when={!props.store.readOnly()}>
               <button
                 class="icon small pin"
                 classList={{ on: pinned().has(t.id) }}
@@ -113,9 +134,24 @@ export function TagsSheet(props: {
               >
                 <PinIcon filled={pinned().has(t.id)} />
               </button>
-              <button class="icon small" onClick={() => props.onEdit(t.id)} aria-label={`Edit ${t.name}`} title="Edit">
-                <PencilIcon />
+              </Show>
+              <button
+                class="icon small eye"
+                classList={{ on: isHidden(t.id) }}
+                onClick={() => toggleHidden(t.id)}
+                title={isHidden(t.id) ? "Hidden from the text: click to show" : "Hide from the text"}
+                aria-label={isHidden(t.id) ? `Show ${t.name}` : `Hide ${t.name}`}
+                aria-pressed={isHidden(t.id)}
+              >
+                <Show when={isHidden(t.id)} fallback={<EyeIcon />}>
+                  <EyeOffIcon />
+                </Show>
               </button>
+              <Show when={!props.store.readOnly()}>
+                <button class="icon small" onClick={() => props.onEdit(t.id)} aria-label={`Edit ${t.name}`} title="Edit">
+                  <PencilIcon />
+                </button>
+              </Show>
             </li>
           )}
         </For>

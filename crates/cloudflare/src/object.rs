@@ -6,9 +6,11 @@
 //! each replay) is atomic and every socket sees changes in seq order without a hub: a change is sent to every ready
 //! socket right after it is stored. `space::apply` checks everything before its first write (there is no rollback).
 //!
-//! Only the Worker can reach a Durable Object; it authenticates the session and names the owner in `x-owner`:
+//! Only the Worker can reach a Durable Object; it authenticates the session, checks the owner's role in the space
+//! (`api::groups`) and passes them in headers:
 //! ```text
-//! GET  /sync   (WebSocket upgrade, x-owner)   the sync protocol
+//! GET  /sync   (WebSocket upgrade, x-owner, x-space, x-role)   the sync protocol
+//! POST /kick?owner=                           close that owner's sockets (their role changed or they left)
 //! GET  /export?owner=   -> [Row]              an owner's live data (space::export)
 //! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
 //! ```
@@ -35,7 +37,12 @@ pub struct Space {
 /// Per-socket state, kept across hibernation.
 #[derive(Serialize, Deserialize)]
 struct Socket {
+    /// Who is connected (the author of their ops).
     owner: String,
+    /// This space's id, the data owner of its rows.
+    space: String,
+    /// May send ops (role edit or admin).
+    write: bool,
     /// `hello` was answered: the socket gets live changes.
     ready: bool,
 }
@@ -65,16 +72,28 @@ impl DurableObject for Space {
         let url = req.url()?;
         match url.path() {
             "/sync" => {
-                let Some(owner) = req.headers().get("x-owner")? else { return Response::error("no owner", 400) };
+                let h = req.headers();
+                let (Some(owner), Some(space), Some(role)) = (h.get("x-owner")?, h.get("x-space")?, h.get("x-role")?)
+                else {
+                    return Response::error("no owner", 400);
+                };
+                let write = api::groups::Role::parse(&role).is_some_and(api::groups::Role::can_write);
                 let pair = WebSocketPair::new()?;
-                self.state.accept_web_socket(&pair.server);
-                pair.server.serialize_attachment(Socket { owner, ready: false })?;
+                self.state.accept_websocket_with_tags(&pair.server, &[&owner]);
+                pair.server.serialize_attachment(Socket { owner, space, write, ready: false })?;
                 Response::from_websocket(pair.client)
             }
             "/export" => {
                 let owner = url.query_pairs().find(|(k, _)| k == "owner").map(|(_, v)| v.into_owned());
                 let Some(owner) = owner else { return Response::error("no owner", 400) };
                 Response::from_json(&space::export(&self.db, &owner).map_err(worker::Error::RustError)?)
+            }
+            "/kick" => {
+                let owner = url.query_pairs().find(|(k, _)| k == "owner").map(|(_, v)| v.into_owned());
+                for ws in self.state.get_websockets_with_tag(&owner.unwrap_or_default()) {
+                    let _ = close(&ws, "membership changed; reconnect");
+                }
+                Response::ok("")
             }
             "/merge" => {
                 let m: Merge = req.json().await?;
@@ -103,7 +122,7 @@ impl DurableObject for Space {
                 socket.ready = true;
                 ws.serialize_attachment(socket)
             }
-            (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket.owner, &op),
+            (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket, &op),
             (false, _) => close(&ws, "expected hello"),
             (true, _) => close(&ws, "expected an op"),
         }
@@ -143,14 +162,17 @@ impl Space {
         }
     }
 
-    fn op(&self, ws: &WebSocket, owner: &str, op: &ops::Op) -> Result<()> {
+    fn op(&self, ws: &WebSocket, socket: &Socket, op: &ops::Op) -> Result<()> {
         let reject = |code: &str, message: String| {
             ws.send_with_str(ServerMsg::Reject { op_id: &op.op_id, code, message }.json())
         };
+        if !socket.write {
+            return reject("read_only", "you can view this group but not change it".into());
+        }
         if let Err((code, message)) = api::check::check_op(&self.texts.borrow(), op) {
             return reject(code, message);
         }
-        match space::apply(&self.db, owner, op, now_ms()) {
+        match space::apply_by(&self.db, &socket.space, &socket.owner, op, now_ms()) {
             Ok(applied) => {
                 if !applied.duplicate {
                     self.broadcast(&ServerMsg::Change { change: &applied.change }.json());
@@ -158,6 +180,7 @@ impl Space {
                 ws.send_with_str(ServerMsg::Ack { op_id: &op.op_id, seq: applied.change.seq }.json())
             }
             Err(ApplyError::Op(e)) => reject(e.code(), e.to_string()),
+            Err(ApplyError::Refused(code)) => reject(code, "only its author can change a comment".into()),
             Err(ApplyError::Internal(e)) => {
                 worker::console_error!("apply {}: {e}", op.op_id);
                 reject("internal", "internal error".into())

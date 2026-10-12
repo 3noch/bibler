@@ -82,6 +82,19 @@
   hashed files cache-first; navigations and other files network-first with cache fallback; `/api/` untouched.
   Browser-tested under `/pages/`: 9 shell + 68 text files cached, and with the server stopped an unvisited book
   (Obadiah) opened. iOS gives an installed app storage separate from Safari (matters for local-only tags).
+- **Hidden tags** (2026-10-12): per device and per space (localStorage `bible-tags/hidden/v1:<space|me>`),
+  `store.visibleTaggings` feeds the text, tap-to-inspect and the eraser; search, Nearby lists and the tag list still
+  show hidden tags. All-tags sheet: an eye per row plus "Hide all" / "Show all" under the search box; hidden wells
+  in the dock are dimmed.
+- **Spaces / groups** (`Groups.tsx`, `store.ts`; 2026-10-12): a top-bar button (people icon; the group's name and a
+  "view only" badge when a group is open) opens a card: My tags + your groups (click to switch: sets
+  `bible-tags/space/v1` and reloads), "New group", and for the open group its members (admins: role select,
+  remove), invite links per role (create / copy / new link) and Leave. Caches (base, outbox, undo) are keyed
+  `<key>:<group id>` (the personal space keeps the old keys, so nothing migrates). `?join=<token>` joins before the
+  store opens. View-only: `submit` refuses with a notice, and the dock's New tag/eraser, the tag list's
+  create/pin/edit and the comment box are hidden. In a group, comments show the author's name (member name, email or
+  "Anonymous"; "You" for yours) and only your own have edit/delete. The role is refreshed on every socket open; a
+  refused group socket re-checks membership and falls back to My tags. Not in the offline-only build.
 - Touch screens don't autofocus the All-tags box (the keyboard covered the list): `matchMedia("(pointer: fine)")`.
 - Testing UI on this machine: run a throwaway server on `127.0.0.1:<port>` (NOT `localhost`: cookies ignore ports,
   so a test server on localhost overwrites the user's dev session cookie).

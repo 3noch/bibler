@@ -8,7 +8,7 @@
 
 use ops::{Change, Op, Row};
 use rusqlite::{params, Connection, OptionalExtension};
-use space::{Applied, ApplyError};
+use space::{Applied, ApplyError, Db, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -29,11 +29,20 @@ pub trait Store: Send + Sync {
     /// # Errors
     /// On storage failure.
     fn session_owner(&self, token_hash: &str) -> Result<Option<OwnerId>, String>;
-    /// Apply `owner`'s op in `space` exactly once (by `op_id`).
+    /// Apply `author`'s op to `space`'s rows exactly once (by `op_id`). The space is the data owner (a personal
+    /// space's id is its owner's), so a group's members share its rows (`space::apply_by`).
     ///
     /// # Errors
-    /// `ApplyError::Op` if the op is invalid; `ApplyError::Internal` on storage failure.
-    fn apply(&self, space: &str, owner: &str, op: &Op, now: i64) -> Result<Applied, ApplyError>;
+    /// `ApplyError::Op`/`Refused` if the op is invalid or not allowed; `ApplyError::Internal` on storage failure.
+    fn apply(&self, space: &str, author: &str, op: &Op, now: i64) -> Result<Applied, ApplyError>;
+    /// Run a statement on the accounts database (`api::groups`).
+    ///
+    /// # Errors
+    /// On SQL failure.
+    fn accounts_exec(&self, sql: &str, params: Vec<Value>) -> Result<(), String>;
+    /// # Errors
+    /// On SQL failure.
+    fn accounts_query(&self, sql: &str, params: Vec<Value>) -> Result<Vec<Vec<Value>>, String>;
     /// The space's changes with `seq > after`, oldest first, at most `limit`.
     ///
     /// # Errors
@@ -137,7 +146,9 @@ impl SqliteStore {
     pub fn open(dir: &Path, listener: CommitListener) -> Result<Self, String> {
         std::fs::create_dir_all(dir.join("spaces")).map_err(|e| format!("{}: {e}", dir.display()))?;
         let accounts = connect(&dir.join("accounts.sqlite"))?;
-        accounts.execute_batch(sql::SCHEMA).map_err(|e| format!("accounts schema: {e}"))?;
+        for statement in sql::schema_statements() {
+            accounts.execute_batch(statement).map_err(|e| format!("accounts schema: {e}"))?;
+        }
         let mut w = Writer { accounts, spaces: HashMap::new() };
         let (tx, rx) = mpsc::channel::<Job>();
         let thread = std::thread::Builder::new()
@@ -267,13 +278,13 @@ impl Store for SqliteStore {
         })
     }
 
-    fn apply(&self, space: &str, owner: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
-        let (dir, space, owner, op, listener) =
-            (self.dir.clone(), space.to_string(), owner.to_string(), op.clone(), self.listener.clone());
+    fn apply(&self, space: &str, author: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
+        let (dir, space, author, op, listener) =
+            (self.dir.clone(), space.to_string(), author.to_string(), op.clone(), self.listener.clone());
         self.write(move |w| {
             let conn = w.space(&dir, &space)?;
             let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-            let applied = space::apply(&*tx, &owner, &op, now)?;
+            let applied = space::apply_by(&*tx, &space, &author, &op, now)?;
             tx.commit().map_err(|e| e.to_string())?;
             if !applied.duplicate {
                 listener(&space, &applied.change);
@@ -281,6 +292,15 @@ impl Store for SqliteStore {
             Ok(applied)
         })
         .map_err(ApplyError::Internal)?
+    }
+
+    fn accounts_exec(&self, sql: &str, params: Vec<Value>) -> Result<(), String> {
+        let sql = sql.to_string();
+        self.write(move |w| w.accounts.exec(&sql, &params))?
+    }
+
+    fn accounts_query(&self, sql: &str, params: Vec<Value>) -> Result<Vec<Vec<Value>>, String> {
+        self.read("", |c| c.query(sql, &params))
     }
 
     fn changes_since(&self, space: &str, after: u64, limit: usize) -> Result<Vec<Change>, String> {

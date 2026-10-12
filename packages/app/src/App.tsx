@@ -7,6 +7,7 @@ import { NearbyPanel } from "./Nearby.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
 import { AccountButton, AccountCard } from "./Account.tsx";
+import { SpaceButton, SpacesCard } from "./Groups.tsx";
 import { BrushIcon, CloseIcon, EraserIcon, HelpIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
 
 export function App() {
@@ -32,6 +33,7 @@ function Main(props: { text: Text; store: TagStore }) {
   const [sheetTag, setSheetTag] = createSignal<string | null>(null);
   const [help, setHelp] = createSignal(false);
   const [accountOpen, setAccountOpen] = createSignal(false);
+  const [spacesOpen, setSpacesOpen] = createSignal(false);
   const [chips, setChips] = createSignal<Chip[]>([]);
   const [tagsOpen, setTagsOpen] = createSignal(false);
 
@@ -134,10 +136,11 @@ function Main(props: { text: Text; store: TagStore }) {
       const tag = store.palette()[Number(key) - 1];
       if (tag) chooseTag(tag);
     } else if (key === "escape") {
-      if (near() || help() || accountOpen() || sheetTag()) {
+      if (near() || help() || accountOpen() || spacesOpen() || sheetTag()) {
         setNear(null);
         setHelp(false);
         setAccountOpen(false);
+        setSpacesOpen(false);
         setSheetTag(null);
       } else if (tagsOpen()) setTagsOpen(false); else if (chips().length) setChips([]);
       else stopPainting();
@@ -185,11 +188,23 @@ function Main(props: { text: Text; store: TagStore }) {
               <span aria-hidden="true">⚠</span> Local only
             </button>
           </Show>
+          <Show when={store.mode === "server"}>
+            <SpaceButton
+              store={store}
+              open={spacesOpen()}
+              onToggle={() => {
+                setHelp(false);
+                setAccountOpen(false);
+                setSpacesOpen((o) => !o);
+              }}
+            />
+          </Show>
           <AccountButton
             store={store}
             open={accountOpen()}
             onToggle={() => {
               setHelp(false);
+              setSpacesOpen(false);
               setAccountOpen((o) => !o);
             }}
           />
@@ -198,6 +213,7 @@ function Main(props: { text: Text; store: TagStore }) {
             classList={{ on: help() }}
             onClick={() => {
               setAccountOpen(false);
+              setSpacesOpen(false);
               setHelp((h) => !h);
             }}
             title="Help"
@@ -213,6 +229,9 @@ function Main(props: { text: Text; store: TagStore }) {
       <Show when={accountOpen()}>
         <AccountCard store={store} onClose={() => setAccountOpen(false)} />
       </Show>
+      <Show when={spacesOpen()}>
+        <SpacesCard store={store} onClose={() => setSpacesOpen(false)} />
+      </Show>
 
       <main class="page">
         <Bible
@@ -224,7 +243,7 @@ function Main(props: { text: Text; store: TagStore }) {
           onLocation={onLocation}
           onInspect={(ord) => {
             // Tags at this word, in palette order (then by name).
-            const ids = [...new Set(store.taggings().filter((t) => t.start <= ord && ord < t.end).map((t) => t.tag))];
+            const ids = [...new Set(store.visibleTaggings().filter((t) => t.start <= ord && ord < t.end).map((t) => t.tag))];
             const pal = store.palette().map((t) => t.id);
             const rank = (id: string) => (pal.includes(id) ? pal.indexOf(id) : 100);
             ids.sort((a, b) => rank(a) - rank(b) || (store.tagById().get(a)?.name ?? "").localeCompare(store.tagById().get(b)?.name ?? ""));
@@ -505,6 +524,7 @@ function Dock(props: {
       n={n}
       active={props.active === tag.id}
       dragging={dragId() === tag.id}
+      hidden={props.store.hidden().has(tag.id)}
       onTap={(e) => {
         if (!suppressClick) props.onChoose(tag, e.altKey);
       }}
@@ -532,7 +552,7 @@ function Dock(props: {
         <For each={wellsShown()}>{(tag, i) => well(tag, i() + 1)}</For>
         <Show when={offPalette()}>{(tag) => well(tag(), 0)}</Show>
         <Show
-          when={adding()}
+          when={adding() || props.store.readOnly()}
           fallback={
             <button class="well add" onClick={() => setAdding(true)} title="New tag" aria-label="New tag">
               <PlusIcon />
@@ -542,6 +562,7 @@ function Dock(props: {
             </button>
           }
         >
+          <Show when={!props.store.readOnly()}>
           <form
             class="well adding"
             onSubmit={(e) => {
@@ -554,6 +575,7 @@ function Dock(props: {
           >
             <input name="name" placeholder="Tag name" ref={(el) => queueMicrotask(() => el.focus())} onBlur={() => setAdding(false)} />
           </form>
+          </Show>
         </Show>
       </div>
       <div class="tools">
@@ -563,9 +585,11 @@ function Dock(props: {
             <span class="badge-count">{hidden()}</span>
           </Show>
         </button>
+        <Show when={!props.store.readOnly()}>
         <button class="well tool" classList={{ active: props.eraser }} onMouseDown={keepSelection} onClick={props.onEraser} title={props.eraser ? "Eraser — tap to stop" : "Eraser (E)"} aria-label="Eraser" aria-pressed={props.eraser}>
           <EraserIcon />
         </button>
+        </Show>
       </div>
     </nav>
   );
@@ -578,6 +602,8 @@ function Well(props: {
   n: number;
   active: boolean;
   dragging: boolean;
+  /** Hidden from the text (shown dimmed). */
+  hidden: boolean;
   onTap: (e: MouseEvent) => void;
   onEdit: () => void;
   onContextMenu: (e: MouseEvent) => void;
@@ -590,7 +616,7 @@ function Well(props: {
   });
   const hint = () => (props.n ? " · drag to reorder" : "");
   return (
-    <span class="well-group" ref={group} classList={{ active: props.active, dragging: props.dragging }} style={{ "--c": props.tag.color }}>
+    <span class="well-group" ref={group} classList={{ active: props.active, dragging: props.dragging, hidden: props.hidden }} style={{ "--c": props.tag.color }}>
       <button
         class="well"
         data-well={props.tag.id}

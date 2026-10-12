@@ -49,6 +49,8 @@ export interface CommentRow {
   created_at: number;
   edited_at: number | null;
   deleted_at: number | null;
+  /** Who wrote it: stamped by the server on creation (absent while optimistic, and in effect's output). */
+  author?: string;
 }
 
 export type Row = TagRow | TaggingRow | PaletteRow | CommentRow;

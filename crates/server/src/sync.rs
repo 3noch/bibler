@@ -1,12 +1,13 @@
 //! Sessions and the sync WebSocket (protocol: `api::protocol`; session rules: `api::session`).
 
-use crate::hub::Hub;
+use crate::hub::{Event, Hub};
 use crate::store::{Identity, Store};
 use crate::texts::Texts;
+use api::groups::Role;
 use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, REPLAY_PAGE};
 use api::session::{random_hex, token_hash};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -100,15 +101,35 @@ pub async fn session(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
     ([(header::SET_COOKIE, new_session_cookie(&st, &token))], session_json(&st, &owner, None)).into_response()
 }
 
-/// `GET /api/sync`: upgrade to the sync WebSocket.
-pub async fn sync(State(st): State<Arc<AppState>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
+#[derive(serde::Deserialize)]
+pub struct SyncQuery {
+    /// The space to sync: a group the owner belongs to, or (default) their personal space.
+    space: Option<String>,
+}
+
+/// `GET /api/sync?space=`: upgrade to the sync WebSocket.
+pub async fn sync(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<SyncQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
     if !same_origin(&headers) {
         return (StatusCode::FORBIDDEN, "cross-origin").into_response();
     }
     let Some(owner) = owner_of(&st, &headers).await else {
         return (StatusCode::UNAUTHORIZED, "no session").into_response();
     };
-    ws.max_message_size(MAX_FRAME).on_upgrade(move |socket| run_socket(socket, st, owner))
+    let space = q.space.unwrap_or_else(|| owner.clone());
+    if !crate::store::valid_space(&space) {
+        return (StatusCode::BAD_REQUEST, "bad space").into_response();
+    }
+    let role = match api::groups::role_of(&crate::groups::Accounts(st.store.clone()), &space, &owner).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::FORBIDDEN, "not a member").into_response(),
+        Err(e) => return internal(&e),
+    };
+    ws.max_message_size(MAX_FRAME).on_upgrade(move |socket| run_socket(socket, st, owner, space, role))
 }
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -143,10 +164,9 @@ async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64
     }
 }
 
-async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
+async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: String, role: Role) {
     let (mut tx, mut rx) = socket.split();
-    let space = owner.clone(); // the owner's personal space (shared spaces will be chosen in `hello`)
-                               // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
+    // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
     let mut live = st.hub.subscribe(&space);
     let mut last = loop {
         match rx.next().await {
@@ -169,23 +189,29 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(t))) => {
-                    if !handle_op(&st, &space, &owner, &mut tx, &t).await {
+                    if !handle_op(&st, &space, &owner, role, &mut tx, &t).await {
                         return;
                     }
                 }
                 Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_))) => {}
                 _ => return,
             },
-            change = live.recv() => match change {
-                Ok(c) if c.seq <= last => {}
-                Ok(c) if c.seq == last + 1 => {
+            event = live.recv() => match event {
+                Ok(Event::Kick(who)) => {
+                    if who == owner {
+                        let _ = send(&mut tx, &ServerMsg::Error { message: "membership changed; reconnect" }).await;
+                        return;
+                    }
+                }
+                Ok(Event::Change(c)) if c.seq <= last => {}
+                Ok(Event::Change(c)) if c.seq == last + 1 => {
                     if !send(&mut tx, &ServerMsg::Change { change: &c }).await {
                         return;
                     }
                     last = c.seq;
                 }
                 // A gap (should not happen; publishes are ordered): fill it from the store.
-                Ok(c) => {
+                Ok(Event::Change(c)) => {
                     if !send_since(&st, &space, &mut tx, &mut last, Some(c.seq)).await {
                         return;
                     }
@@ -201,7 +227,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
 }
 
 /// Apply one client message. Returns false if the socket should close.
-async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, text: &str) -> bool {
+async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, role: Role, tx: &mut Tx, text: &str) -> bool {
     let op = match serde_json::from_str::<ClientMsg>(text) {
         Ok(ClientMsg::Op { op }) => op,
         Ok(ClientMsg::Hello { .. }) | Err(_) => {
@@ -209,6 +235,10 @@ async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, te
             return false;
         }
     };
+    if !role.can_write() {
+        let message = "you can view this group but not change it".into();
+        return send(tx, &ServerMsg::Reject { op_id: &op.op_id, code: "read_only", message }).await;
+    }
     if let Err((code, message)) = api::check::check_op(&st.texts, &op) {
         return send(tx, &ServerMsg::Reject { op_id: &op.op_id, code, message }).await;
     }
@@ -217,6 +247,10 @@ async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, te
         Ok(Ok(applied)) => send(tx, &ServerMsg::Ack { op_id: &op.op_id, seq: applied.change.seq }).await,
         Ok(Err(ApplyError::Op(e))) => {
             send(tx, &ServerMsg::Reject { op_id: &op.op_id, code: e.code(), message: e.to_string() }).await
+        }
+        Ok(Err(ApplyError::Refused(code))) => {
+            let message = "only its author can change a comment".into();
+            send(tx, &ServerMsg::Reject { op_id: &op.op_id, code, message }).await
         }
         Ok(Err(ApplyError::Internal(e))) | Err(e) => {
             tracing::error!("apply {}: {e}", op.op_id);

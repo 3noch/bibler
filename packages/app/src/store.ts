@@ -2,6 +2,9 @@
 // connection. Edits apply optimistically and sync in the background; everything also works offline and catches
 // up on reconnect.
 //
+// Spaces: the user's own tags (personal space) or a group's, shared with its members (see groups.ts). One space is
+// open at a time; switching reloads the page. Caches are per space (the personal space keeps the original keys).
+//
 // Persistence (several tabs share one origin):
 //   localStorage  BASE_KEY    confirmed rows at a seq (a cache; any tab may write it, never to a lower seq)
 //   localStorage  OUTBOX_KEY  unconfirmed ops of every tab (union; an op leaves only once confirmed or dropped),
@@ -37,6 +40,9 @@ const BASE_KEY = "bible-tags/base/v1";
 const OUTBOX_KEY = "bible-tags/outbox/v1";
 const UNDO_KEY = "bible-tags/undo/v1";
 const LEGACY_KEY = "bible-tags/local/v1"; // the local-only prototype's data, imported once
+/** The open group (absent: the personal space). */
+const SPACE_KEY = "bible-tags/space/v1";
+const HIDDEN_KEY = "bible-tags/hidden/v1";
 const COLORS = ["#e6a23c", "#4fa3e0", "#6cc070", "#e06c9f", "#9b7be0", "#e0c84f", "#4fc9c0", "#e07b4f", "#8fa0b0"];
 
 type Base = Pick<Snapshot, "owner" | "seq" | "rows" | "changes" | "confirmed">;
@@ -86,25 +92,125 @@ function takeAuthError(): string | undefined {
 
 export type TagStore = Awaited<ReturnType<typeof openTagStore>>;
 
+export type Role = "admin" | "edit" | "read";
+export type GroupSummary = { id: string; name: string; role: Role };
+export type Member = { owner: string; role: Role; name: string | null; email: string | null };
+export type GroupDetail = GroupSummary & { members: Member[]; invites?: { edit?: string; read?: string } };
+
+/** A groups API call (api::groups); throws with the server's error code. */
+async function groupsApi<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+  return json;
+}
+
+const GROUP_ERRORS: Record<string, string> = {
+  bad_name: "A group name needs 1–100 characters.",
+  bad_invite: "That invite link is no longer valid. Ask for a new one.",
+  last_admin: "A group needs another admin first.",
+  forbidden: "Only the group's admins can do that.",
+};
+
+function storageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // storage blocked: the setting lasts for this page only
+  }
+}
+
+/** `?join=<token>` (an invite link): join that group and open it. Returns a message if it failed. */
+async function takeJoin(): Promise<string | undefined> {
+  const url = new URL(location.href);
+  const token = url.searchParams.get("join");
+  if (!token) return undefined;
+  url.searchParams.delete("join");
+  history.replaceState(history.state, "", url);
+  try {
+    await fetchSession(); // an anonymous owner is fine
+    const g = await groupsApi<GroupDetail>("POST", "/join", { token });
+    storageSet(SPACE_KEY, g.id);
+    return `You joined “${g.name}”${g.role === "read" ? " (view only)" : ""}.`;
+  } catch (e) {
+    return GROUP_ERRORS[(e as Error).message] ?? "Couldn't join that group (offline?).";
+  }
+}
+
 export async function openTagStore() {
   let base: Base | undefined;
   let owner: string;
   let session: Session | undefined;
+  const joined = LOCAL_ONLY ? undefined : await takeJoin();
+  /** The open group, or null for the personal space. */
+  let space: string | null = LOCAL_ONLY ? null : storageGet(SPACE_KEY);
+  let groups: GroupSummary[] = [];
+  const keyOf = (k: string) => (space ? `${k}:${space}` : k);
   if (LOCAL_ONLY) {
     const db = loadLocalDb();
     owner = "local";
     base = { owner, seq: db.seq, rows: db.rows, changes: db.changes, confirmed: db.changes.map((c) => c.op_id) };
   } else {
-    base = read<Base>(localStorage, BASE_KEY);
     try {
       session = await fetchSession();
-      owner = session.owner;
-    } catch (e) {
-      if (!base) throw e; // first run needs the server once
-      owner = base.owner; // offline: keep working on local state
+      groups = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
+      if (space && !groups.some((g) => g.id === space)) {
+        storageSet(SPACE_KEY, (space = null)); // no longer a member
+      }
+    } catch {
+      // offline: keep working on local state
     }
+    base = read<Base>(localStorage, keyOf(BASE_KEY));
+    // A group's caches are keyed by the group (its rows belong to it); the personal space's by the owner.
+    const id = space ?? session?.owner ?? base?.owner;
+    if (!id) throw new Error("first run needs the server once");
+    owner = id;
   }
-  const undo = read<Undo>(sessionStorage, UNDO_KEY);
+  const me = session?.owner ?? (space ? undefined : owner);
+  const [role, setRole] = createSignal<Role>(space ? (groups.find((g) => g.id === space)?.role ?? "read") : "admin");
+  const [groupList, setGroupList] = createSignal(groups);
+  const [members, setMembers] = createSignal<Member[]>([]);
+  const refreshGroups = async () => {
+    if (LOCAL_ONLY) return;
+    try {
+      const list = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
+      setGroupList(list);
+      if (space) {
+        const g = list.find((x) => x.id === space);
+        if (!g) {
+          notify("You're no longer a member of this group.");
+          switchSpace(null);
+          return;
+        }
+        setRole(g.role);
+        setMembers((await groupsApi<GroupDetail>("GET", `/groups/${space}`)).members);
+      }
+    } catch {
+      // offline
+    }
+  };
+  /** Open another space (null: your own tags). Reloads the page. */
+  const switchSpace = (id: string | null) => {
+    clearTimeout(saveTimer);
+    save();
+    storageSet(SPACE_KEY, id);
+    location.reload();
+  };
+  const undo = read<Undo>(sessionStorage, keyOf(UNDO_KEY));
   const snap: Snapshot | undefined = base && {
     ...base,
     pending: [],
@@ -112,7 +218,7 @@ export async function openTagStore() {
     redo: undo?.owner === owner ? undo.redo : [],
   };
   const sync = new SyncState(owner, ulid, Date.now, snap);
-  const outbox = read<Outbox>(localStorage, OUTBOX_KEY);
+  const outbox = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
   if (outbox?.owner === owner) sync.adopt(outbox.ops);
 
   const [version, setVersion] = createSignal(0);
@@ -126,24 +232,34 @@ export async function openTagStore() {
   sync.onNotice(notify);
   const authError = takeAuthError();
   if (authError) notify(authError);
+  if (joined) notify(joined);
+
+  /** Tags hidden from the text, per space (this device only). */
+  const hiddenKey = `${HIDDEN_KEY}:${space ?? "me"}`;
+  const [hidden, setHiddenSet] = createSignal(new Set<string>(JSON.parse(storageGet(hiddenKey) ?? "[]") as string[]));
+  const setHidden = (ids: Iterable<string>) => {
+    const next = new Set(ids);
+    setHiddenSet(next);
+    storageSet(hiddenKey, next.size ? JSON.stringify([...next]) : null);
+  };
 
   let saveTimer: number | undefined;
   const save = () =>
     withStorageLock(() => {
       try {
         const snap = sync.snapshot();
-        const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, BASE_KEY);
+        const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, keyOf(BASE_KEY));
         if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq)) {
           const { owner: o, seq, rows, changes, confirmed } = snap;
-          localStorage.setItem(BASE_KEY, JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
+          localStorage.setItem(keyOf(BASE_KEY), JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
         }
-        const theirs = read<Outbox>(localStorage, OUTBOX_KEY);
+        const theirs = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
         const ops = theirs?.owner === owner ? [...theirs.ops] : [];
         const ids = new Set(ops.map((o) => o.op_id));
         for (const op of snap.pending) if (!ids.has(op.op_id)) ops.push(op);
         const live = ops.filter((o) => !sync.isConfirmed(o.op_id) && !sync.dropped.has(o.op_id));
-        localStorage.setItem(OUTBOX_KEY, JSON.stringify({ owner, ops: live } satisfies Outbox));
-        sessionStorage.setItem(UNDO_KEY, JSON.stringify({ owner, undo: snap.undo, redo: snap.redo } satisfies Undo));
+        localStorage.setItem(keyOf(OUTBOX_KEY), JSON.stringify({ owner, ops: live } satisfies Outbox));
+        sessionStorage.setItem(keyOf(UNDO_KEY), JSON.stringify({ owner, undo: snap.undo, redo: snap.redo } satisfies Undo));
       } catch {
         notify("Could not save locally (storage full or blocked); changes still sync while online.");
       }
@@ -155,18 +271,24 @@ export async function openTagStore() {
   });
   // Another tab queued ops (e.g. while offline): take them too, so whichever tab is online sends them.
   window.addEventListener("storage", (e) => {
-    if (e.key !== OUTBOX_KEY || !e.newValue) return;
+    if (e.key !== keyOf(OUTBOX_KEY) || !e.newValue) return;
     const theirs = JSON.parse(e.newValue) as Outbox;
     if (theirs.owner === owner) sync.adopt(theirs.ops);
   });
 
-  importLegacy(sync);
+  if (!space) importLegacy(sync);
   if (LOCAL_ONLY) connectLocal(sync, notify);
-  else connectForever(sync);
+  else connectForever(sync, space, () => void refreshGroups());
+  if (space) void refreshGroups();
 
   const view = createMemo(() => (version(), sync.view), undefined, { equals: false });
   const tags = createMemo(() => [...view().tags.values()].filter((t) => t.deleted_at === null));
   const taggings = createMemo(() => [...view().taggings.values()].filter((t) => t.deleted_at === null));
+  /** What the text shows: taggings of tags that aren't hidden. */
+  const visibleTaggings = createMemo(() => {
+    const h = hidden();
+    return h.size ? taggings().filter((t) => !h.has(t.tag)) : taggings();
+  });
   const tagById = createMemo(() => new Map(tags().map((t) => [t.id, t])));
   const byTag = createMemo(() => {
     const m = new Map<string, TaggingRow[]>();
@@ -198,8 +320,14 @@ export async function openTagStore() {
     bad_body: "A comment can't be empty or longer than 10,000 characters",
     tagging_deleted: "That highlight was removed",
     comment_deleted: "That comment was deleted",
+    read_only: "You can view this group but not change it",
+    not_author: "Only its author can change a comment",
   };
   const submit = (intents: OpIntent[]) => {
+    if (role() === "read") {
+      notify(MESSAGES.read_only!);
+      return false;
+    }
     const err = sync.submit(intents);
     if (err) notify(MESSAGES[err.code] ?? `Not applied: ${err.code}`);
     return !err;
@@ -230,13 +358,44 @@ export async function openTagStore() {
       }
       clearTimeout(saveTimer);
       withStorageLock(() => {
-        for (const k of [BASE_KEY, OUTBOX_KEY]) localStorage.removeItem(k);
-        sessionStorage.removeItem(UNDO_KEY);
+        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY];
+        for (const k of Object.keys(localStorage)) if (ours.some((o) => k === o || k.startsWith(`${o}:`))) localStorage.removeItem(k);
+        for (const k of Object.keys(sessionStorage)) if (k.startsWith(UNDO_KEY)) sessionStorage.removeItem(k);
         location.reload();
       });
     },
+    /** This session's owner (comment authors are owners). */
+    me,
+    /** The open group's id, or null for your own tags. */
+    space,
+    /** Your role here ("admin" in your own space). */
+    role,
+    readOnly: () => role() === "read",
+    /** The groups you belong to. */
+    groups: groupList,
+    /** The open group's members (empty in your own space). */
+    members,
+    /** The open group, if any. */
+    group: () => groupList().find((g) => g.id === space),
+    switchSpace,
+    refreshGroups,
+    /** Groups API (api::groups); rejects with a readable message. */
+    async groupCall<T>(method: string, path: string, body?: unknown): Promise<T> {
+      try {
+        const out = await groupsApi<T>(method, path, body);
+        void refreshGroups();
+        return out;
+      } catch (e) {
+        const msg = GROUP_ERRORS[(e as Error).message] ?? `Couldn't update the group (${(e as Error).message}).`;
+        notify(msg);
+        throw new Error(msg);
+      }
+    },
+    hidden,
+    setHidden,
     tags,
     taggings,
+    visibleTaggings,
     tagById,
     byTag,
     palette,
@@ -255,7 +414,7 @@ export async function openTagStore() {
       submit([{ kind: "erase", tag, text_id: TEXT_ID, start, end, split_id: ulid(), now: Date.now() }]),
     /** Erase every tag over [start, end) as one undo step. */
     eraseAll(start: number, end: number) {
-      const hit = new Set(taggings().filter((t) => t.start < end && t.end > start).map((t) => t.tag));
+      const hit = new Set(visibleTaggings().filter((t) => t.start < end && t.end > start).map((t) => t.tag));
       const now = Date.now();
       return submit([...hit].map((tag) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now })));
     },
@@ -285,8 +444,9 @@ export async function openTagStore() {
   };
 }
 
-/** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online. */
-function connectForever(sync: SyncState) {
+/** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online.
+ *  `onOpen` runs on each connection (a group refreshes the role, which may have changed). */
+function connectForever(sync: SyncState, space: string | null, onOpen: () => void) {
   let delay = 1000;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
@@ -294,16 +454,21 @@ function connectForever(sync: SyncState) {
     clearTimeout(timer);
     if (ws) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const sock = new WebSocket(`${proto}://${location.host}/api/sync`);
+    const query = space ? `?space=${encodeURIComponent(space)}` : "";
+    const sock = new WebSocket(`${proto}://${location.host}/api/sync${query}`);
     ws = sock;
-    sock.onopen = () => sync.connected((m) => sock.send(JSON.stringify(m)));
+    sock.onopen = () => {
+      sync.connected((m) => sock.send(JSON.stringify(m)));
+      onOpen();
+    };
     sock.onmessage = (e) => {
       const msg = JSON.parse(e.data as string);
       if (msg.type === "ready") delay = 1000;
       if (!sync.receive(msg)) sock.close();
     };
-    sock.onclose = () => {
+    sock.onclose = (e) => {
       ws = null;
+      if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
       sync.disconnected();
       timer = window.setTimeout(open, delay);
       delay = Math.min(delay * 2, 30_000);

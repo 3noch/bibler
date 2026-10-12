@@ -55,7 +55,17 @@ async fn session(srv: &Server) -> String {
 struct Client(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
 async fn connect(srv: &Server, cookie: Option<&str>, origin: Option<&str>) -> Result<Client, StatusCode> {
-    let mut req = format!("ws://{}/api/sync", srv.addr).into_client_request().unwrap();
+    connect_to(srv, cookie, origin, "").await
+}
+
+/// `query`: e.g. `?space=<group>`.
+async fn connect_to(
+    srv: &Server,
+    cookie: Option<&str>,
+    origin: Option<&str>,
+    query: &str,
+) -> Result<Client, StatusCode> {
+    let mut req = format!("ws://{}/api/sync{query}", srv.addr).into_client_request().unwrap();
     if let Some(c) = cookie {
         req.headers_mut().insert(header::COOKIE, c.parse().unwrap());
     }
@@ -351,4 +361,96 @@ async fn a_pre_spaces_database_is_imported_with_its_seqs() {
     // Never imported twice: the data directory exists now.
     std::fs::remove_file(&old).unwrap();
     start(&cfg).await;
+}
+
+/// A groups API call (`/api/groups...`, `/api/join`).
+async fn api(srv: &Server, cookie: &str, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method(method)
+        .uri(format!("/api{path}"))
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = srv.app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// Read `n` messages, skipping acks; returns the rest.
+async fn non_acks(c: &mut Client, n: usize) -> Vec<Value> {
+    let mut out = vec![];
+    while out.len() < n {
+        let m = c.recv().await;
+        if m["type"] != "ack" {
+            out.push(m);
+        }
+    }
+    out
+}
+
+#[tokio::test]
+#[allow(clippy::many_single_char_names)]
+async fn groups_share_rows_with_roles() {
+    let srv = start(&config("groups")).await;
+    let (ann, bob, cat, dan) = (session(&srv).await, session(&srv).await, session(&srv).await, session(&srv).await);
+    let (_, g) = api(&srv, &ann, "POST", "/groups", json!({"name": "Study"})).await;
+    let id = g["id"].as_str().unwrap().to_string();
+    let invites = format!("/groups/{id}/invites");
+    let (_, g) = api(&srv, &ann, "POST", &invites, json!({"role": "read"})).await;
+    let read = g["invites"]["read"].clone();
+    let (_, g) = api(&srv, &ann, "POST", &invites, json!({"role": "edit"})).await;
+    let edit = g["invites"]["edit"].clone();
+    assert_eq!(api(&srv, &bob, "POST", "/join", json!({"token": read})).await.1["role"], "read");
+    assert_eq!(api(&srv, &cat, "POST", "/join", json!({"token": edit})).await.1["role"], "edit");
+    let (_, list) = api(&srv, &cat, "GET", "/groups", Value::Null).await;
+    assert_eq!(list["groups"][0]["name"], "Study");
+
+    let q = format!("?space={id}");
+    assert_eq!(connect_to(&srv, Some(&dan), None, &q).await.err(), Some(StatusCode::FORBIDDEN), "not a member");
+    let mut a = connect_to(&srv, Some(&ann), None, &q).await.unwrap();
+    let mut b = connect_to(&srv, Some(&bob), None, &q).await.unwrap();
+    let mut c = connect_to(&srv, Some(&cat), None, &q).await.unwrap();
+    for x in [&mut a, &mut b, &mut c] {
+        assert_eq!(x.hello(0).await.len(), 0);
+    }
+    // Ann's tag is shared: Cat paints with it, Bob (read only) sees everything live but can't write.
+    a.op(tag_create("t", "T", "Grace")).await;
+    c.op(paint("p", "T", T1 + 1, T1 + 5, "g1")).await;
+    c.op(json!({"op_id": "c", "kind": "comment_create", "id": "c1", "tagging": "g1", "body": "Hi", "now": 3})).await;
+    let seen = non_acks(&mut b, 3).await;
+    assert_eq!(seen.iter().map(|m| m["change"]["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [1, 2, 3]);
+    let (_, me) = api(&srv, &cat, "POST", "/session", Value::Null).await;
+    assert_eq!(seen[2]["change"]["rows"][0]["after"]["author"], me["owner"], "comments carry their author");
+    b.op(paint("pb", "T", T1 + 20, T1 + 22, "g2")).await;
+    assert_eq!(b.recv().await["code"], "read_only");
+    // Only its author can change a comment.
+    a.op(json!({"op_id": "e", "kind": "comment_update", "id": "c1", "body": "Mine now", "now": 4})).await;
+    assert_eq!(non_acks(&mut a, 4).await[3]["code"], "not_author");
+    // The group's rows are not Ann's personal rows.
+    let mut personal = connect(&srv, Some(&ann), None).await.unwrap();
+    assert_eq!(personal.hello(0).await.len(), 0);
+
+    // Demoting Cat disconnects her; she reconnects as a reader.
+    let (status, _) = api(
+        &srv,
+        &ann,
+        "PUT",
+        &format!("/groups/{id}/members/{}", me["owner"].as_str().unwrap()),
+        json!({"role": "read"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let kicked = non_acks(&mut c, 4).await; // the three changes, then the error
+    assert_eq!(kicked[3]["type"], "error");
+    let mut c = connect_to(&srv, Some(&cat), None, &q).await.unwrap();
+    assert_eq!(c.hello(0).await.len(), 3);
+    c.op(paint("pc", "T", T1 + 30, T1 + 32, "g3")).await;
+    assert_eq!(c.recv().await["code"], "read_only");
+    // Leaving revokes access.
+    let (_, bob_me) = api(&srv, &bob, "POST", "/session", Value::Null).await;
+    api(&srv, &bob, "DELETE", &format!("/groups/{id}/members/{}", bob_me["owner"].as_str().unwrap()), Value::Null)
+        .await;
+    assert_eq!(b.recv().await["type"], "error");
+    assert_eq!(connect_to(&srv, Some(&bob), None, &q).await.err(), Some(StatusCode::FORBIDDEN));
 }

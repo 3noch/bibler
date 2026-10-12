@@ -342,7 +342,7 @@ function Chapter(props: {
   /** Verse-bucket index for this chapter: slot -> taggings overlapping it. */
   const buckets = createMemo(() => {
     const m = new Map<number, Tagging[]>();
-    for (const t of props.store.taggings()) {
+    for (const t of props.store.visibleTaggings()) {
       if (!overlaps(iv, [t.start, t.end])) continue;
       const first = index.slotOf(Math.max(t.start, iv[0]));
       const last = index.slotOf(Math.min(t.end, iv[1]) - 1);

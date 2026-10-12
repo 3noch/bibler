@@ -390,3 +390,41 @@ button.google, button.secondary {
 }
 button.google { width: 100%; }
 button.google:hover, button.secondary:hover { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
+
+/* ---------------------------------------------------------------- hidden tags, spaces (groups) */
+.tags-list li.hidden .tag-row { opacity: 0.5; }
+.eye.on { color: var(--accent); }
+.visibility { display: flex; gap: 14px; margin: 8px 2px 0; font-size: 0.85rem; }
+.well-group.hidden .well { opacity: 0.45; }
+.space-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 8px; border-radius: 10px;
+  color: var(--muted); max-width: 12rem;
+}
+.space-btn.group { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.space-btn.on, .space-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; }
+.ro-badge { font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
+.spaces { max-height: calc(100dvh - var(--bar) - 32px); overflow-y: auto; }
+.spaces h2 { margin: 0 28px 8px 0; font-size: 1rem; }
+.spaces h3 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; font-size: 0.95rem; }
+.spaces h4 { margin: 12px 0 4px; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.spaces .muted { color: var(--muted); }
+.spaces p { margin: 0 0 6px; line-height: 1.4; }
+.space-list { list-style: none; margin: 0 -8px 8px; padding: 0; }
+.space-row { display: flex; justify-content: space-between; gap: 10px; width: 100%; padding: 8px; border-radius: 8px; text-align: left; }
+.space-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.space-row.current { font-weight: 600; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.new-group { display: flex; gap: 8px; margin-bottom: 4px; }
+.new-group input, .invite input, .members select {
+  flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+}
+.members select { flex: none; height: 30px; }
+.group-panel { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.members { list-style: none; margin: 0; padding: 0; }
+.members li { display: flex; align-items: center; gap: 6px; min-height: 36px; }
+.member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.invite > span:first-child { width: 5.5rem; flex: none; }
+.invite .copied { width: 3.5rem; font-size: 0.8rem; }
+.spaces .leave { margin-top: 14px; }
+.comment-author { font-weight: 600; color: var(--ink); }

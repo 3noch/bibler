@@ -18,3 +18,4 @@ done
 grep -q "Ready on" "$LOG" || { cat "$LOG"; echo "wrangler dev did not start"; exit 1; }
 node test/sync.mjs "http://127.0.0.1:$PORT"
 node test/auth.mjs "http://127.0.0.1:$PORT" "$FAKE"
+node test/groups.mjs "http://127.0.0.1:$PORT"

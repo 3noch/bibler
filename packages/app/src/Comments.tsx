@@ -3,6 +3,7 @@
 import { createSignal, For, Show } from "solid-js";
 import type { Comment, TagStore } from "./store.ts";
 import { PencilIcon, TrashIcon } from "./icons.tsx";
+import { memberName } from "./Groups.tsx";
 
 const MAX = 10_000;
 
@@ -78,6 +79,11 @@ function Editor(props: { initial?: string; placeholder: string; submitLabel: str
 
 function CommentItem(props: { store: TagStore; comment: Comment }) {
   const [editing, setEditing] = createSignal(false);
+  /** Unstamped = still optimistic, i.e. ours. */
+  const mine = () => !props.comment.author || props.comment.author === props.store.me;
+  /** In a group, who wrote it. */
+  const author = () =>
+    props.store.space ? (mine() ? "You" : memberName(props.store.members().find((m) => m.owner === props.comment.author))) : null;
   return (
     <li class="comment">
       <Show
@@ -87,10 +93,13 @@ function CommentItem(props: { store: TagStore; comment: Comment }) {
             <p class="comment-body">{props.comment.body}</p>
             <div class="comment-meta">
               <span>
+                <Show when={author()}>
+                  <strong class="comment-author">{author()}</strong> ·{" "}
+                </Show>
                 {when(props.comment.created_at)}
                 {props.comment.edited_at !== null ? " · edited" : ""}
               </span>
-              <span class="comment-tools">
+              <span class="comment-tools" hidden={!mine() || props.store.readOnly()}>
                 <button class="icon small" onClick={() => setEditing(true)} aria-label="Edit comment" title="Edit">
                   <PencilIcon />
                 </button>
@@ -128,7 +137,9 @@ export function CommentThread(props: { store: TagStore; tagging: string }) {
           <For each={comments()}>{(c) => <CommentItem store={props.store} comment={c} />}</For>
         </ol>
       </Show>
-      <Editor placeholder="Add a comment…" submitLabel="Post" onSubmit={(b) => props.store.addComment(props.tagging, b)} />
+      <Show when={!props.store.readOnly()}>
+        <Editor placeholder="Add a comment…" submitLabel="Post" onSubmit={(b) => props.store.addComment(props.tagging, b)} />
+      </Show>
     </div>
   );
 }

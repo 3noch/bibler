@@ -154,6 +154,23 @@ Rust: `crates/normalize/src/lib.rs`).
   Google: sync, replay, rejects, isolation, auth/origin, logout, sign-in, merge incl. live push, forged/cancelled
   callbacks); browser-checked (paint, wipe local storage, reload, tagging comes back). NOT yet deployed (needs the
   user's Cloudflare account; `wrangler.toml` has a placeholder D1 id).
+- **Groups** (done 2026-10-12; the user asked for "something working" to review and tweak): a group is a space
+  whose rows all belong to the group (data owner = space id, exactly as a personal space's id is its owner's), so
+  members share tags, palette and comments. Ops are applied with `space::apply_by(db, space, author, op)`: new
+  comments get `author` (an optional field on `CommentRow`, stamped by the server, never by `effect`, so the fixtures
+  are unchanged; comments table gained `author_id`, schema v2 via `ALTER TABLE` in `space::init`), and a change may
+  only modify comments its author wrote (`ApplyError::Refused("not_author")`). Accounts DB has `groups`,
+  `memberships(space_id, owner_id, role)`, `invites(token, space_id, role)`; roles admin/edit/read; one reusable
+  invite link per role (a new one revokes the old; tokens stored plain so admins can re-copy them). HTTP API and
+  rules in `api::groups::handle` over the async `AccountsDb` trait (rusqlite via the blocking pool on the server, D1
+  on Cloudflare), tested in `crates/api/tests/groups.rs`. The socket picks its space with `/api/sync?space=`; the
+  role is checked at upgrade (403 if not a member) and fixed for the connection; read-only sockets get every change
+  but ops are rejected `read_only`. Role changes and removals disconnect that member (`Reply::kicks`: hub `Event::Kick`
+  on the server, DO `POST /kick` + socket tags on Cloudflare) so they reconnect with the new role. Tested: server
+  `groups_share_rows_with_roles`, Cloudflare `test/groups.mjs`, browser (create group, invite links, a scripted
+  second member's paint + comment arriving live with author, view-only join via `?join=` with live updates and no
+  edit controls, switching spaces). Not yet: group-level comment moderation (admins can't delete others' comments),
+  transferring/deleting a group, showing who painted what, rate limits on joins.
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
@@ -220,6 +237,7 @@ Shared JSON fixtures are the behavioral spec for anything duplicated across TS a
 implementation and confirm tests fail. Don't claim something is verified unless it was actually run.
 
 ## Next steps
+- Groups follow-ups (user will review first): see the Groups bullet's "Not yet".
 - Deploy to Cloudflare (user: `wrangler login`, `wrangler d1 create`, secrets; README) and try sign-in with a real
   Google OAuth client. Then: retention of the changes log, rate limits.
 - Install-as-app affordance (deferred 2026-10-11): Install button via `beforeinstallprompt`, iOS "Add to Home
