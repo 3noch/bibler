@@ -1,6 +1,7 @@
 //! bible-tags server: serves the client bundle, the scripture text artifacts, sessions and the sync WebSocket.
 
 pub mod hub;
+pub mod legacy;
 pub mod store;
 pub mod sync;
 pub mod texts;
@@ -23,8 +24,10 @@ pub struct Config {
     pub static_dir: Option<PathBuf>,
     /// Directory containing `<text_id>/manifest.json` etc. (text-build output), served under `/text/`.
     pub text_dir: PathBuf,
-    /// SQLite database file (created if missing).
-    pub db: PathBuf,
+    /// Data directory (created if missing): `accounts.sqlite` + `spaces/<id>.sqlite`.
+    pub data: PathBuf,
+    /// A pre-spaces database to import when `data` does not exist yet (it is only read).
+    pub migrate_from: Option<PathBuf>,
     /// Mark the session cookie `Secure` (set when serving TLS).
     pub secure_cookies: bool,
 }
@@ -37,10 +40,13 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
     let hub = Arc::new(hub::Hub::default());
     let listener: store::CommitListener = {
         let hub = hub.clone();
-        Box::new(move |owner, change| hub.publish(owner, change))
+        Box::new(move |space, change| hub.publish(space, change))
     };
+    if let Some(old) = cfg.migrate_from.as_deref().filter(|_| !cfg.data.exists()) {
+        migrate(old, &cfg.data)?;
+    }
     let state = Arc::new(sync::AppState {
-        store: Arc::new(store::SqliteStore::open(&cfg.db, listener)?),
+        store: Arc::new(store::SqliteStore::open(&cfg.data, listener)?),
         hub,
         texts: texts::Texts::load(&cfg.text_dir)?,
         secure_cookies: cfg.secure_cookies,
@@ -61,6 +67,18 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         }),
     };
     Ok(app.layer(middleware::from_fn(cache_control)).layer(CompressionLayer::new()).layer(TraceLayer::new_for_http()))
+}
+
+/// Import `old` into a temporary directory, then move it into place (a failed import leaves nothing behind).
+fn migrate(old: &std::path::Path, data: &std::path::Path) -> Result<(), String> {
+    let tmp = data.with_extension("migrating");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let store = store::SqliteStore::open(&tmp, Box::new(|_, _| {}))?;
+    let n = legacy::migrate(old, &store).map_err(|e| format!("migrating {}: {e}", old.display()))?;
+    store.close();
+    std::fs::rename(&tmp, data).map_err(|e| format!("{}: {e}", data.display()))?;
+    tracing::info!("imported {n} owners from {} into {}", old.display(), data.display());
+    Ok(())
 }
 
 async fn health() -> Json<serde_json::Value> {

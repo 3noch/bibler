@@ -33,7 +33,7 @@ make dev       # http://localhost:5173
 - **Server** (tags stored in SQLite on the server):
   ```sh
   nix-build -A app
-  result/bin/bible-tags --db /var/lib/bible-tags/db.sqlite --addr 0.0.0.0:443 \
+  result/bin/bible-tags --data /var/lib/bible-tags --addr 0.0.0.0:443 \
     --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80
   ```
 

@@ -18,8 +18,8 @@ async fn get(app: &axum::Router, uri: &str, gzip: bool) -> (StatusCode, axum::ht
 }
 
 fn app() -> axum::Router {
-    let (dist, text, db) = common::fixture("router", 100);
-    router(&Config { static_dir: Some(dist), text_dir: text, db, secure_cookies: false }).unwrap()
+    let (dist, text, data) = common::fixture("router", 100);
+    router(&Config { static_dir: Some(dist), text_dir: text, data, migrate_from: None, secure_cookies: false }).unwrap()
 }
 
 #[tokio::test]
@@ -71,8 +71,9 @@ async fn spa_fallback_and_assets() {
 
 #[tokio::test]
 async fn dev_mode_without_static_dir() {
-    let (_, text, db) = common::fixture("router-dev", 100);
-    let app = router(&Config { static_dir: None, text_dir: text, db, secure_cookies: false }).unwrap();
+    let (_, text, data) = common::fixture("router-dev", 100);
+    let app =
+        router(&Config { static_dir: None, text_dir: text, data, migrate_from: None, secure_cookies: false }).unwrap();
     let (status, _, body) = get(&app, "/", false).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body.contains("make dev"));

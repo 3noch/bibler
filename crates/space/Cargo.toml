@@ -1,0 +1,21 @@
+[package]
+name = "space"
+version = "0.0.0"
+edition.workspace = true
+
+[features]
+# `Db` for rusqlite connections (the self-hosted server and the tests).
+rusqlite = ["dep:rusqlite"]
+
+[dependencies]
+ops = { version = "0.0.0", path = "../ops" }
+rusqlite = { version = "0.40.2", optional = true }
+serde_json = "1.0.152"
+
+[dev-dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+space = { path = ".", features = ["rusqlite"] }
+serde = { version = "1.0.229", features = ["derive"] }
+
+[lints]
+workspace = true

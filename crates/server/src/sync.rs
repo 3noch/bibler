@@ -16,7 +16,7 @@
 //! ```
 
 use crate::hub::Hub;
-use crate::store::{ApplyError, Store};
+use crate::store::Store;
 use crate::texts::Texts;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -27,6 +27,7 @@ use futures_util::{SinkExt, StreamExt};
 use ops::{Change, Intent, Op};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use space::ApplyError;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -160,10 +161,10 @@ async fn send(tx: &mut Tx, msg: &ServerMsg<'_>) -> bool {
     }
 }
 
-/// Send stored changes after `*last` (up to `until`, if given), advancing `*last`.
-async fn send_since(st: &Arc<AppState>, owner: &str, tx: &mut Tx, last: &mut u64, until: Option<u64>) -> bool {
+/// Send the space's stored changes after `*last` (up to `until`, if given), advancing `*last`.
+async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64, until: Option<u64>) -> bool {
     loop {
-        let (store, o, after) = (st.store.clone(), owner.to_string(), *last);
+        let (store, o, after) = (st.store.clone(), space.to_string(), *last);
         let page = match blocking(move || store.changes_since(&o, after, REPLAY_PAGE)).await {
             Ok(Ok(p)) => p,
             Ok(Err(e)) | Err(e) => {
@@ -188,8 +189,9 @@ async fn send_since(st: &Arc<AppState>, owner: &str, tx: &mut Tx, last: &mut u64
 
 async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
     let (mut tx, mut rx) = socket.split();
-    // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
-    let mut live = st.hub.subscribe(&owner);
+    let space = owner.clone(); // the owner's personal space (shared spaces will be chosen in `hello`)
+                               // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
+    let mut live = st.hub.subscribe(&space);
     let mut last = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => {
@@ -203,7 +205,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
             _ => return,
         }
     };
-    if !send_since(&st, &owner, &mut tx, &mut last, None).await || !send(&mut tx, &ServerMsg::Ready { seq: last }).await
+    if !send_since(&st, &space, &mut tx, &mut last, None).await || !send(&mut tx, &ServerMsg::Ready { seq: last }).await
     {
         return;
     }
@@ -211,7 +213,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(t))) => {
-                    if !handle_op(&st, &owner, &mut tx, &t).await {
+                    if !handle_op(&st, &space, &owner, &mut tx, &t).await {
                         return;
                     }
                 }
@@ -228,7 +230,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
                 }
                 // A gap (should not happen; publishes are ordered): fill it from the store.
                 Ok(c) => {
-                    if !send_since(&st, &owner, &mut tx, &mut last, Some(c.seq)).await {
+                    if !send_since(&st, &space, &mut tx, &mut last, Some(c.seq)).await {
                         return;
                     }
                 }
@@ -272,7 +274,7 @@ fn check_op(st: &AppState, op: &Op) -> Result<(), (&'static str, String)> {
 }
 
 /// Apply one client message. Returns false if the socket should close.
-async fn handle_op(st: &Arc<AppState>, owner: &str, tx: &mut Tx, text: &str) -> bool {
+async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, text: &str) -> bool {
     let op = match serde_json::from_str::<ClientMsg>(text) {
         Ok(ClientMsg::Op { op }) => op,
         Ok(ClientMsg::Hello { .. }) | Err(_) => {
@@ -283,8 +285,8 @@ async fn handle_op(st: &Arc<AppState>, owner: &str, tx: &mut Tx, text: &str) -> 
     if let Err((code, message)) = check_op(st, &op) {
         return send(tx, &ServerMsg::Reject { op_id: &op.op_id, code, message }).await;
     }
-    let (store, o, op2) = (st.store.clone(), owner.to_string(), op.clone());
-    match blocking(move || store.apply(&o, &op2, now_ms())).await {
+    let (store, s, o, op2) = (st.store.clone(), space.to_string(), owner.to_string(), op.clone());
+    match blocking(move || store.apply(&s, &o, &op2, now_ms())).await {
         Ok(Ok(applied)) => send(tx, &ServerMsg::Ack { op_id: &op.op_id, seq: applied.change.seq }).await,
         Ok(Err(ApplyError::Op(e))) => {
             send(tx, &ServerMsg::Reject { op_id: &op.op_id, code: e.code(), message: e.to_string() }).await

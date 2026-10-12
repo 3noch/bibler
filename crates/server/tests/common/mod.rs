@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// A text dir holding text `t1`: one book (id 2) of `words` words in one chapter with one verse, plus a client
-/// bundle dir. Returns (static dir, text dir, db path) under a fresh temp dir.
+/// bundle dir. Returns (static dir, text dir, data dir) under a fresh temp dir.
 pub fn fixture(name: &str, words: u32) -> (PathBuf, PathBuf, PathBuf) {
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -18,7 +18,7 @@ pub fn fixture(name: &str, words: u32) -> (PathBuf, PathBuf, PathBuf) {
     fs::write(text.join("t1/manifest.json"), r#"{"text_id":"t1","index":"index.0123456789abcdef.bin"}"#).unwrap();
     fs::write(text.join("t1/index.0123456789abcdef.bin"), index_v2(words)).unwrap();
     fs::write(text.join("t1/02-GEN.0123456789abcdef.json"), format!("[{}]", "\"word\",".repeat(500) + "0")).unwrap();
-    (dist, text, root.join("db.sqlite"))
+    (dist, text, root.join("data"))
 }
 
 /// BTIX v2 for one book (id 2), one chapter, slots [0 (empty title), 1].

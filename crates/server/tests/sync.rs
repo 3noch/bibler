@@ -30,8 +30,8 @@ async fn start(cfg: &Config) -> Server {
 }
 
 fn config(name: &str) -> Config {
-    let (_, text_dir, db) = common::fixture(name, 100);
-    Config { static_dir: None, text_dir, db, secure_cookies: false }
+    let (_, text_dir, data) = common::fixture(name, 100);
+    Config { static_dir: None, text_dir, data, migrate_from: None, secure_cookies: false }
 }
 
 /// A new anonymous owner: returns its session cookie (`name=value`).
@@ -214,12 +214,12 @@ async fn owners_are_isolated() {
     b.op(paint("op1", "T", T1, T1 + 1, "g1")).await; // alice's tag id, alice's op id
     let msg = b.recv().await;
     assert_eq!(msg["code"], "unknown_tag");
-    b.op(tag_create("op2", "T", "Mine")).await; // alice's tag id: ids are global
-    let msg = b.recv().await;
-    assert_eq!(msg["code"], "id_exists");
-    b.op(tag_create("op1", "T2", "Mine")).await; // same op_id as alice's is fine: op ids are per owner
+    // Same op id and tag id as alice's: fine, each owner has their own space (ids are unique per space).
+    b.op(tag_create("op1", "T", "Mine")).await;
     let msg = b.recv().await;
     assert_eq!((msg["type"].as_str(), msg["seq"].as_u64()), (Some("ack"), Some(1)));
+    assert_eq!(b.recv().await["change"]["rows"][0]["after"]["name"], "Mine");
+    a.quiet().await;
 }
 
 #[tokio::test]
@@ -275,4 +275,72 @@ async fn changes_survive_a_restart() {
     let replay = a.hello(0).await;
     assert_eq!(replay.len(), 1);
     assert_eq!(replay[0]["rows"][0]["after"]["name"], "Grace");
+}
+
+#[tokio::test]
+async fn a_pre_spaces_database_is_imported_with_its_seqs() {
+    use sha2::Digest;
+    let mut cfg = config("legacy");
+    let old = cfg.data.with_file_name("old.db");
+    {
+        // The old layout: every owner in one database, seq per owner.
+        let c = rusqlite::Connection::open(&old).unwrap();
+        c.execute_batch(
+            "CREATE TABLE owners (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+             CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+             CREATE TABLE tags (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL,
+               description TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+             CREATE TABLE taggings (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, tag_id TEXT NOT NULL,
+               text_id TEXT NOT NULL, start_ord INTEGER NOT NULL, end_ord INTEGER NOT NULL,
+               created_at INTEGER NOT NULL, deleted_at INTEGER, merged_into TEXT);
+             CREATE TABLE palettes (owner_id TEXT PRIMARY KEY, tags TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE comments (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, tagging_id TEXT NOT NULL,
+               body TEXT NOT NULL, created_at INTEGER NOT NULL, edited_at INTEGER, deleted_at INTEGER);
+             CREATE TABLE changes (owner_id TEXT NOT NULL, seq INTEGER NOT NULL, op_id TEXT NOT NULL,
+               kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (owner_id, seq));",
+        )
+        .unwrap();
+        let hash = format!("{:x}", sha2::Sha256::digest(b"tok"));
+        let tag = json!({"table": "tag", "id": "T", "name": "Grace", "color": "#336699", "created_at": 1, "updated_at": 1, "deleted_at": null});
+        let tagging = json!({"table": "tagging", "id": "g1", "tag": "T", "text_id": "t1", "start": T1, "end": T1 + 5, "created_at": 2, "deleted_at": null, "merged_into": null});
+        let changes = [
+            json!({"seq": 1, "op_id": "op1", "kind": "tag_create", "rows": [{"before": null, "after": tag}]}),
+            json!({"seq": 2, "op_id": "op2", "kind": "paint", "rows": [{"before": null, "after": tagging}]}),
+        ];
+        c.execute_batch(&format!(
+            "INSERT INTO owners VALUES ('alice', 0), ('bob', 0);
+             INSERT INTO sessions VALUES ('{hash}', 'alice', 0);
+             INSERT INTO tags VALUES ('T', 'alice', 'Grace', '#336699', NULL, 1, 1, NULL);
+             INSERT INTO taggings VALUES ('g1', 'alice', 'T', 't1', {}, {}, 2, NULL, NULL);
+             INSERT INTO palettes VALUES ('alice', '[\"T\"]', 3);
+             INSERT INTO comments VALUES ('c1', 'alice', 'g1', 'hi', 4, NULL, NULL);
+             INSERT INTO changes VALUES ('alice', 1, 'op1', 'tag_create', '{}', 0), ('alice', 2, 'op2', 'paint', '{}', 0);
+             INSERT INTO changes VALUES ('bob', 1, 'b1', 'tag_create', '{{\"seq\":1,\"op_id\":\"b1\",\"kind\":\"tag_create\",\"rows\":[]}}', 0);",
+            T1,
+            T1 + 5,
+            changes[0],
+            changes[1]
+        ))
+        .unwrap();
+    }
+    cfg.migrate_from = Some(old.clone());
+    let srv = start(&cfg).await;
+    let mut a = connect(&srv, Some("bt_session=tok"), None).await.unwrap();
+    let replay = a.hello(0).await;
+    assert_eq!(replay.iter().map(|c| c["op_id"].as_str().unwrap()).collect::<Vec<_>>(), ["op1", "op2"]);
+    // The imported rows are live: painting next to g1 merges into it, and seqs continue.
+    a.op(paint("op3", "T", T1 + 5, T1 + 8, "g2")).await;
+    let mut got = vec![];
+    while got.len() < 2 {
+        let m = a.recv().await;
+        got.push(m);
+    }
+    let change = got.iter().find(|m| m["type"] == "change").unwrap();
+    assert_eq!(change["change"]["seq"], 3);
+    assert_eq!(change["change"]["rows"][0]["after"]["end"], T1 + 8);
+    assert!(cfg.data.join("spaces/bob.sqlite").exists());
+    drop(srv);
+    // Never imported twice: the data directory exists now.
+    std::fs::remove_file(&old).unwrap();
+    start(&cfg).await;
 }

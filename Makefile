@@ -1,7 +1,7 @@
 # Dev workflow. Needs cargo (rustup) and node >= 22.18 on PATH (`nix-shell` provides node; see shell.nix).
 # Production builds are default.nix, which does not use this file.
 #
-#   make dev     Rust server (plain HTTP :8080, db build/dev.db) + Vite (HMR :5173, proxies /api incl. the sync
+#   make dev     Rust server (plain HTTP :8080, data build/dev-data/) + Vite (HMR :5173, proxies /api incl. the sync
 #                WebSocket, and /text). Open http://localhost:5173
 #   make serve   production-like: release server serving the built client + text on http://localhost:8080
 #   make test    all tests (Rust + TS)        make check   fmt, clippy, typecheck
@@ -14,25 +14,28 @@ TEXT_ID := kjv-1769-v1
 TEXT := build/text/$(TEXT_ID)/manifest.json
 SERVER_ADDR ?= 127.0.0.1:8080
 NPM := npm
+# Data directories; a pre-spaces database (build/dev.db, build/serve.db) is imported once if it exists.
+DEV_DATA := --data build/dev-data $(if $(wildcard build/dev.db),--migrate-from build/dev.db)
+SERVE_DATA := --data build/serve-data $(if $(wildcard build/serve.db),--migrate-from build/serve.db)
 
 .PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve
 
 dev: $(TEXT) node_modules/.installed
 	@echo "==> http://localhost:5173  (API/text served by the Rust dev server on $(SERVER_ADDR))"
 	@trap 'kill 0' INT TERM EXIT; \
-	  cargo run -q -p server -- --addr $(SERVER_ADDR) --text build/text --db build/dev.db & \
+	  cargo run -q -p server -- --addr $(SERVER_ADDR) --text build/text $(DEV_DATA) & \
 	  BACKEND=http://$(SERVER_ADDR) $(NPM) run -w @bible-tags/app dev & \
 	  wait
 
 dev-server: $(TEXT)
-	cargo run -p server -- --addr $(SERVER_ADDR) --text build/text --db build/dev.db
+	cargo run -p server -- --addr $(SERVER_ADDR) --text build/text $(DEV_DATA)
 
 dev-client: node_modules/.installed
 	BACKEND=http://$(SERVER_ADDR) $(NPM) run -w @bible-tags/app dev
 
 serve: build
 	@echo "==> http://$(SERVER_ADDR)"
-	./target/release/bible-tags-server --addr $(SERVER_ADDR) --text build/text --db build/serve.db --static packages/app/dist
+	./target/release/bible-tags-server --addr $(SERVER_ADDR) --text build/text $(SERVE_DATA) --static packages/app/dist
 
 build: client server $(TEXT)
 

@@ -1117,6 +1117,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "space",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tower",
@@ -1209,6 +1210,17 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "space"
+version = "0.0.0"
+dependencies = [
+ "ops",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "space",
 ]
 
 [[package]]

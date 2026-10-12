@@ -1,5 +1,5 @@
 //! Usage:
-//!   bible-tags-server --text DIR --db FILE [--static DIR] [--addr HOST:PORT]
+//!   bible-tags-server --text DIR --data DIR [--migrate-from OLD.db] [--static DIR] [--addr HOST:PORT]
 //!                     [--tls-cert PEM --tls-key PEM [--http-redirect HOST:PORT]]
 //! Without TLS flags it serves plain HTTP (dev). With them it terminates TLS itself (rustls); SIGHUP reloads the
 //! certificate files (for external renewal, e.g. ACME clients).
@@ -22,7 +22,7 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let (mut static_dir, mut text_dir, mut cert, mut key, mut redirect) = (None, None, None, None, None);
-    let mut db = None;
+    let (mut data, mut migrate_from) = (None, None);
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -30,7 +30,8 @@ fn parse_args() -> Result<Args, String> {
             "--addr" => addr = val()?.parse().map_err(|e| format!("--addr: {e}"))?,
             "--static" => static_dir = Some(PathBuf::from(val()?)),
             "--text" => text_dir = Some(PathBuf::from(val()?)),
-            "--db" => db = Some(PathBuf::from(val()?)),
+            "--data" => data = Some(PathBuf::from(val()?)),
+            "--migrate-from" => migrate_from = Some(PathBuf::from(val()?)),
             "--tls-cert" => cert = Some(PathBuf::from(val()?)),
             "--tls-key" => key = Some(PathBuf::from(val()?)),
             "--http-redirect" => redirect = Some(val()?.parse().map_err(|e| format!("--http-redirect: {e}"))?),
@@ -47,9 +48,14 @@ fn parse_args() -> Result<Args, String> {
         return Err("--http-redirect requires TLS".into());
     }
     let text_dir = text_dir.ok_or("--text DIR is required (text-build output, e.g. build/text)")?;
-    let db = db.ok_or("--db FILE is required (SQLite database; created if missing)")?;
+    let data = data.ok_or("--data DIR is required (SQLite databases; created if missing)")?;
     let secure_cookies = tls.is_some();
-    Ok(Args { addr, cfg: Config { static_dir, text_dir, db, secure_cookies }, tls, http_redirect: redirect })
+    Ok(Args {
+        addr,
+        cfg: Config { static_dir, text_dir, data, migrate_from, secure_cookies },
+        tls,
+        http_redirect: redirect,
+    })
 }
 
 #[tokio::main]

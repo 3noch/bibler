@@ -5,7 +5,7 @@
 #   nix-build -A text     the text artifacts          nix-build -A textBuild
 #
 # Run, terminating TLS in-process (rustls; SIGHUP reloads the cert files after renewal):
-#   result/bin/bible-tags --db /var/lib/bible-tags/db.sqlite --addr 0.0.0.0:443 \
+#   result/bin/bible-tags --data /var/lib/bible-tags --addr 0.0.0.0:443 \
 #     --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80
 #
 # Each derivation only sees the files it needs (lib.fileset), so a client-only change never rebuilds Rust and a

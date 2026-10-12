@@ -13,6 +13,7 @@ axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
 ops = { version = "0.0.0", path = "../ops" }
+space = { version = "0.0.0", path = "../space", features = ["rusqlite"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1.0.229", features = ["derive"] }
