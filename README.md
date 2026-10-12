@@ -42,17 +42,23 @@ make dev       # http://localhost:5173
     --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80
   ```
 
-- **Cloudflare** (free plan; Workers + D1 + Durable Objects, one database per user). Needs `wrangler` (in
-  `nix-shell`) and a Cloudflare account. One-time setup:
+- **Cloudflare** (free plan; Workers + D1 + Durable Objects, one database per user or group). Needs `wrangler`
+  (in `nix-shell`) and a Cloudflare account. There are two deployments that share no data, sessions or links:
+  **QA** on its free `*.workers.dev` address and **production** on your own domain only.
   ```sh
   cd crates/cloudflare
   wrangler login
-  wrangler d1 create bible-tags-accounts   # put the printed database_id into wrangler.toml
+  wrangler d1 create bible-tags-qa-accounts   # QA: put the id into wrangler.toml under [env.qa]
+  wrangler d1 create bible-tags-accounts      # production: put the id into the top-level [[d1_databases]]
   ```
-  Then `make cloudflare-deploy` from the repo root. It prints the `*.workers.dev` URL; a custom domain can be added
-  in the dashboard (*Workers → bible-tags → Settings → Domains*). For sign-in, run
-  `wrangler secret put GOOGLE_CLIENT_ID` and `wrangler secret put GOOGLE_CLIENT_SECRET` in `crates/cloudflare`,
-  and add `https://<your url>/api/auth/google/callback` to the OAuth client (below).
+  - QA: `make cloudflare-qa` from the repo root; it prints the `bible-tags-qa.<subdomain>.workers.dev` URL.
+  - Production: the domain's DNS must be on Cloudflare (register it there, or point its nameservers at
+    Cloudflare). Uncomment `routes` in `wrangler.toml` with your domain, then `make cloudflare-deploy` (it refuses
+    until `routes` is set). Production is never served on workers.dev. Pick the domain before inviting people:
+    sessions, invite links, installed apps and unsynced browser data belong to the address.
+  - Sign-in, per deployment: `wrangler secret put GOOGLE_CLIENT_ID` and `wrangler secret put GOOGLE_CLIENT_SECRET`
+    in `crates/cloudflare` (add `--env qa` for QA), and add `https://<that URL>/api/auth/google/callback` to the
+    OAuth client (below; one client can list both URLs).
 
 ## Sign in with Google (optional)
 

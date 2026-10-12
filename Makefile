@@ -11,7 +11,8 @@
 #   make cloudflare-dev     the Cloudflare deployment run locally by wrangler (Worker + D1 + Durable Objects, data in
 #                           crates/cloudflare/.wrangler/) on http://localhost:8787
 #   make cloudflare-test    end-to-end tests of it (wrangler dev, throwaway state, fake Google)
-#   make cloudflare-deploy  deploy it (needs `wrangler login` and the one-time setup in README.md)
+#   make cloudflare-qa      deploy the QA copy to its workers.dev address (own data; one-time setup in README.md)
+#   make cloudflare-deploy  deploy production to its custom domain (one-time setup in README.md)
 
 SHELL := bash
 TEXT_ID := kjv-1769-v1
@@ -23,7 +24,7 @@ DEV_DATA := --data build/dev-data $(if $(wildcard build/dev.db),--migrate-from b
 SERVE_DATA := --data build/serve-data $(if $(wildcard build/serve.db),--migrate-from build/serve.db)
 
 .PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve \
-  cloudflare-assets cloudflare-dev cloudflare-deploy cloudflare-test
+  cloudflare-assets cloudflare-dev cloudflare-deploy cloudflare-qa cloudflare-test
 
 dev: $(TEXT) node_modules/.installed
 	@echo "==> http://localhost:5173  (API/text served by the Rust dev server on $(SERVER_ADDR))"
@@ -119,7 +120,12 @@ cloudflare-dev: cloudflare-assets $(WORKER_BUILD)
 cloudflare-test: cloudflare-assets $(WORKER_BUILD)
 	PATH="$(CURDIR)/build/tools/bin:$$PATH" crates/cloudflare/test/run.sh
 
+cloudflare-qa: cloudflare-assets $(WORKER_BUILD)
+	$(WRANGLER) deploy --env qa
+
+# Production serves only its custom domain (wrangler.toml `routes`), so refuse until one is set.
 cloudflare-deploy: cloudflare-assets $(WORKER_BUILD)
+	@grep -q '^routes' crates/cloudflare/wrangler.toml || { echo "Set production's domain (routes) in crates/cloudflare/wrangler.toml first; for QA use make cloudflare-qa"; exit 1; }
 	$(WRANGLER) deploy
 
 clean:

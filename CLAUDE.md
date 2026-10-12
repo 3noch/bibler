@@ -12,7 +12,11 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   development). **Push only when the user says so.**
 
 ## Dev workflow (Makefile) and deployment (default.nix)
-- **Cloudflare**: `make cloudflare-dev` (wrangler dev, :8787), `make cloudflare-test`, `make cloudflare-deploy`;
+- **Cloudflare**: `make cloudflare-dev` (wrangler dev, :8787), `make cloudflare-test`, `make cloudflare-qa`,
+  `make cloudflare-deploy`. Decided 2026-10-12: QA = `[env.qa]` (Worker `bible-tags-qa` on workers.dev, own D1
+  `bible-tags-qa-accounts`, own DOs since DO namespaces are per Worker); production = top level (Worker `bible-tags`,
+  custom domain only: `workers_dev`/`preview_urls` false, deploy refuses until `routes` is set). Bindings aren't
+  inherited by wrangler environments, so `[env.qa]` repeats them; secrets are per environment;
   all rebuild `build/cloudflare/assets` (client in server mode + `build/text` + `texts.json` + `_headers`).
   `make check` also runs clippy for `wasm32-unknown-unknown` on `crates/cloudflare` (it compiles natively too).
 - **GitHub Pages (offline-only build)**: `make pages` -> `build/pages/` (client built with `VITE_SYNC=local`,
@@ -238,7 +242,7 @@ implementation and confirm tests fail. Don't claim something is verified unless 
 
 ## Next steps
 - Groups follow-ups (user will review first): see the Groups bullet's "Not yet".
-- Deploy to Cloudflare (user: `wrangler login`, `wrangler d1 create`, secrets; README) and try sign-in with a real
+- Deploy to Cloudflare, QA first (user: `wrangler login`, two `wrangler d1 create`, a domain, secrets; README) and try sign-in with a real
   Google OAuth client. Then: retention of the changes log, rate limits.
 - Install-as-app affordance (deferred 2026-10-11): Install button via `beforeinstallprompt`, iOS "Add to Home
   Screen" hint, `navigator.storage.persist()`.
