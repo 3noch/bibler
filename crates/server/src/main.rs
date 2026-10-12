@@ -1,6 +1,8 @@
 //! Usage:
 //!   bible-tags-server --text DIR --data DIR [--migrate-from OLD.db] [--static DIR] [--addr HOST:PORT]
-//!                     [--tls-cert PEM --tls-key PEM [--http-redirect HOST:PORT]]
+//!                     [--tls-cert PEM --tls-key PEM [--http-redirect HOST:PORT]] [--public-url URL]
+//! Sign in with Google is on when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (environment, not flags,
+//! so the secret stays out of `ps`); its redirect URI is <public url>/api/auth/google/callback.
 //! Without TLS flags it serves plain HTTP (dev). With them it terminates TLS itself (rustls); SIGHUP reloads the
 //! certificate files (for external renewal, e.g. ACME clients).
 
@@ -22,7 +24,7 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let (mut static_dir, mut text_dir, mut cert, mut key, mut redirect) = (None, None, None, None, None);
-    let (mut data, mut migrate_from) = (None, None);
+    let (mut data, mut migrate_from, mut public_url) = (None, None, None);
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -32,10 +34,11 @@ fn parse_args() -> Result<Args, String> {
             "--text" => text_dir = Some(PathBuf::from(val()?)),
             "--data" => data = Some(PathBuf::from(val()?)),
             "--migrate-from" => migrate_from = Some(PathBuf::from(val()?)),
+            "--public-url" => public_url = Some(val()?),
             "--tls-cert" => cert = Some(PathBuf::from(val()?)),
             "--tls-key" => key = Some(PathBuf::from(val()?)),
             "--http-redirect" => redirect = Some(val()?.parse().map_err(|e| format!("--http-redirect: {e}"))?),
-            "-h" | "--help" => return Err(include_str!("main.rs").lines().take(5).collect::<Vec<_>>().join("\n")),
+            "-h" | "--help" => return Err(include_str!("main.rs").lines().take(7).collect::<Vec<_>>().join("\n")),
             _ => return Err(format!("unknown argument {a}")),
         }
     }
@@ -52,10 +55,20 @@ fn parse_args() -> Result<Args, String> {
     let secure_cookies = tls.is_some();
     Ok(Args {
         addr,
-        cfg: Config { static_dir, text_dir, data, migrate_from, secure_cookies },
+        cfg: Config { static_dir, text_dir, data, migrate_from, secure_cookies, google: google()?, public_url },
         tls,
         http_redirect: redirect,
     })
+}
+
+fn google() -> Result<Option<server::auth::Google>, String> {
+    match (std::env::var("GOOGLE_CLIENT_ID").ok(), std::env::var("GOOGLE_CLIENT_SECRET").ok()) {
+        (Some(id), Some(secret)) if !id.is_empty() && !secret.is_empty() => {
+            Ok(Some(server::auth::Google::new(id, secret)))
+        }
+        (None, None) => Ok(None),
+        _ => Err("set both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or neither".into()),
+    }
 }
 
 #[tokio::main]

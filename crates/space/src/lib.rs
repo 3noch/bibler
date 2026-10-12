@@ -8,7 +8,7 @@
 //! Callers wrap [`apply`] in a transaction (on Durable Objects, one synchronous call is atomic). `apply` does all its
 //! checks before its first write, so a failed op writes nothing even without a rollback.
 
-use ops::{effect, Change, CommentRow, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
+use ops::{effect, Change, CommentRow, Intent, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
 use std::cell::RefCell;
 
 /// A SQLite value (the subset this schema uses).
@@ -463,6 +463,149 @@ impl<D: Db> RowSource for Rows<'_, D> {
         let sql = "SELECT payload FROM changes WHERE owner_id = ? AND op_id = ?";
         self.one(sql, &[self.owner.into(), op_id.into()], |r| parse_change(text(&r[0])?))
     }
+}
+
+/// `owner`'s live data, ready to copy into another space with [`merge`]: live tags, their live taggings, live
+/// comments (re-pointed to the live end of their tagging's merge chain), and the palette.
+///
+/// # Errors
+/// On storage failure.
+pub fn export(db: &impl Db, owner: &str) -> Result<Vec<Row>, String> {
+    let src = Rows { db, owner, err: RefCell::new(None) };
+    let tags = src.list(
+        &format!("SELECT {TAG_COLS} FROM tags WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at, id"),
+        &[owner.into()],
+        tag_row,
+    );
+    let mut rows: Vec<Row> = vec![];
+    for t in &tags {
+        let mut taggings = src.live_taggings_of_tag(&t.id);
+        taggings.sort_by(|a, b| (&a.text_id, a.start).cmp(&(&b.text_id, b.start)));
+        rows.push(Row::Tag(t.clone()));
+        rows.extend(taggings.into_iter().map(Row::Tagging));
+    }
+    let comments = src.list(
+        &format!(
+            "SELECT {COMMENT_COLS} FROM comments WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at, id"
+        ),
+        &[owner.into()],
+        comment_row,
+    );
+    let live_tags: std::collections::HashSet<&str> = tags.iter().map(|t| t.id.as_str()).collect();
+    for mut c in comments {
+        // Hidden comments (on erased taggings or deleted tags) stay behind, as they would in the UI.
+        if let Ok(t) = ops::resolve_tagging(&src, &c.tagging) {
+            if live_tags.contains(t.tag.as_str()) {
+                c.tagging = t.id;
+                rows.push(Row::Comment(c));
+            }
+        }
+    }
+    if let Some(p) = src.palette() {
+        rows.push(Row::Palette(p));
+    }
+    match src.err.into_inner() {
+        Some(e) => Err(e),
+        None => Ok(rows),
+    }
+}
+
+/// Copy rows [`export`]ed from owner `from` into `owner`'s data, as ordinary ops (so open clients receive them as
+/// changes): a tag with the same name (case-insensitive) as one of `owner`'s live tags is combined with it
+/// (taggings painted onto it, so overlaps merge), others are created with their ids and colors; comments follow
+/// their taggings; palette tags are appended while there is room. Original timestamps are kept. Idempotent: op ids
+/// derive from `from` and the row ids, so a repeated or interrupted merge never duplicates anything.
+/// Returns the new changes.
+///
+/// # Errors
+/// On storage failure (ops that are invalid here are skipped).
+pub fn merge(db: &impl Db, owner: &str, from: &str, rows: &[Row], now: i64) -> Result<Vec<Change>, String> {
+    let mut out = vec![];
+    let mut run = |intent: Intent, key: &str| -> Result<Option<Change>, String> {
+        let op = Op { op_id: format!("merge-{from}-{key}"), intent };
+        match apply(db, owner, &op, now) {
+            Ok(a) if !a.duplicate => {
+                out.push(a.change.clone());
+                Ok(Some(a.change))
+            }
+            Ok(a) => Ok(Some(a.change)),
+            Err(ApplyError::Op(_)) => Ok(None),
+            Err(ApplyError::Internal(e)) => Err(e),
+        }
+    };
+    let mut tag_ids: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    for r in rows {
+        match r {
+            Row::Tag(t) => {
+                let src = Rows { db, owner, err: RefCell::new(None) };
+                let mine = src.tag(&t.id).filter(|m| m.deleted_at.is_none());
+                let target = if let Some(existing) = mine.or_else(|| src.live_tag_named(&t.name)) {
+                    existing.id
+                } else {
+                    let intent = Intent::TagCreate {
+                        id: t.id.clone(),
+                        name: t.name.clone(),
+                        color: t.color.clone(),
+                        now: t.created_at,
+                    };
+                    run(intent, &t.id)?;
+                    t.id.clone()
+                };
+                if let Some(e) = src.err.into_inner() {
+                    return Err(e);
+                }
+                tag_ids.insert(&t.id, target);
+            }
+            Row::Tagging(t) => {
+                let Some(tag) = tag_ids.get(t.tag.as_str()) else { continue };
+                let intent = Intent::Paint {
+                    tag: tag.clone(),
+                    text_id: t.text_id.clone(),
+                    start: t.start,
+                    end: t.end,
+                    new_id: t.id.clone(),
+                    now: t.created_at,
+                };
+                run(intent, &t.id)?;
+            }
+            Row::Comment(c) => {
+                // The tagging was painted with its own id; if it merged into an existing tagging, the new id is
+                // never created, so attach to whichever live tagging of that tag now covers it.
+                let Some(Row::Tagging(t)) = rows.iter().find(|r| matches!(r, Row::Tagging(t) if t.id == c.tagging))
+                else {
+                    continue;
+                };
+                let Some(tag) = tag_ids.get(t.tag.as_str()) else { continue };
+                let src = Rows { db, owner, err: RefCell::new(None) };
+                let target = src
+                    .taggings_near(tag, &t.text_id, t.start, t.end)
+                    .into_iter()
+                    .find(|x| x.start <= t.start && x.end >= t.end)
+                    .map(|x| x.id);
+                if let Some(e) = src.err.into_inner() {
+                    return Err(e);
+                }
+                let Some(tagging) = target else { continue };
+                let intent =
+                    Intent::CommentCreate { id: c.id.clone(), tagging, body: c.body.clone(), now: c.created_at };
+                run(intent, &c.id)?;
+            }
+            Row::Palette(p) => {
+                let src = Rows { db, owner, err: RefCell::new(None) };
+                let mut tags = src.palette().map(|p| p.tags).unwrap_or_default();
+                if let Some(e) = src.err.into_inner() {
+                    return Err(e);
+                }
+                for t in p.tags.iter().filter_map(|t| tag_ids.get(t.as_str())) {
+                    if tags.len() < ops::MAX_PALETTE && !tags.contains(t) {
+                        tags.push(t.clone());
+                    }
+                }
+                run(Intent::PaletteSet { tags, now }, "palette")?;
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "rusqlite")]

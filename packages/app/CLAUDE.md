@@ -10,7 +10,7 @@
   boundaries (one hit-testing container).
 - Top bar: location field (shows "Psalm 23"; click/`/` to type a ref; at rest it is styled as a field with a
   magnifier, outline and `/` hint because a bare label didn't read as editable), undo/redo icons, sync dot (text only when
-  offline), `?` help card. No permanent side panel, no help text.
+  offline), account button (only when the server offers sign-in; see root CLAUDE.md), `?` help card. No permanent side panel, no help text.
 - Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user

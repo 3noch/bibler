@@ -39,6 +39,40 @@ pub trait Store: Send + Sync {
     /// # Errors
     /// On storage failure.
     fn changes_since(&self, space: &str, after: u64, limit: usize) -> Result<Vec<Change>, String>;
+    /// # Errors
+    /// On storage failure.
+    fn delete_session(&self, token_hash: &str) -> Result<(), String>;
+    /// The owner signed in with this external identity, if any.
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn identity_owner(&self, provider: &str, subject: &str) -> Result<Option<OwnerId>, String>;
+    /// Attach an external identity to `owner` (making it an account).
+    ///
+    /// # Errors
+    /// On storage failure (including an identity that is already attached).
+    fn add_identity(&self, id: &Identity, owner: &str, now: i64) -> Result<(), String>;
+    /// The identity `owner` signs in with (the first one), or `None` for an anonymous owner.
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn owner_identity(&self, owner: &str) -> Result<Option<Identity>, String>;
+    /// Copy `from`'s live data (in space `from_space`) into `into`'s (in `into_space`), see `space::merge`.
+    /// Returns the number of new changes.
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String>;
+}
+
+/// An external sign-in identity.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Identity {
+    pub provider: String,
+    /// The provider's stable user id (never the email, which can change).
+    pub subject: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
 }
 
 const ACCOUNTS_SCHEMA: &str = "
@@ -48,6 +82,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   owner_id TEXT NOT NULL REFERENCES owners(id),
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS sessions_by_owner ON sessions (owner_id);
+CREATE TABLE IF NOT EXISTS identities (
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES owners(id),
+  email TEXT,
+  name TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (provider, subject)
+);
+CREATE INDEX IF NOT EXISTS identities_by_owner ON identities (owner_id);
 ";
 
 fn connect(path: &Path) -> Result<Connection, String> {
@@ -280,5 +325,69 @@ impl Store for SqliteStore {
 
     fn changes_since(&self, space: &str, after: u64, limit: usize) -> Result<Vec<Change>, String> {
         self.read(space, |c| space::changes_since(c, after, limit))
+    }
+
+    fn delete_session(&self, token_hash: &str) -> Result<(), String> {
+        let h = token_hash.to_string();
+        self.write(move |w| w.accounts.execute("DELETE FROM sessions WHERE token_hash = ?1", [h]))?
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    fn identity_owner(&self, provider: &str, subject: &str) -> Result<Option<OwnerId>, String> {
+        self.read("", |c| {
+            c.query_row(
+                "SELECT owner_id FROM identities WHERE provider = ?1 AND subject = ?2",
+                [provider, subject],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    fn add_identity(&self, id: &Identity, owner: &str, now: i64) -> Result<(), String> {
+        let (id, owner) = (id.clone(), owner.to_string());
+        self.write(move |w| {
+            w.accounts.execute(
+                "INSERT INTO identities (provider, subject, owner_id, email, name, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id.provider, id.subject, owner, id.email, id.name, now],
+            )
+        })?
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+
+    fn owner_identity(&self, owner: &str) -> Result<Option<Identity>, String> {
+        self.read("", |c| {
+            c.query_row(
+                "SELECT provider, subject, email, name FROM identities WHERE owner_id = ?1
+                 ORDER BY created_at, provider LIMIT 1",
+                [owner],
+                |r| Ok(Identity { provider: r.get(0)?, subject: r.get(1)?, email: r.get(2)?, name: r.get(3)? }),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String> {
+        let rows = self.read(from_space, |c| space::export(c, from))?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let (dir, into_space, into, from, listener) =
+            (self.dir.clone(), into_space.to_string(), into.to_string(), from.to_string(), self.listener.clone());
+        self.write(move |w| {
+            let conn = w.space(&dir, &into_space)?;
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let changes = space::merge(&*tx, &into, &from, &rows, now)?;
+            tx.commit().map_err(|e| e.to_string())?;
+            for c in &changes {
+                listener(&into_space, c);
+            }
+            Ok(changes.len())
+        })?
     }
 }

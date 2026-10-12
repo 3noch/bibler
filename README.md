@@ -7,8 +7,9 @@ place a tag (or a combination of tags) appears.
 - **Tag** by picking a color from the dock and dragging over words (tap or long-press on phones).
 - **Look up** any tagged words to see nearby places with the same tags, as text snippets.
 - **Search** tags and combinations, optionally within books or groups (Gospels, Pauline epistles, …).
-- **Undo** everything; edits work offline and sync to the server when it comes back (cross-device sync awaits
-  accounts).
+- **Undo** everything; edits work offline and sync to the server when it comes back.
+- **Sign in with Google** (optional) to keep tags safe and use them on every device; tags made before signing in
+  come along.
 
 Stack: Solid.js client, Rust server (axum + SQLite), shared TypeScript/Rust core kept in step by common test fixtures.
 
@@ -37,13 +38,25 @@ make dev       # http://localhost:5173
     --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80
   ```
 
+## Sign in with Google (optional)
+
+1. Google Cloud Console → *APIs & Services → Credentials → Create credentials → OAuth client ID*, type
+   *Web application*.
+2. Add an *Authorized redirect URI* per origin: `https://your.host/api/auth/google/callback`, and for
+   `make dev`, `http://localhost:5173/api/auth/google/callback`.
+3. Start the server with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in its environment (`make dev` passes
+   them through). Behind a proxy that terminates TLS, add `--public-url https://your.host`.
+
+Without them the app works the same, just with no sign-in button.
+
 ## Layout
 
 | Path | Contents |
 |---|---|
 | `packages/app` | Solid client |
 | `packages/scripture` | Shared TS core: text index, reference parser, tag edits, sync, queries |
-| `crates/server` | HTTP + sync WebSocket server (SQLite, TLS) |
+| `crates/server` | HTTP + sync WebSocket server (SQLite, TLS, sign-in) |
+| `crates/space` | One user's (or later a group's) database: schema and sync, shared with the Cloudflare port |
 | `crates/ops`, `crates/normalize` | Rust side of the shared core |
 | `crates/text-build` | Turns the KJV source into the app's text files |
 | `data/source` | Vendored KJV (1769) text — never edit; tags depend on it |

@@ -138,9 +138,25 @@ Rust: `crates/normalize/src/lib.rs`).
   space; mutation-checked 2026-10-11: owner check, per-space seq, write-before-checks, duplicate scope).
 - **Protocol** (`/api/sync` WebSocket, documented in `sync.rs`): `hello{after}` -> replayed changes -> `ready` ->
   live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
-- **Auth placeholder**: `POST /api/session` creates an anonymous owner + HttpOnly SameSite=Lax cookie (Secure under
-  TLS; only sha256(token) stored). Same-origin `Origin` required on both endpoints. Real auth will attach accounts
-  to owners later.
+- **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
+  SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
+  session/sync/logout.
+- **Sign in with Google** (`crates/server/src/auth.rs`, done 2026-10-11): authorization code + PKCE, state + verifier
+  + return hash in a 10-minute `bt_oauth` cookie (Path=/api/auth); `id_token` read from the token endpoint response
+  (no signature check needed, per OIDC; iss/aud/exp/email_verified checked); HTTP via `ureq` (rustls + ring, no
+  aws-lc). Accounts = owners with rows in `identities(provider, subject)`. Rules: anonymous + new identity -> the
+  owner becomes the account; anonymous + existing account -> `space::merge` copies the anonymous owner's live data
+  into the account (same-named tags combined case-insensitively, taggings painted so overlaps merge, comments
+  follow, palette appended while room; original timestamps; idempotent op ids `merge-<from>-<row id>`; the
+  anonymous space is left as it was) and the session switches; signed in + other identity -> switch (new account if
+  unknown). Every sign-in rotates the session token. `POST /api/logout` deletes the session; the client then clears
+  its base/outbox/undo and reloads. Config: env `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (not flags), optional
+  `--public-url`; redirect URI = `<origin>/api/auth/google/callback`. Client (`Account.tsx`): top-bar person button
+  (initial when signed in) -> card with "Sign in with Google" or name/email + Sign out; sign-in is refused while
+  ops are unsent (`?auth_error=` from the callback becomes a notice). Tested: `tests/auth.rs` against a fake token
+  endpoint (PKCE, linking, merge, rotation, logout, forged/stale callbacks); UI checked in the browser (anonymous
+  card, redirect URL, signed-in card via a hand-inserted identity, sign-out). NOT yet tried against real Google
+  (needs the user's OAuth client).
 - **Client** (`SyncState` in `packages/scripture/src/syncState.ts`, pure; `packages/app/src/store.ts` wraps it):
   view = confirmed base + pending ops replayed (rebase on every change; ops that no longer apply are dropped with a
   notice). Undo/redo steps = op-id lists (a multi-op step undoes in reverse). Persistence: shared base cache
@@ -151,7 +167,7 @@ Rust: `crates/normalize/src/lib.rs`).
   restart); a client convergence property test (3 clients, random edits/delivery/disconnects, 120 seeds);
   browser-tested with two tabs incl. offline -> reconnect. Comments are in the fixtures, both property tests (with
   "every op kind applied" assertions) and the 3-client convergence test; mutation-checked 2026-10-11 (8 mutations,
-  caught in both languages). Not yet: real auth, rate limits, retention of the changes log.
+  caught in both languages). Not yet: rate limits, retention of the changes log.
 
 ## Sync engine choice
 - Decided 2026-10-10: our own per-owner event log (requirement: free OSS, self-hostable, no paid tier). The
@@ -183,6 +199,7 @@ Shared JSON fixtures are the behavioral spec for anything duplicated across TS a
 implementation and confirm tests fail. Don't claim something is verified unless it was actually run.
 
 ## Next steps
-- Real auth (attach accounts to anonymous owners).
+- Try sign-in with a real Google OAuth client; then port the server to Cloudflare (Worker + D1 for accounts, one
+  Durable Object per space running `crates/space`).
 - Reader: pairs within 3+ tag combinations in the Nearby panel, overlap style rules, a book/chapter picker.
 - Touch painting was tested only with synthesized PointerEvents; try it on a real phone.

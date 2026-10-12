@@ -58,10 +58,30 @@ function withStorageLock(f: () => void): void {
   else f();
 }
 
-async function sessionOwner(): Promise<string> {
+/** A signed-in account (`null` while anonymous). */
+export type Account = { provider: string; email: string | null; name: string | null };
+type Session = { owner: string; account: Account | null; providers: string[] };
+
+async function fetchSession(): Promise<Session> {
   const res = await fetch("/api/session", { method: "POST", credentials: "same-origin" });
   if (!res.ok) throw new Error(`session: HTTP ${res.status}`);
-  return ((await res.json()) as { owner: string }).owner;
+  const s = (await res.json()) as Partial<Session> & { owner: string };
+  return { owner: s.owner, account: s.account ?? null, providers: s.providers ?? [] };
+}
+
+const AUTH_ERRORS: Record<string, string> = {
+  cancelled: "Sign-in was cancelled.",
+  expired: "Sign-in took too long or was interrupted. Please try again.",
+};
+
+/** The sign-in callback reports failures as `?auth_error=code`: take it out of the URL and return a message. */
+function takeAuthError(): string | undefined {
+  const url = new URL(location.href);
+  const code = url.searchParams.get("auth_error");
+  if (!code) return undefined;
+  url.searchParams.delete("auth_error");
+  history.replaceState(history.state, "", url);
+  return AUTH_ERRORS[code] ?? "Sign-in failed. Please try again.";
 }
 
 export type TagStore = Awaited<ReturnType<typeof openTagStore>>;
@@ -69,6 +89,7 @@ export type TagStore = Awaited<ReturnType<typeof openTagStore>>;
 export async function openTagStore() {
   let base: Base | undefined;
   let owner: string;
+  let session: Session | undefined;
   if (LOCAL_ONLY) {
     const db = loadLocalDb();
     owner = "local";
@@ -76,7 +97,8 @@ export async function openTagStore() {
   } else {
     base = read<Base>(localStorage, BASE_KEY);
     try {
-      owner = await sessionOwner();
+      session = await fetchSession();
+      owner = session.owner;
     } catch (e) {
       if (!base) throw e; // first run needs the server once
       owner = base.owner; // offline: keep working on local state
@@ -102,6 +124,8 @@ export async function openTagStore() {
     setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), 6000);
   };
   sync.onNotice(notify);
+  const authError = takeAuthError();
+  if (authError) notify(authError);
 
   let saveTimer: number | undefined;
   const save = () =>
@@ -183,6 +207,34 @@ export async function openTagStore() {
 
   return {
     mode: LOCAL_ONLY ? ("local" as const) : ("server" as const),
+    /** The signed-in account, `null` while anonymous, `undefined` if unknown (offline at startup). */
+    account: session?.account,
+    /** Configured sign-in methods (empty: sign-in unavailable). */
+    providers: session?.providers ?? [],
+    /** Off to Google; back on this page (same location) once signed in. This device's tags go with it: they
+     *  become the account's, or are added to an existing account's. Refused while edits are still unsent. */
+    signIn() {
+      if (sync.pending.length > 0 || sync.status !== "synced") {
+        notify("Still syncing your changes. Try again in a moment.");
+        return;
+      }
+      location.href = `/api/auth/google?return=${encodeURIComponent(location.hash)}`;
+    },
+    /** End the session and forget this account's data on this device; the page restarts anonymous. */
+    async signOut() {
+      if (sync.pending.length > 0 && !confirm("Some changes haven't synced yet and will be lost. Sign out anyway?")) return;
+      const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+      if (!res?.ok) {
+        notify("Couldn't sign out (offline?). Try again when connected.");
+        return;
+      }
+      clearTimeout(saveTimer);
+      withStorageLock(() => {
+        for (const k of [BASE_KEY, OUTBOX_KEY]) localStorage.removeItem(k);
+        sessionStorage.removeItem(UNDO_KEY);
+        location.reload();
+      });
+    },
     tags,
     taggings,
     tagById,

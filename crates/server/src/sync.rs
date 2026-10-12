@@ -16,7 +16,7 @@
 //! ```
 
 use crate::hub::Hub;
-use crate::store::Store;
+use crate::store::{Identity, Store};
 use crate::texts::Texts;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -38,14 +38,18 @@ pub struct AppState {
     pub texts: Texts,
     /// Mark the session cookie `Secure` (when serving TLS).
     pub secure_cookies: bool,
+    /// Sign in with Google, if configured.
+    pub google: Option<crate::auth::Google>,
+    /// This server's public origin (`https://example.org`), for OAuth redirects; default: the request's `Host`.
+    pub public_url: Option<String>,
 }
 
-const COOKIE: &str = "bt_session";
+pub(crate) const COOKIE: &str = "bt_session";
 const REPLAY_PAGE: usize = 500;
 /// Incoming frames: an op is small, except a comment (<= 10,000 code points, up to 4 bytes each, plus JSON escaping).
 const MAX_FRAME: usize = 128 * 1024;
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -58,17 +62,17 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
-fn random_hex(n: usize) -> Result<String, String> {
+pub(crate) fn random_hex(n: usize) -> Result<String, String> {
     let mut buf = vec![0u8; n];
     getrandom::fill(&mut buf).map_err(|e| e.to_string())?;
     Ok(hex(&buf))
 }
 
-fn token_hash(token: &str) -> String {
+pub(crate) fn token_hash(token: &str) -> String {
     hex(&Sha256::digest(token.as_bytes()))
 }
 
-fn session_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn session_token(headers: &HeaderMap) -> Option<String> {
     headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|kv| {
         let (k, v) = kv.trim().split_once('=')?;
         (k == COOKIE && !v.is_empty()).then(|| v.to_string())
@@ -76,34 +80,52 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Browsers always send `Origin` on cross-site requests and WebSocket handshakes; it must name this host.
-fn same_origin(headers: &HeaderMap) -> bool {
+pub(crate) fn same_origin(headers: &HeaderMap) -> bool {
     let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else { return true };
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
     origin.split_once("://").is_some_and(|(_, rest)| rest == host)
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
     tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())
 }
 
-async fn owner_of(st: &Arc<AppState>, headers: &HeaderMap) -> Option<String> {
+pub(crate) async fn owner_of(st: &Arc<AppState>, headers: &HeaderMap) -> Option<String> {
     let hash = token_hash(&session_token(headers)?);
     let store = st.store.clone();
     blocking(move || store.session_owner(&hash)).await.ok()?.ok()?
 }
 
-fn internal(e: &str) -> Response {
+pub(crate) fn internal(e: &str) -> Response {
     tracing::error!("{e}");
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
 }
 
-/// `POST /api/session`: the current owner, creating an anonymous one (and its cookie) if needed.
+/// The session cookie for `token` (a year; renewed by signing in again).
+pub(crate) fn new_session_cookie(st: &AppState, token: &str) -> String {
+    let secure = if st.secure_cookies { "; Secure" } else { "" };
+    format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000{secure}")
+}
+
+/// What `POST /api/session` returns.
+fn session_json(st: &AppState, owner: &str, account: Option<Identity>) -> Json<serde_json::Value> {
+    let providers: &[&str] = if st.google.is_some() { &["google"] } else { &[] };
+    let account = account.map(|a| serde_json::json!({ "provider": a.provider, "email": a.email, "name": a.name }));
+    Json(serde_json::json!({ "owner": owner, "account": account, "providers": providers }))
+}
+
+/// `POST /api/session`: the current owner and its account (`null` while anonymous), creating an anonymous owner
+/// (and its cookie) if needed. `providers` lists the configured sign-in methods.
 pub async fn session(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if !same_origin(&headers) {
         return (StatusCode::FORBIDDEN, "cross-origin").into_response();
     }
     if let Some(owner) = owner_of(&st, &headers).await {
-        return Json(serde_json::json!({ "owner": owner })).into_response();
+        let (store, o) = (st.store.clone(), owner.clone());
+        return match blocking(move || store.owner_identity(&o)).await {
+            Ok(Ok(account)) => session_json(&st, &owner, account).into_response(),
+            Ok(Err(e)) | Err(e) => internal(&e),
+        };
     }
     let (owner, token) = match (random_hex(16), random_hex(32)) {
         (Ok(o), Ok(t)) => (o, t),
@@ -119,9 +141,7 @@ pub async fn session(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
     if let Err(e) | Ok(Err(e)) = created {
         return internal(&e);
     }
-    let secure = if st.secure_cookies { "; Secure" } else { "" };
-    let cookie = format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000{secure}");
-    ([(header::SET_COOKIE, cookie)], Json(serde_json::json!({ "owner": owner }))).into_response()
+    ([(header::SET_COOKIE, new_session_cookie(&st, &token))], session_json(&st, &owner, None)).into_response()
 }
 
 /// `GET /api/sync`: upgrade to the sync WebSocket.

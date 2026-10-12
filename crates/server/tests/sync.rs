@@ -31,7 +31,15 @@ async fn start(cfg: &Config) -> Server {
 
 fn config(name: &str) -> Config {
     let (_, text_dir, data) = common::fixture(name, 100);
-    Config { static_dir: None, text_dir, data, migrate_from: None, secure_cookies: false }
+    Config {
+        static_dir: None,
+        text_dir,
+        data,
+        migrate_from: None,
+        secure_cookies: false,
+        google: None,
+        public_url: None,
+    }
 }
 
 /// A new anonymous owner: returns its session cookie (`name=value`).

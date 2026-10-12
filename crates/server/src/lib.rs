@@ -1,5 +1,6 @@
 //! bible-tags server: serves the client bundle, the scripture text artifacts, sessions and the sync WebSocket.
 
+pub mod auth;
 pub mod hub;
 pub mod legacy;
 pub mod store;
@@ -30,6 +31,10 @@ pub struct Config {
     pub migrate_from: Option<PathBuf>,
     /// Mark the session cookie `Secure` (set when serving TLS).
     pub secure_cookies: bool,
+    /// Sign in with Google, if configured.
+    pub google: Option<auth::Google>,
+    /// Public origin for OAuth redirects (default: the request's `Host`, with https under TLS).
+    pub public_url: Option<String>,
 }
 
 /// Build the app: open the store, load the texts, wire the routes.
@@ -50,11 +55,16 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         hub,
         texts: texts::Texts::load(&cfg.text_dir)?,
         secure_cookies: cfg.secure_cookies,
+        google: cfg.google.clone(),
+        public_url: cfg.public_url.clone(),
     });
     let api = Router::new()
         .route("/health", get(health))
         .route("/session", post(sync::session))
         .route("/sync", get(sync::sync))
+        .route("/logout", post(auth::logout))
+        .route("/auth/google", get(auth::google_start))
+        .route("/auth/google/callback", get(auth::google_callback))
         .fallback(|| async { (StatusCode::NOT_FOUND, "no such API route") })
         .with_state(state);
 

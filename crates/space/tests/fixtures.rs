@@ -100,3 +100,49 @@ fn a_shared_space_has_one_seq_and_owner_scoped_rows() {
     assert_eq!(changes_since(&db, 0, 10).unwrap().len(), 3);
     assert_eq!(members(&db).unwrap(), ["alice", "bob"]);
 }
+
+#[test]
+fn merge_copies_live_data_and_combines_same_named_tags() {
+    use space::{export, merge};
+    let (anon, account) = (open(), open());
+    let ops = [
+        serde_json::json!({"op_id": "1", "kind": "tag_create", "id": "AG", "name": "grace", "color": "#111111", "now": 1}),
+        serde_json::json!({"op_id": "2", "kind": "tag_create", "id": "AL", "name": "Love", "color": "#222222", "now": 2}),
+        serde_json::json!({"op_id": "3", "kind": "paint", "tag": "AG", "text_id": "t", "start": 10, "end": 20, "new_id": "g1", "now": 3}),
+        serde_json::json!({"op_id": "4", "kind": "comment_create", "id": "c1", "tagging": "g1", "body": "kept", "now": 4}),
+        serde_json::json!({"op_id": "5", "kind": "paint", "tag": "AL", "text_id": "t", "start": 50, "end": 60, "new_id": "g2", "now": 5}),
+        serde_json::json!({"op_id": "6", "kind": "paint", "tag": "AL", "text_id": "t", "start": 70, "end": 80, "new_id": "g3", "now": 6}),
+        serde_json::json!({"op_id": "7", "kind": "comment_create", "id": "c2", "tagging": "g3", "body": "hidden", "now": 7}),
+        serde_json::json!({"op_id": "8", "kind": "erase", "tag": "AL", "text_id": "t", "start": 70, "end": 80, "split_id": null, "now": 8}),
+        serde_json::json!({"op_id": "9", "kind": "palette_set", "tags": ["AG", "AL"], "now": 9}),
+    ];
+    for o in ops {
+        apply(&anon, "anon", &op(o), 0).unwrap();
+    }
+    for o in [
+        serde_json::json!({"op_id": "1", "kind": "tag_create", "id": "BG", "name": "Grace", "color": "#333333", "now": 1}),
+        serde_json::json!({"op_id": "2", "kind": "paint", "tag": "BG", "text_id": "t", "start": 15, "end": 30, "new_id": "h1", "now": 0}),
+        serde_json::json!({"op_id": "3", "kind": "palette_set", "tags": ["BG"], "now": 3}),
+    ] {
+        apply(&account, "me", &op(o), 0).unwrap();
+    }
+    let rows = export(&anon, "anon").unwrap();
+    assert!(!rows.iter().any(|r| matches!(r, Row::Comment(c) if c.id == "c2")), "hidden comments stay behind");
+    let changes = merge(&account, "me", "anon", &rows, 100).unwrap();
+    assert_ne!(changes.len(), 0);
+    let mine = export(&account, "me").unwrap();
+    let names: Vec<_> =
+        mine.iter().filter_map(|r| if let Row::Tag(t) = r { Some(t.name.as_str()) } else { None }).collect();
+    assert_eq!(names, ["Grace", "Love"], "same-named tags are combined, others created");
+    let spans: Vec<_> = mine
+        .iter()
+        .filter_map(|r| if let Row::Tagging(t) = r { Some((t.tag.as_str(), t.start, t.end)) } else { None })
+        .collect();
+    assert_eq!(spans, [("BG", 10, 30), ("AL", 50, 60)], "overlapping same-tag taggings merge");
+    let comment = mine.iter().find_map(|r| if let Row::Comment(c) = r { Some(c) } else { None }).unwrap();
+    assert_eq!((comment.body.as_str(), comment.created_at), ("kept", 4));
+    assert!(matches!(mine.last(), Some(Row::Palette(p)) if p.tags == ["BG", "AL"]));
+    // Idempotent.
+    assert_eq!(merge(&account, "me", "anon", &rows, 200).unwrap().len(), 0);
+    assert_eq!(export(&account, "me").unwrap(), mine);
+}

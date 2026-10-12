@@ -372,3 +372,21 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 button.primary { border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
 button.primary.small { padding: 4px 12px; font-size: 0.8rem; }
 button.primary:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------------------------------------------------------------- account */
+.account-btn .avatar, .avatar {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 700;
+}
+.avatar.big { width: 40px; height: 40px; font-size: 1.1rem; flex: none; }
+.account h2 { margin: 0 28px 6px 0; font-size: 1rem; }
+.account p { margin: 0 0 12px; line-height: 1.45; }
+.account .who { display: flex; align-items: center; gap: 12px; margin: 0 28px 12px 0; }
+.account .muted { color: var(--muted); }
+.account .who .muted { overflow-wrap: anywhere; }
+button.google, button.secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 40px; padding: 0 16px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 600;
+}
+button.google { width: 100%; }
+button.google:hover, button.secondary:hover { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }

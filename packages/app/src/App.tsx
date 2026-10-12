@@ -6,6 +6,7 @@ import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
+import { AccountButton, AccountCard } from "./Account.tsx";
 import { BrushIcon, CloseIcon, EraserIcon, HelpIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
 
 export function App() {
@@ -30,6 +31,7 @@ function Main(props: { text: Text; store: TagStore }) {
   const [near, setNear] = createSignal<{ tags: string[]; pos: number } | null>(null);
   const [sheetTag, setSheetTag] = createSignal<string | null>(null);
   const [help, setHelp] = createSignal(false);
+  const [accountOpen, setAccountOpen] = createSignal(false);
   const [chips, setChips] = createSignal<Chip[]>([]);
   const [tagsOpen, setTagsOpen] = createSignal(false);
 
@@ -132,9 +134,10 @@ function Main(props: { text: Text; store: TagStore }) {
       const tag = store.palette()[Number(key) - 1];
       if (tag) chooseTag(tag);
     } else if (key === "escape") {
-      if (near() || help() || sheetTag()) {
+      if (near() || help() || accountOpen() || sheetTag()) {
         setNear(null);
         setHelp(false);
+        setAccountOpen(false);
         setSheetTag(null);
       } else if (tagsOpen()) setTagsOpen(false); else if (chips().length) setChips([]);
       else stopPainting();
@@ -182,13 +185,33 @@ function Main(props: { text: Text; store: TagStore }) {
               <span aria-hidden="true">⚠</span> Local only
             </button>
           </Show>
-          <button class="icon" classList={{ on: help() }} onClick={() => setHelp((h) => !h)} title="Help" aria-label="Help">
+          <AccountButton
+            store={store}
+            open={accountOpen()}
+            onToggle={() => {
+              setHelp(false);
+              setAccountOpen((o) => !o);
+            }}
+          />
+          <button
+            class="icon"
+            classList={{ on: help() }}
+            onClick={() => {
+              setAccountOpen(false);
+              setHelp((h) => !h);
+            }}
+            title="Help"
+            aria-label="Help"
+          >
             <HelpIcon />
           </button>
         </div>
       </header>
       <Show when={help()}>
         <Help local={store.mode === "local"} onClose={() => setHelp(false)} />
+      </Show>
+      <Show when={accountOpen()}>
+        <AccountCard store={store} onClose={() => setAccountOpen(false)} />
       </Show>
 
       <main class="page">
