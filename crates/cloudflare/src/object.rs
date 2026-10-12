@@ -1,0 +1,249 @@
+//! The `Space` Durable Object: one space's SQLite database (`crates/space`, the same SQL as the self-hosted
+//! server's `spaces/<id>.sqlite`) and its sync `WebSockets` (`api::protocol`), using the hibernation API so an idle
+//! space costs nothing while its sockets stay open.
+//!
+//! A Durable Object runs one event at a time, and nothing below awaits between reading and writing, so each op (and
+//! each replay) is atomic and every socket sees changes in seq order without a hub: a change is sent to every ready
+//! socket right after it is stored. `space::apply` checks everything before its first write (there is no rollback).
+//!
+//! Only the Worker can reach a Durable Object; it authenticates the session and names the owner in `x-owner`:
+//! ```text
+//! GET  /sync   (WebSocket upgrade, x-owner)   the sync protocol
+//! GET  /export?owner=   -> [Row]              an owner's live data (space::export)
+//! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
+//! ```
+
+use api::check::Texts;
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, REPLAY_PAGE};
+use ops::Row;
+use serde::{Deserialize, Serialize};
+use space::{ApplyError, Db, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
+use worker::{
+    durable_object, DurableObject, Env, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket,
+    WebSocketIncomingMessage, WebSocketPair,
+};
+
+#[durable_object]
+pub struct Space {
+    state: State,
+    db: Sql,
+    texts: Rc<RefCell<Texts>>,
+}
+
+/// Per-socket state, kept across hibernation.
+#[derive(Serialize, Deserialize)]
+struct Socket {
+    owner: String,
+    /// `hello` was answered: the socket gets live changes.
+    ready: bool,
+}
+
+// No awaits in the socket handlers is the point: each event is atomic.
+#[allow(clippy::unused_async_trait_impl)]
+impl DurableObject for Space {
+    fn new(state: State, env: Env) -> Self {
+        let db = Sql(state.storage().sql());
+        if let Err(e) = space::init(&db) {
+            worker::console_error!("space schema: {e}");
+        }
+        // Events wait until the texts are loaded, so ops are checked (and applied) in arrival order.
+        let texts = Rc::new(RefCell::new(Texts::default()));
+        let slot = texts.clone();
+        drop(state.block_concurrency_while(async move {
+            match load_texts(&env).await {
+                Ok(t) => *slot.borrow_mut() = t,
+                Err(e) => worker::console_error!("loading texts: {e}"),
+            }
+            Ok(())
+        }));
+        Space { state, db, texts }
+    }
+
+    async fn fetch(&self, mut req: Request) -> Result<Response> {
+        let url = req.url()?;
+        match url.path() {
+            "/sync" => {
+                let Some(owner) = req.headers().get("x-owner")? else { return Response::error("no owner", 400) };
+                let pair = WebSocketPair::new()?;
+                self.state.accept_web_socket(&pair.server);
+                pair.server.serialize_attachment(Socket { owner, ready: false })?;
+                Response::from_websocket(pair.client)
+            }
+            "/export" => {
+                let owner = url.query_pairs().find(|(k, _)| k == "owner").map(|(_, v)| v.into_owned());
+                let Some(owner) = owner else { return Response::error("no owner", 400) };
+                Response::from_json(&space::export(&self.db, &owner).map_err(worker::Error::RustError)?)
+            }
+            "/merge" => {
+                let m: Merge = req.json().await?;
+                let now = now_ms();
+                let changes =
+                    space::merge(&self.db, &m.owner, &m.from, &m.rows, now).map_err(worker::Error::RustError)?;
+                for c in &changes {
+                    self.broadcast(&ServerMsg::Change { change: c }.json());
+                }
+                Response::from_json(&changes.len())
+            }
+            _ => Response::error("not found", 404),
+        }
+    }
+
+    async fn websocket_message(&self, ws: WebSocket, message: WebSocketIncomingMessage) -> Result<()> {
+        let WebSocketIncomingMessage::String(text) = message else { return Ok(()) };
+        let Some(mut socket) = ws.deserialize_attachment::<Socket>()? else { return close(&ws, "no session") };
+        if text.len() > MAX_FRAME {
+            return close(&ws, "message too large");
+        }
+        match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
+            (false, Ok(ClientMsg::Hello { after })) => {
+                let seq = self.replay(&ws, after)?;
+                ws.send_with_str(ServerMsg::Ready { seq }.json())?;
+                socket.ready = true;
+                ws.serialize_attachment(socket)
+            }
+            (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket.owner, &op),
+            (false, _) => close(&ws, "expected hello"),
+            (true, _) => close(&ws, "expected an op"),
+        }
+    }
+
+    async fn websocket_close(&self, ws: WebSocket, code: usize, _reason: String, _clean: bool) -> Result<()> {
+        // 1005/1006 mean "no status"; they may not be sent back.
+        let code = u16::try_from(code).ok().filter(|c| !matches!(c, 1005 | 1006)).unwrap_or(1000);
+        let _ = ws.close(Some(code), Some("bye"));
+        Ok(())
+    }
+
+    async fn websocket_error(&self, _ws: WebSocket, _error: worker::Error) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct Merge {
+    owner: String,
+    from: String,
+    rows: Vec<Row>,
+}
+
+impl Space {
+    /// Send every change after `after`; returns the last seq sent (or `after`).
+    fn replay(&self, ws: &WebSocket, mut after: u64) -> Result<u64> {
+        loop {
+            let page = space::changes_since(&self.db, after, REPLAY_PAGE).map_err(worker::Error::RustError)?;
+            for c in &page {
+                ws.send_with_str(ServerMsg::Change { change: c }.json())?;
+                after = c.seq;
+            }
+            if page.len() < REPLAY_PAGE {
+                return Ok(after);
+            }
+        }
+    }
+
+    fn op(&self, ws: &WebSocket, owner: &str, op: &ops::Op) -> Result<()> {
+        let reject = |code: &str, message: String| {
+            ws.send_with_str(ServerMsg::Reject { op_id: &op.op_id, code, message }.json())
+        };
+        if let Err((code, message)) = api::check::check_op(&self.texts.borrow(), op) {
+            return reject(code, message);
+        }
+        match space::apply(&self.db, owner, op, now_ms()) {
+            Ok(applied) => {
+                if !applied.duplicate {
+                    self.broadcast(&ServerMsg::Change { change: &applied.change }.json());
+                }
+                ws.send_with_str(ServerMsg::Ack { op_id: &op.op_id, seq: applied.change.seq }.json())
+            }
+            Err(ApplyError::Op(e)) => reject(e.code(), e.to_string()),
+            Err(ApplyError::Internal(e)) => {
+                worker::console_error!("apply {}: {e}", op.op_id);
+                reject("internal", "internal error".into())
+            }
+        }
+    }
+
+    /// Send to every socket that has finished its replay.
+    fn broadcast(&self, json: &str) {
+        for ws in self.state.get_websockets() {
+            if ws.deserialize_attachment::<Socket>().ok().flatten().is_some_and(|s| s.ready) {
+                let _ = ws.send_with_str(json);
+            }
+        }
+    }
+}
+
+fn close(ws: &WebSocket, message: &str) -> Result<()> {
+    let _ = ws.send_with_str(ServerMsg::Error { message }.json());
+    ws.close(Some(1008), Some(message))
+}
+
+pub(crate) fn now_ms() -> i64 {
+    i64::try_from(worker::Date::now().as_millis()).unwrap_or(i64::MAX)
+}
+
+/// The texts listed in `/text/texts.json` (written by `make cloudflare`), read from the static assets.
+async fn load_texts(env: &Env) -> Result<Texts> {
+    let assets = env.assets("ASSETS")?;
+    let get = |path: String| {
+        let assets = &assets;
+        async move {
+            let mut res = assets.fetch(format!("https://assets.local/text/{path}"), None).await?;
+            if res.status_code() != 200 {
+                return Err(worker::Error::RustError(format!("{path}: HTTP {}", res.status_code())));
+            }
+            res.bytes().await
+        }
+    };
+    let ids: Vec<String> = serde_json::from_slice(&get("texts.json".into()).await?)?;
+    let mut texts = Texts::default();
+    for id in ids.iter().filter(|id| api::check::valid_id(id)) {
+        let manifest: serde_json::Value = serde_json::from_slice(&get(format!("{id}/manifest.json")).await?)?;
+        let index = manifest["index"].as_str().unwrap_or_default();
+        let bytes = get(format!("{id}/{index}")).await?;
+        texts.add_index(id, &bytes).map_err(worker::Error::RustError)?;
+    }
+    Ok(texts)
+}
+
+/// `space::Db` over Durable Object SQL storage.
+struct Sql(SqlStorage);
+
+fn bind(params: &[Value]) -> Vec<SqlStorageValue> {
+    params
+        .iter()
+        .map(|v| match v {
+            Value::Null => SqlStorageValue::Null,
+            Value::Int(n) => SqlStorageValue::Integer(*n),
+            Value::Text(s) => SqlStorageValue::String(s.clone()),
+        })
+        .collect()
+}
+
+impl Db for Sql {
+    fn exec(&self, sql: &str, params: &[Value]) -> std::result::Result<(), String> {
+        let cursor = self.0.exec(sql, bind(params)).map_err(|e| e.to_string())?;
+        // Run the statement to completion.
+        cursor.raw().try_for_each(|r| r.map(drop)).map_err(|e| e.to_string())
+    }
+
+    fn query(&self, sql: &str, params: &[Value]) -> std::result::Result<Vec<Vec<Value>>, String> {
+        let cursor = self.0.exec(sql, bind(params)).map_err(|e| e.to_string())?;
+        cursor
+            .raw()
+            .map(|row| {
+                row.map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|v| match v {
+                        SqlStorageValue::Null => Ok(Value::Null),
+                        SqlStorageValue::Integer(n) => Ok(Value::Int(n)),
+                        SqlStorageValue::String(s) => Ok(Value::Text(s)),
+                        other => Err(format!("unexpected SQL value {other:?}")),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}

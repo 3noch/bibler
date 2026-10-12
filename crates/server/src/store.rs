@@ -65,35 +65,9 @@ pub trait Store: Send + Sync {
     fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String>;
 }
 
-/// An external sign-in identity.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Identity {
-    pub provider: String,
-    /// The provider's stable user id (never the email, which can change).
-    pub subject: String,
-    pub email: Option<String>,
-    pub name: Option<String>,
-}
+pub use api::Identity;
 
-const ACCOUNTS_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions (
-  token_hash TEXT PRIMARY KEY,
-  owner_id TEXT NOT NULL REFERENCES owners(id),
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS sessions_by_owner ON sessions (owner_id);
-CREATE TABLE IF NOT EXISTS identities (
-  provider TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  owner_id TEXT NOT NULL REFERENCES owners(id),
-  email TEXT,
-  name TEXT,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY (provider, subject)
-);
-CREATE INDEX IF NOT EXISTS identities_by_owner ON identities (owner_id);
-";
+use api::accounts as sql;
 
 fn connect(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -163,7 +137,7 @@ impl SqliteStore {
     pub fn open(dir: &Path, listener: CommitListener) -> Result<Self, String> {
         std::fs::create_dir_all(dir.join("spaces")).map_err(|e| format!("{}: {e}", dir.display()))?;
         let accounts = connect(&dir.join("accounts.sqlite"))?;
-        accounts.execute_batch(ACCOUNTS_SCHEMA).map_err(|e| format!("accounts schema: {e}"))?;
+        accounts.execute_batch(sql::SCHEMA).map_err(|e| format!("accounts schema: {e}"))?;
         let mut w = Writer { accounts, spaces: HashMap::new() };
         let (tx, rx) = mpsc::channel::<Job>();
         let thread = std::thread::Builder::new()
@@ -262,15 +236,10 @@ impl SqliteStore {
         self.write(move |w| {
             let tx = w.accounts.unchecked_transaction().map_err(|e| e.to_string())?;
             for (id, at) in &owners {
-                tx.execute("INSERT INTO owners (id, created_at) VALUES (?1, ?2)", params![id, at])
-                    .map_err(|e| e.to_string())?;
+                tx.execute(sql::CREATE_OWNER, params![id, at]).map_err(|e| e.to_string())?;
             }
             for (hash, owner, at) in &sessions {
-                tx.execute(
-                    "INSERT INTO sessions (token_hash, owner_id, created_at) VALUES (?1, ?2, ?3)",
-                    params![hash, owner, at],
-                )
-                .map_err(|e| e.to_string())?;
+                tx.execute(sql::CREATE_SESSION, params![hash, owner, at]).map_err(|e| e.to_string())?;
             }
             tx.commit().map_err(|e| e.to_string())
         })?
@@ -280,30 +249,21 @@ impl SqliteStore {
 impl Store for SqliteStore {
     fn create_owner(&self, id: &str, now: i64) -> Result<(), String> {
         let id = id.to_string();
-        self.write(move |w| {
-            w.accounts.execute("INSERT INTO owners (id, created_at) VALUES (?1, ?2)", params![id, now])
-        })?
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        self.write(move |w| w.accounts.execute(sql::CREATE_OWNER, params![id, now]))?
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     fn create_session(&self, token_hash: &str, owner: &str, now: i64) -> Result<(), String> {
         let (h, o) = (token_hash.to_string(), owner.to_string());
-        self.write(move |w| {
-            w.accounts.execute(
-                "INSERT INTO sessions (token_hash, owner_id, created_at) VALUES (?1, ?2, ?3)",
-                params![h, o, now],
-            )
-        })?
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        self.write(move |w| w.accounts.execute(sql::CREATE_SESSION, params![h, o, now]))?
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     fn session_owner(&self, token_hash: &str) -> Result<Option<OwnerId>, String> {
         self.read("", |c| {
-            c.query_row("SELECT owner_id FROM sessions WHERE token_hash = ?1", [token_hash], |r| r.get(0))
-                .optional()
-                .map_err(|e| e.to_string())
+            c.query_row(sql::SESSION_OWNER, [token_hash], |r| r.get(0)).optional().map_err(|e| e.to_string())
         })
     }
 
@@ -329,31 +289,19 @@ impl Store for SqliteStore {
 
     fn delete_session(&self, token_hash: &str) -> Result<(), String> {
         let h = token_hash.to_string();
-        self.write(move |w| w.accounts.execute("DELETE FROM sessions WHERE token_hash = ?1", [h]))?
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        self.write(move |w| w.accounts.execute(sql::DELETE_SESSION, [h]))?.map(|_| ()).map_err(|e| e.to_string())
     }
 
     fn identity_owner(&self, provider: &str, subject: &str) -> Result<Option<OwnerId>, String> {
         self.read("", |c| {
-            c.query_row(
-                "SELECT owner_id FROM identities WHERE provider = ?1 AND subject = ?2",
-                [provider, subject],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+            c.query_row(sql::IDENTITY_OWNER, [provider, subject], |r| r.get(0)).optional().map_err(|e| e.to_string())
         })
     }
 
     fn add_identity(&self, id: &Identity, owner: &str, now: i64) -> Result<(), String> {
         let (id, owner) = (id.clone(), owner.to_string());
         self.write(move |w| {
-            w.accounts.execute(
-                "INSERT INTO identities (provider, subject, owner_id, email, name, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id.provider, id.subject, owner, id.email, id.name, now],
-            )
+            w.accounts.execute(sql::ADD_IDENTITY, params![id.provider, id.subject, owner, id.email, id.name, now])
         })?
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -361,12 +309,9 @@ impl Store for SqliteStore {
 
     fn owner_identity(&self, owner: &str) -> Result<Option<Identity>, String> {
         self.read("", |c| {
-            c.query_row(
-                "SELECT provider, subject, email, name FROM identities WHERE owner_id = ?1
-                 ORDER BY created_at, provider LIMIT 1",
-                [owner],
-                |r| Ok(Identity { provider: r.get(0)?, subject: r.get(1)?, email: r.get(2)?, name: r.get(3)? }),
-            )
+            c.query_row(sql::OWNER_IDENTITY, [owner], |r| {
+                Ok(Identity { provider: r.get(0)?, subject: r.get(1)?, email: r.get(2)?, name: r.get(3)? })
+            })
             .optional()
             .map_err(|e| e.to_string())
         })

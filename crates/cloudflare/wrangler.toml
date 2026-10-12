@@ -1,0 +1,35 @@
+# Cloudflare deployment. Run through the Makefile (`make cloudflare-dev`, `make cloudflare-deploy`), which builds
+# the client + text into build/cloudflare/assets and the Worker with worker-build.
+name = "bible-tags"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-06-01"
+
+[build]
+command = "worker-build --release"
+
+# The client bundle and the text artifacts. Everything but /api/* is served from here without running the Worker
+# (free and uncounted); unknown paths get index.html.
+[assets]
+directory = "../../build/cloudflare/assets"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# Accounts: owners, sessions, identities (schema: api::accounts::SCHEMA, created on first use).
+# Before the first deploy: `wrangler d1 create bible-tags-accounts` and put its id here.
+[[d1_databases]]
+binding = "ACCOUNTS"
+database_name = "bible-tags-accounts"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# One Durable Object per space (named by the space id), each with its own SQLite database.
+[durable_objects]
+bindings = [{ name = "SPACES", class_name = "Space" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Space"]
+
+# Optional: PUBLIC_URL (OAuth redirect origin; default: the request's). Secrets for Google sign-in (both or
+# neither): `wrangler secret put GOOGLE_CLIENT_ID`, `wrangler secret put GOOGLE_CLIENT_SECRET`; for `wrangler dev`
+# put them in crates/cloudflare/.dev.vars.

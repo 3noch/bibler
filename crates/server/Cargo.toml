@@ -8,6 +8,7 @@ name = "bible-tags-server"
 path = "src/main.rs"
 
 [dependencies]
+api = { path = "../api" }
 axum = { version = "0.8.9", features = ["ws"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }

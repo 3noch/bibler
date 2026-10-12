@@ -12,6 +12,9 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   development). **Push only when the user says so.**
 
 ## Dev workflow (Makefile) and deployment (default.nix)
+- **Cloudflare**: `make cloudflare-dev` (wrangler dev, :8787), `make cloudflare-test`, `make cloudflare-deploy`;
+  all rebuild `build/cloudflare/assets` (client in server mode + `build/text` + `texts.json` + `_headers`).
+  `make check` also runs clippy for `wasm32-unknown-unknown` on `crates/cloudflare` (it compiles natively too).
 - **GitHub Pages (offline-only build)**: `make pages` -> `build/pages/` (client built with `VITE_SYNC=local`,
   `VITE_BASE=./`, plus the text artifacts and `.nojekyll`); `make pages-serve` previews it. `.github/workflows/pages.yml`
   builds and deploys it on push to `main` (repo Settings -> Pages -> Source: GitHub Actions). No server there: the
@@ -136,12 +139,30 @@ Rust: `crates/normalize/src/lib.rs`).
   Ordinals are validated against the text index (`bad_text`), ids against `[0-9A-Za-z_-]{1,64}` (`bad_id`).
   The shared ops fixtures also run through SQLite (`crates/space/tests/fixtures.rs`, which also tests a two-owner
   space; mutation-checked 2026-10-11: owner check, per-space seq, write-before-checks, duplicate scope).
-- **Protocol** (`/api/sync` WebSocket, documented in `sync.rs`): `hello{after}` -> replayed changes -> `ready` ->
+- **Cloudflare** (`crates/cloudflare`, done 2026-10-11; workers-rs 0.8.7, built for wasm32 by worker-build 0.8.7
+  installed into `build/tools`; wrangler from nix): same API and protocol as the self-hosted server. Worker routes
+  `/api/*` (everything else is Workers Static Assets: client + text, SPA fallback, `_headers` for caching); accounts
+  in D1 (binding `ACCOUNTS`, schema created once per isolate from `api::accounts::SCHEMA`); one SQLite-backed Durable
+  Object `Space` per space (`id_from_name(space)`), running `crates/space` over `SqlStorage` with the WebSocket
+  hibernation API. The Worker authenticates and forwards the upgrade with `x-owner`. The DO has no hub: no awaits
+  between apply and broadcast, so each event is atomic and every ready socket gets changes in seq order (a socket is
+  "ready" after its hello replay, kept in its attachment). Texts for `bad_text` are loaded from the assets
+  (`/text/texts.json`, written by `make cloudflare-assets`) inside `block_concurrency_while` in the constructor, so
+  ops are never checked out of order. Sign-in merge = `GET /export` on the anonymous space's DO, `POST /merge` on
+  the account's. `GOOGLE_AUTH_URL`/`GOOGLE_TOKEN_URL` vars exist only for the tests. Tested end to end by
+  `make cloudflare-test` (`crates/cloudflare/test/`: wrangler dev on 127.0.0.1 with throwaway state + a fake
+  Google: sync, replay, rejects, isolation, auth/origin, logout, sign-in, merge incl. live push, forged/cancelled
+  callbacks); browser-checked (paint, wipe local storage, reload, tagging comes back). NOT yet deployed (needs the
+  user's Cloudflare account; `wrangler.toml` has a placeholder D1 id).
+- **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,
+  Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
+  server-specific code to I/O only.
+: `hello{after}` -> replayed changes -> `ready` ->
   live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
   session/sync/logout.
-- **Sign in with Google** (`crates/server/src/auth.rs`, done 2026-10-11): authorization code + PKCE, state + verifier
+- **Sign in with Google** (`api::google` + `crates/server/src/auth.rs`, done 2026-10-11): authorization code + PKCE, state + verifier
   + return hash in a 10-minute `bt_oauth` cookie (Path=/api/auth); `id_token` read from the token endpoint response
   (no signature check needed, per OIDC; iss/aud/exp/email_verified checked); HTTP via `ureq` (rustls + ring, no
   aws-lc). Accounts = owners with rows in `identities(provider, subject)`. Rules: anonymous + new identity -> the
@@ -199,7 +220,9 @@ Shared JSON fixtures are the behavioral spec for anything duplicated across TS a
 implementation and confirm tests fail. Don't claim something is verified unless it was actually run.
 
 ## Next steps
-- Try sign-in with a real Google OAuth client; then port the server to Cloudflare (Worker + D1 for accounts, one
-  Durable Object per space running `crates/space`).
+- Deploy to Cloudflare (user: `wrangler login`, `wrangler d1 create`, secrets; README) and try sign-in with a real
+  Google OAuth client. Then: retention of the changes log, rate limits.
+- Install-as-app affordance (deferred 2026-10-11): Install button via `beforeinstallprompt`, iOS "Add to Home
+  Screen" hint, `navigator.storage.persist()`.
 - Reader: pairs within 3+ tag combinations in the Nearby panel, overlap style rules, a book/chapter picker.
 - Touch painting was tested only with synthesized PointerEvents; try it on a real phone.

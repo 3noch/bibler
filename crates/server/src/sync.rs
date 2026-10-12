@@ -1,34 +1,17 @@
-//! Sessions and the sync WebSocket.
-//!
-//! Auth is a placeholder until real auth exists: `POST /api/session` creates an anonymous owner and sets an
-//! `HttpOnly` session cookie (only the token's sha256 is stored). The owner always comes from the session, never
-//! from a payload. Both endpoints require a same-origin `Origin` (CSRF / cross-site WebSocket hijacking).
-//!
-//! Protocol (JSON text frames):
-//! ```text
-//! client: {"type":"hello","after":seq}             first message: the last seq the client has
-//!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
-//! server: {"type":"change","change":{seq,...}}     every change after `after`, then live, in seq order
-//!         {"type":"ready","seq":n}                 replay finished
-//!         {"type":"ack","op_id":..,"seq":n}        op applied (its change arrives as a `change` message)
-//!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused; it had no effect
-//!         {"type":"error","message":..}            then the server closes; the client reconnects with hello
-//! ```
+//! Sessions and the sync WebSocket (protocol: `api::protocol`; session rules: `api::session`).
 
 use crate::hub::Hub;
 use crate::store::{Identity, Store};
 use crate::texts::Texts;
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, REPLAY_PAGE};
+use api::session::{random_hex, token_hash};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures_util::{SinkExt, StreamExt};
-use ops::{Change, Intent, Op};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use space::ApplyError;
-use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -44,46 +27,21 @@ pub struct AppState {
     pub public_url: Option<String>,
 }
 
-pub(crate) const COOKIE: &str = "bt_session";
-const REPLAY_PAGE: usize = 500;
-/// Incoming frames: an op is small, except a comment (<= 10,000 code points, up to 4 bytes each, plus JSON escaping).
-const MAX_FRAME: usize = 128 * 1024;
-
 pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
-}
-
-pub(crate) fn random_hex(n: usize) -> Result<String, String> {
-    let mut buf = vec![0u8; n];
-    getrandom::fill(&mut buf).map_err(|e| e.to_string())?;
-    Ok(hex(&buf))
-}
-
-pub(crate) fn token_hash(token: &str) -> String {
-    hex(&Sha256::digest(token.as_bytes()))
-}
-
 pub(crate) fn session_token(headers: &HeaderMap) -> Option<String> {
-    headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|kv| {
-        let (k, v) = kv.trim().split_once('=')?;
-        (k == COOKIE && !v.is_empty()).then(|| v.to_string())
-    })
+    api::session::cookie(headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()), api::session::COOKIE)
 }
 
 /// Browsers always send `Origin` on cross-site requests and WebSocket handshakes; it must name this host.
 pub(crate) fn same_origin(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else { return true };
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
-    origin.split_once("://").is_some_and(|(_, rest)| rest == host)
+    api::session::same_origin(origin, host)
 }
 
 pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
@@ -103,15 +61,13 @@ pub(crate) fn internal(e: &str) -> Response {
 
 /// The session cookie for `token` (a year; renewed by signing in again).
 pub(crate) fn new_session_cookie(st: &AppState, token: &str) -> String {
-    let secure = if st.secure_cookies { "; Secure" } else { "" };
-    format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000{secure}")
+    api::session::session_cookie(token, st.secure_cookies)
 }
 
 /// What `POST /api/session` returns.
-fn session_json(st: &AppState, owner: &str, account: Option<Identity>) -> Json<serde_json::Value> {
+fn session_json(st: &AppState, owner: &str, account: Option<&Identity>) -> Json<serde_json::Value> {
     let providers: &[&str] = if st.google.is_some() { &["google"] } else { &[] };
-    let account = account.map(|a| serde_json::json!({ "provider": a.provider, "email": a.email, "name": a.name }));
-    Json(serde_json::json!({ "owner": owner, "account": account, "providers": providers }))
+    Json(api::session::session_json(owner, account, providers))
 }
 
 /// `POST /api/session`: the current owner and its account (`null` while anonymous), creating an anonymous owner
@@ -123,7 +79,7 @@ pub async fn session(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
     if let Some(owner) = owner_of(&st, &headers).await {
         let (store, o) = (st.store.clone(), owner.clone());
         return match blocking(move || store.owner_identity(&o)).await {
-            Ok(Ok(account)) => session_json(&st, &owner, account).into_response(),
+            Ok(Ok(account)) => session_json(&st, &owner, account.as_ref()).into_response(),
             Ok(Err(e)) | Err(e) => internal(&e),
         };
     }
@@ -155,30 +111,10 @@ pub async fn sync(State(st): State<Arc<AppState>>, headers: HeaderMap, ws: WebSo
     ws.max_message_size(MAX_FRAME).on_upgrade(move |socket| run_socket(socket, st, owner))
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ClientMsg {
-    Hello { after: u64 },
-    Op { op: Op },
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ServerMsg<'a> {
-    Change { change: &'a Change },
-    Ready { seq: u64 },
-    Ack { op_id: &'a str, seq: u64 },
-    Reject { op_id: &'a str, code: &'a str, message: String },
-    Error { message: &'a str },
-}
-
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
 
 async fn send(tx: &mut Tx, msg: &ServerMsg<'_>) -> bool {
-    match serde_json::to_string(msg) {
-        Ok(json) => tx.send(Message::Text(json.into())).await.is_ok(),
-        Err(_) => false,
-    }
+    tx.send(Message::Text(msg.json().into())).await.is_ok()
 }
 
 /// Send the space's stored changes after `*last` (up to `until`, if given), advancing `*last`.
@@ -264,35 +200,6 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String) {
     }
 }
 
-/// Ids are client-generated (ULIDs): bound their shape so they cannot be abused as storage.
-fn valid_id(id: &str) -> bool {
-    (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-fn check_op(st: &AppState, op: &Op) -> Result<(), (&'static str, String)> {
-    let ids: Vec<&str> = match &op.intent {
-        Intent::Paint { tag, new_id, .. } => vec![tag, new_id],
-        Intent::Erase { tag, split_id, .. } => {
-            [Some(tag.as_str()), split_id.as_deref()].into_iter().flatten().collect()
-        }
-        Intent::TagCreate { id, .. }
-        | Intent::TagUpdate { id, .. }
-        | Intent::TagDelete { id, .. }
-        | Intent::CommentUpdate { id, .. }
-        | Intent::CommentDelete { id, .. } => vec![id],
-        Intent::CommentCreate { id, tagging, .. } => vec![id, tagging],
-        Intent::PaletteSet { tags, .. } => tags.iter().map(String::as_str).collect(),
-        Intent::Revert { target, .. } => vec![target],
-    };
-    if !valid_id(&op.op_id) || !ids.into_iter().all(valid_id) {
-        return Err(("bad_id", "ids must be 1-64 characters of [0-9A-Za-z_-]".into()));
-    }
-    if let Intent::Paint { text_id, start, end, .. } | Intent::Erase { text_id, start, end, .. } = &op.intent {
-        st.texts.check(text_id, *start, *end).map_err(|m| ("bad_text", m))?;
-    }
-    Ok(())
-}
-
 /// Apply one client message. Returns false if the socket should close.
 async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, text: &str) -> bool {
     let op = match serde_json::from_str::<ClientMsg>(text) {
@@ -302,7 +209,7 @@ async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, tx: &mut Tx, te
             return false;
         }
     };
-    if let Err((code, message)) = check_op(st, &op) {
+    if let Err((code, message)) = api::check::check_op(&st.texts, &op) {
         return send(tx, &ServerMsg::Reject { op_id: &op.op_id, code, message }).await;
     }
     let (store, s, o, op2) = (st.store.clone(), space.to_string(), owner.to_string(), op.clone());

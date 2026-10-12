@@ -1,70 +1,19 @@
-//! Sign in with Google (OAuth 2.0 authorization code + PKCE; the `OpenID` Connect `id_token` gives the identity).
-//!
-//! Accounts attach to owners: everyone starts as an anonymous owner (`POST /api/session`), and signing in either
-//! makes the current anonymous owner an account (a new identity) or, if the identity already has an account,
-//! **merges** the anonymous owner's live data into it (`space::merge`; the anonymous data stays where it was) and
-//! switches the session to that account. Signing in while signed in to another account just switches accounts.
-//! Every sign-in issues a new session token (no session fixation).
-//!
-//! ```text
-//! GET  /api/auth/google?return=#hash   -> 302 to Google (state + PKCE verifier in a short-lived cookie)
-//! GET  /api/auth/google/callback       -> 302 to /#hash (or /?auth_error=code#hash)
-//! POST /api/logout                     -> ends the session (the client then starts a new anonymous one)
-//! ```
-//! The `id_token` comes straight from Google's token endpoint over TLS, so its signature need not be checked
-//! (`OpenID` Connect Core 3.1.3.7); its `iss`, `aud`, `exp` and `email_verified` still are.
+//! Sign in with Google (flow and rules: `api::google`, `api::accounts`).
 
 use crate::store::{Identity, Store};
-use crate::sync::{
-    blocking, internal, new_session_cookie, now_ms, owner_of, random_hex, same_origin, session_token, token_hash,
-    AppState,
-};
+use crate::sync::{blocking, internal, new_session_cookie, now_ms, owner_of, same_origin, session_token, AppState};
+use api::accounts::SignIn;
+pub use api::google::Google;
+use api::google::{callback_url as callback_for, flow_cookie as flow_value, parse_flow, TokenResponse};
+use api::session::{random_hex, token_hash};
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
 use std::sync::Arc;
-
-#[derive(Debug, Clone)]
-pub struct Google {
-    pub client_id: String,
-    pub client_secret: String,
-    pub auth_url: String,
-    pub token_url: String,
-}
-
-impl Google {
-    /// Google's production endpoints.
-    #[must_use]
-    pub fn new(client_id: String, client_secret: String) -> Self {
-        Google {
-            client_id,
-            client_secret,
-            auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
-            token_url: "https://oauth2.googleapis.com/token".into(),
-        }
-    }
-}
-
-const FLOW_COOKIE: &str = "bt_oauth";
-const PROVIDER: &str = "google";
 
 fn redirect(to: &str) -> Response {
     (StatusCode::FOUND, [(header::LOCATION, to.to_string())]).into_response()
-}
-
-/// Only a fragment of this app (`#...`, from `location.hash`) may be returned to; anything else becomes "".
-fn safe_return(r: &str) -> String {
-    let ok = r.starts_with('#') && r.len() <= 200 && r.bytes().all(|b| b.is_ascii_graphic() && b != b'"');
-    if ok {
-        r.to_string()
-    } else {
-        String::new()
-    }
 }
 
 /// Where Google sends the user back: `--public-url`, else this request's own origin.
@@ -73,20 +22,16 @@ fn callback_url(st: &AppState, headers: &HeaderMap) -> String {
         let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
         format!("{}://{host}", if st.secure_cookies { "https" } else { "http" })
     });
-    format!("{}/api/auth/google/callback", origin.trim_end_matches('/'))
+    callback_for(&origin)
 }
 
 fn flow_cookie(st: &AppState, value: &str, max_age: u32) -> HeaderValue {
-    let secure = if st.secure_cookies { "; Secure" } else { "" };
-    let c = format!("{FLOW_COOKIE}={value}; Path=/api/auth; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}");
-    HeaderValue::from_str(&c).unwrap_or_else(|_| HeaderValue::from_static(""))
+    HeaderValue::from_str(&flow_value(value, max_age, st.secure_cookies))
+        .unwrap_or_else(|_| HeaderValue::from_static(""))
 }
 
 fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|kv| {
-        let (k, v) = kv.trim().split_once('=')?;
-        (k == name && !v.is_empty()).then(|| v.to_string())
-    })
+    api::session::cookie(headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()), name)
 }
 
 #[derive(Deserialize)]
@@ -98,34 +43,13 @@ pub struct StartQuery {
 /// `GET /api/auth/google`: off to Google's consent screen.
 pub async fn google_start(State(st): State<Arc<AppState>>, headers: HeaderMap, q: Query<StartQuery>) -> Response {
     let Some(g) = &st.google else { return (StatusCode::NOT_FOUND, "sign-in is not configured").into_response() };
-    let (state, verifier) = match (random_hex(16), random_hex(32)) {
-        (Ok(s), Ok(v)) => (s, v),
-        (Err(e), _) | (_, Err(e)) => return internal(&e),
+    let (url, flow) = match api::google::start(g, &callback_url(&st, &headers), &q.ret) {
+        Ok(x) => x,
+        Err(e) => return internal(&e),
     };
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let ret = URL_SAFE_NO_PAD.encode(safe_return(&q.ret));
-    let url = format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid%20email%20profile&state={state}\
-         &code_challenge={challenge}&code_challenge_method=S256&prompt=select_account",
-        g.auth_url,
-        enc(&g.client_id),
-        enc(&callback_url(&st, &headers)),
-    );
     let mut res = redirect(&url);
-    res.headers_mut().insert(header::SET_COOKIE, flow_cookie(&st, &format!("{state}.{verifier}.{ret}"), 600));
+    res.headers_mut().insert(header::SET_COOKIE, flow_cookie(&st, &flow, 600));
     res
-}
-
-/// Percent-encode a query value.
-fn enc(s: &str) -> String {
-    s.bytes().fold(String::new(), |mut out, b| {
-        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
-            out.push(char::from(b));
-        } else {
-            let _ = write!(out, "%{b:02X}");
-        }
-        out
-    })
 }
 
 #[derive(Deserialize)]
@@ -135,52 +59,13 @@ pub struct CallbackQuery {
     error: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    id_token: String,
-}
-
-#[derive(Deserialize)]
-struct Claims {
-    iss: String,
-    aud: String,
-    sub: String,
-    exp: i64,
-    email: Option<String>,
-    #[serde(default)]
-    email_verified: bool,
-    name: Option<String>,
-}
-
-/// The identity in an `id_token` received directly from the token endpoint.
-fn identity_from(id_token: &str, client_id: &str, now_s: i64) -> Result<Identity, &'static str> {
-    let payload = id_token.split('.').nth(1).ok_or("bad_token")?;
-    let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).map_err(|_| "bad_token")?;
-    let c: Claims = serde_json::from_slice(&bytes).map_err(|_| "bad_token")?;
-    if !matches!(c.iss.as_str(), "https://accounts.google.com" | "accounts.google.com") || c.aud != client_id {
-        return Err("bad_token");
-    }
-    if c.exp < now_s {
-        return Err("expired");
-    }
-    Ok(Identity {
-        provider: PROVIDER.into(),
-        subject: c.sub,
-        email: c.email.filter(|_| c.email_verified),
-        name: c.name,
-    })
-}
-
 /// `GET /api/auth/google/callback`: finish signing in, then back to the app.
 pub async fn google_callback(State(st): State<Arc<AppState>>, headers: HeaderMap, q: Query<CallbackQuery>) -> Response {
     let Some(g) = st.google.clone() else {
         return (StatusCode::NOT_FOUND, "sign-in is not configured").into_response();
     };
-    let flow = cookie(&headers, FLOW_COOKIE).unwrap_or_default();
-    let mut parts = flow.splitn(3, '.');
-    let (state, verifier, ret) = (parts.next(), parts.next(), parts.next());
-    let ret = ret.and_then(|r| URL_SAFE_NO_PAD.decode(r).ok()).and_then(|b| String::from_utf8(b).ok());
-    let ret = safe_return(&ret.unwrap_or_default());
+    let flow = cookie(&headers, api::google::FLOW_COOKIE).unwrap_or_default();
+    let (state, verifier, ret) = parse_flow(&flow);
     let fail = |code: &str| {
         let mut res = redirect(&format!("/?auth_error={code}{ret}"));
         res.headers_mut().insert(header::SET_COOKIE, flow_cookie(&st, "", 0));
@@ -193,14 +78,7 @@ pub async fn google_callback(State(st): State<Arc<AppState>>, headers: HeaderMap
     if q.state.as_deref() != Some(state) {
         return fail("expired");
     }
-    let form = [
-        ("grant_type", "authorization_code".to_string()),
-        ("code", code),
-        ("client_id", g.client_id.clone()),
-        ("client_secret", g.client_secret.clone()),
-        ("redirect_uri", callback_url(&st, &headers)),
-        ("code_verifier", verifier.to_string()),
-    ];
+    let form = api::google::token_form(&g, &code, &callback_url(&st, &headers), verifier);
     let token_url = g.token_url.clone();
     let token = blocking(move || -> Result<TokenResponse, String> {
         let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -215,7 +93,7 @@ pub async fn google_callback(State(st): State<Arc<AppState>>, headers: HeaderMap
             return fail("provider");
         }
     };
-    let identity = match identity_from(&token.id_token, &g.client_id, now_ms() / 1000) {
+    let identity = match api::google::identity_from(&token.id_token, &g.client_id, now_ms() / 1000) {
         Ok(i) => i,
         Err(code) => return fail(code),
     };
@@ -248,20 +126,20 @@ fn sign_in(store: &dyn Store, current: Option<&str>, identity: &Identity, old: O
         Some(c) => store.owner_identity(c)?.is_none(),
         None => false,
     };
-    let owner = match (current, existing) {
-        (_, Some(x)) => {
-            if let Some(a) = current.filter(|a| anonymous && *a != x) {
+    let owner = match api::accounts::sign_in(current, anonymous, existing.as_deref()) {
+        SignIn::Existing { owner, merge_from } => {
+            if let Some(a) = merge_from {
                 // Personal spaces: the space id is the owner id.
-                let n = store.merge(a, a, &x, &x, now)?;
-                tracing::info!("merged {n} changes from anonymous owner {a} into {x}");
+                let n = store.merge(&a, &a, &owner, &owner, now)?;
+                tracing::info!("merged {n} changes from anonymous owner {a} into {owner}");
             }
-            x
+            owner
         }
-        (Some(a), None) if anonymous => {
-            store.add_identity(identity, a, now)?;
-            a.to_string()
+        SignIn::Link(a) => {
+            store.add_identity(identity, &a, now)?;
+            a
         }
-        (_, None) => {
+        SignIn::New => {
             let o = random_hex(16)?;
             store.create_owner(&o, now)?;
             store.add_identity(identity, &o, now)?;
@@ -287,41 +165,6 @@ pub async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Resp
             return internal(&e);
         }
     }
-    let secure = if st.secure_cookies { "; Secure" } else { "" };
-    let clear = format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}", crate::sync::COOKIE);
+    let clear = api::session::clear_session_cookie(st.secure_cookies);
     ([(header::SET_COOKIE, clear)], StatusCode::NO_CONTENT).into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn token(claims: &serde_json::Value) -> String {
-        format!("x.{}.y", URL_SAFE_NO_PAD.encode(claims.to_string()))
-    }
-
-    #[test]
-    fn id_token_checks() {
-        let ok = serde_json::json!({"iss": "https://accounts.google.com", "aud": "cid", "sub": "123", "exp": 100,
-            "email": "a@b.c", "email_verified": true, "name": "A"});
-        let id = identity_from(&token(&ok), "cid", 50).unwrap();
-        assert_eq!((id.subject.as_str(), id.email.as_deref()), ("123", Some("a@b.c")));
-        assert_eq!(identity_from(&token(&ok), "other", 50), Err("bad_token"));
-        assert_eq!(identity_from(&token(&ok), "cid", 101), Err("expired"));
-        let mut evil = ok.clone();
-        evil["iss"] = "https://evil.example".into();
-        assert_eq!(identity_from(&token(&evil), "cid", 50), Err("bad_token"));
-        let mut unverified = ok.clone();
-        unverified["email_verified"] = false.into();
-        assert_eq!(identity_from(&token(&unverified), "cid", 50).unwrap().email, None);
-        assert_eq!(identity_from("garbage", "cid", 50), Err("bad_token"));
-    }
-
-    #[test]
-    fn only_fragments_are_returned_to() {
-        assert_eq!(safe_return("#john/3"), "#john/3");
-        for bad in ["https://evil.example", "//evil.example", "/x", "#a b", "#\"x"] {
-            assert_eq!(safe_return(bad), "", "{bad}");
-        }
-    }
 }

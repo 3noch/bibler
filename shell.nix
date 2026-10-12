@@ -5,5 +5,6 @@ pkgs.mkShell {
   packages = [
     pkgs.nodejs_22
     pkgs.gnumake
+    pkgs.wrangler # make cloudflare-dev / cloudflare-deploy
   ];
 }

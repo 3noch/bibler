@@ -53,7 +53,7 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
     let state = Arc::new(sync::AppState {
         store: Arc::new(store::SqliteStore::open(&cfg.data, listener)?),
         hub,
-        texts: texts::Texts::load(&cfg.text_dir)?,
+        texts: texts::load(&cfg.text_dir)?,
         secure_cookies: cfg.secure_cookies,
         google: cfg.google.clone(),
         public_url: cfg.public_url.clone(),

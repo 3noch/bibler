@@ -12,3 +12,7 @@ node_modules/
 *.db-wal
 *.db-shm
 .DS_Store
+
+# wrangler (local state, build output, local secrets)
+.wrangler/
+.dev.vars

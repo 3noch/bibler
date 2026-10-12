@@ -26,6 +26,7 @@ make dev       # http://localhost:5173
 | `make serve` | Production-like build on http://localhost:8080 |
 | `make test` / `make check` | All tests / formatting, lints, type checks |
 | `make pages` | Static, server-less build in `build/pages/` (`make pages-serve` to preview) |
+| `make cloudflare-dev` | The Cloudflare version run locally by wrangler on http://localhost:8787 (`make cloudflare-test` tests it) |
 
 ## Deploy
 
@@ -38,6 +39,18 @@ make dev       # http://localhost:5173
     --tls-cert fullchain.pem --tls-key key.pem --http-redirect 0.0.0.0:80
   ```
 
+- **Cloudflare** (free plan; Workers + D1 + Durable Objects, one database per user). Needs `wrangler` (in
+  `nix-shell`) and a Cloudflare account. One-time setup:
+  ```sh
+  cd crates/cloudflare
+  wrangler login
+  wrangler d1 create bible-tags-accounts   # put the printed database_id into wrangler.toml
+  ```
+  Then `make cloudflare-deploy` from the repo root. It prints the `*.workers.dev` URL; a custom domain can be added
+  in the dashboard (*Workers → bible-tags → Settings → Domains*). For sign-in, run
+  `wrangler secret put GOOGLE_CLIENT_ID` and `wrangler secret put GOOGLE_CLIENT_SECRET` in `crates/cloudflare`,
+  and add `https://<your url>/api/auth/google/callback` to the OAuth client (below).
+
 ## Sign in with Google (optional)
 
 1. Google Cloud Console → *APIs & Services → Credentials → Create credentials → OAuth client ID*, type
@@ -45,7 +58,9 @@ make dev       # http://localhost:5173
 2. Add an *Authorized redirect URI* per origin: `https://your.host/api/auth/google/callback`, and for
    `make dev`, `http://localhost:5173/api/auth/google/callback`.
 3. Start the server with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in its environment (`make dev` passes
-   them through). Behind a proxy that terminates TLS, add `--public-url https://your.host`.
+   them through). Behind a proxy that terminates TLS, add `--public-url https://your.host`. On Cloudflare they are
+   Worker secrets (above); for `make cloudflare-dev`, put them in `crates/cloudflare/.dev.vars` as `KEY=value`
+   lines and register `http://localhost:8787/api/auth/google/callback`.
 
 Without them the app works the same, just with no sign-in button.
 
@@ -55,8 +70,10 @@ Without them the app works the same, just with no sign-in button.
 |---|---|
 | `packages/app` | Solid client |
 | `packages/scripture` | Shared TS core: text index, reference parser, tag edits, sync, queries |
-| `crates/server` | HTTP + sync WebSocket server (SQLite, TLS, sign-in) |
-| `crates/space` | One user's (or later a group's) database: schema and sync, shared with the Cloudflare port |
+| `crates/server` | Self-hosted HTTP + sync WebSocket server (SQLite, TLS, sign-in) |
+| `crates/cloudflare` | The same API on Cloudflare: a Worker, D1 for accounts, a Durable Object per user |
+| `crates/space` | One user's (or later a group's) database: schema and sync, used by both servers |
+| `crates/api` | Everything else both servers share: sync protocol, checks, sessions, Google sign-in |
 | `crates/ops`, `crates/normalize` | Rust side of the shared core |
 | `crates/text-build` | Turns the KJV source into the app's text files |
 | `data/source` | Vendored KJV (1769) text — never edit; tags depend on it |

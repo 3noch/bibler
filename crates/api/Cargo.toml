@@ -1,0 +1,18 @@
+[package]
+name = "api"
+version = "0.0.0"
+edition.workspace = true
+
+# What the self-hosted server and the Cloudflare Worker both say over HTTP and the sync WebSocket (no I/O here),
+# so the two deployments cannot drift apart.
+
+[dependencies]
+base64 = "0.23.1"
+getrandom = "0.4.3"
+ops = { path = "../ops" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true

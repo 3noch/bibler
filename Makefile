@@ -8,6 +8,10 @@
 #   make nix     nix-build default.nix        make clean   remove build outputs
 #   make pages   offline-only static site (no server; data stays in the browser) in build/pages/, as deployed to
 #                GitHub Pages by .github/workflows/pages.yml;   make pages-serve  previews it on :8000
+#   make cloudflare-dev     the Cloudflare deployment run locally by wrangler (Worker + D1 + Durable Objects, data in
+#                           crates/cloudflare/.wrangler/) on http://localhost:8787
+#   make cloudflare-test    end-to-end tests of it (wrangler dev, throwaway state, fake Google)
+#   make cloudflare-deploy  deploy it (needs `wrangler login` and the one-time setup in README.md)
 
 SHELL := bash
 TEXT_ID := kjv-1769-v1
@@ -18,7 +22,8 @@ NPM := npm
 DEV_DATA := --data build/dev-data $(if $(wildcard build/dev.db),--migrate-from build/dev.db)
 SERVE_DATA := --data build/serve-data $(if $(wildcard build/serve.db),--migrate-from build/serve.db)
 
-.PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve
+.PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve \
+  cloudflare-assets cloudflare-dev cloudflare-deploy cloudflare-test
 
 dev: $(TEXT) node_modules/.installed
 	@echo "==> http://localhost:5173  (API/text served by the Rust dev server on $(SERVER_ADDR))"
@@ -69,6 +74,7 @@ test-ts: $(TEXT) node_modules/.installed
 check: node_modules/.installed
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
+	cargo clippy -p cloudflare --target wasm32-unknown-unknown -- -D warnings
 	npx tsc -p packages/scripture/tsconfig.json
 	npx tsc -p packages/app/tsconfig.json
 
@@ -89,6 +95,32 @@ pages: $(TEXT) node_modules/.installed
 pages-serve: pages
 	@echo "==> http://127.0.0.1:8000"
 	python3 -m http.server 8000 --bind 127.0.0.1 --directory build/pages
+
+# Cloudflare: Workers Static Assets serve the client (server mode) + text; wrangler builds the Worker with
+# worker-build (installed into build/tools). wrangler comes from nix (shell.nix) or `npm i -g wrangler`.
+CF_ASSETS := build/cloudflare/assets
+WORKER_BUILD := build/tools/bin/worker-build
+WRANGLER := cd crates/cloudflare && PATH="$(CURDIR)/build/tools/bin:$$PATH" wrangler
+
+cloudflare-assets: $(TEXT) node_modules/.installed
+	rm -rf $(CF_ASSETS)
+	$(NPM) run -w @bible-tags/app build -- --outDir ../../$(CF_ASSETS) --emptyOutDir
+	cp -R build/text $(CF_ASSETS)/text
+	ls build/text | sed 's/.*/"&"/' | paste -sd, - | sed 's/.*/[&]/' > $(CF_ASSETS)/text/texts.json
+	cp crates/cloudflare/_headers $(CF_ASSETS)/_headers
+
+$(WORKER_BUILD):
+	cargo install --locked worker-build@0.8.7 --root build/tools
+
+cloudflare-dev: cloudflare-assets $(WORKER_BUILD)
+	$(WRANGLER) dev --ip 127.0.0.1
+
+# End-to-end: wrangler dev with throwaway state + a fake Google (crates/cloudflare/test/run.sh).
+cloudflare-test: cloudflare-assets $(WORKER_BUILD)
+	PATH="$(CURDIR)/build/tools/bin:$$PATH" crates/cloudflare/test/run.sh
+
+cloudflare-deploy: cloudflare-assets $(WORKER_BUILD)
+	$(WRANGLER) deploy
 
 clean:
 	rm -rf build packages/app/dist result
