@@ -51,7 +51,7 @@ preview_urls = true
 [[env.qa.d1_databases]]
 binding = "ACCOUNTS"
 database_name = "bible-tags-qa-accounts"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "b9fad920-cfcf-4e24-b857-e2feb3d6288d"
 
 [env.qa.durable_objects]
 bindings = [{ name = "SPACES", class_name = "Space" }]
