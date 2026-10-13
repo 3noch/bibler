@@ -39,7 +39,6 @@ export const LOCAL_ONLY = import.meta.env.VITE_SYNC === "local";
 const BASE_KEY = "bible-tags/base/v1";
 const OUTBOX_KEY = "bible-tags/outbox/v1";
 const UNDO_KEY = "bible-tags/undo/v1";
-const LEGACY_KEY = "bible-tags/local/v1"; // the local-only prototype's data, imported once
 /** The open group (absent: the personal space). */
 const SPACE_KEY = "bible-tags/space/v1";
 const HIDDEN_KEY = "bible-tags/hidden/v1";
@@ -276,14 +275,14 @@ export async function openTagStore() {
     if (theirs.owner === owner) sync.adopt(theirs.ops);
   });
 
-  if (!space) importLegacy(sync);
   if (LOCAL_ONLY) connectLocal(sync, notify);
   else connectForever(sync, space, () => void refreshGroups());
   if (space) void refreshGroups();
 
   const view = createMemo(() => (version(), sync.view), undefined, { equals: false });
   const tags = createMemo(() => [...view().tags.values()].filter((t) => t.deleted_at === null));
-  const taggings = createMemo(() => [...view().taggings.values()].filter((t) => t.deleted_at === null));
+  // Only this text's taggings: another text's ordinals mean other words.
+  const taggings = createMemo(() => [...view().taggings.values()].filter((t) => t.deleted_at === null && t.text_id === TEXT_ID));
   /** What the text shows: taggings of tags that aren't hidden. */
   const visibleTaggings = createMemo(() => {
     const h = hidden();
@@ -479,30 +478,4 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
     if (!ws) open();
   });
   open();
-}
-
-/** The local-only prototype stored tags in localStorage; replay them as ops once, then drop the old key. */
-function importLegacy(sync: SyncState) {
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(LEGACY_KEY);
-  } catch {
-    return;
-  }
-  if (!raw || sync.view.tags.size > 0) return;
-  try {
-    const old = JSON.parse(raw) as {
-      tags: { id: string; name: string; color: string; created_at: number }[];
-      taggings: { id: string; tag: string; start: number; end: number; created_at: number }[];
-      palette: string[];
-    };
-    const intents: OpIntent[] = [
-      ...old.tags.map((t) => ({ kind: "tag_create" as const, id: t.id, name: t.name, color: t.color, now: t.created_at })),
-      ...old.taggings.map((t) => ({ kind: "paint" as const, tag: t.tag, text_id: TEXT_ID, start: t.start, end: t.end, new_id: t.id, now: t.created_at })),
-      { kind: "palette_set" as const, tags: old.palette.slice(0, 9), now: Date.now() },
-    ];
-    if (!sync.submit(intents)) localStorage.removeItem(LEGACY_KEY);
-  } catch {
-    // Unreadable legacy data: leave it alone.
-  }
 }

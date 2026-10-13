@@ -34,6 +34,8 @@ interface BookJson {
   italic: [number, number][];
   divine_name: [number, number][];
   words_of_jesus: [number, number][];
+  /** Words followed by no space (the first part of a hyphenated word: `Beth-` of `Beth-el`). */
+  joined: number[];
   pilcrow: number[];
   breaks: [number, string][];
   headings: { slot: number; pos: "before" | "after"; text: string }[];
@@ -43,12 +45,15 @@ interface BookJson {
 export const ITALIC = 1;
 export const DIVINE_NAME = 2;
 export const WORDS_OF_JESUS = 4;
+export const JOINED = 8;
 
 export interface BookText {
   code: string;
-  firstOrd: number;
+  /** Dense position (`TextIndex.pos`) of the book's first word. */
+  firstPos: number;
+  /** The book's words in reading order: word `ord` is `words[index.pos(ord) - firstPos]`. */
   words: string[];
-  /** Per-word flag bits, indexed by local position (ord - firstOrd). */
+  /** Per-word flag bits, indexed like `words`. */
   flags: Uint8Array;
   pilcrow: Set<number>;
   breaks: Map<number, string[]>;
@@ -82,20 +87,22 @@ export function loadBook(text: Text, book: number): Promise<BookText> {
   if (!p) {
     p = fetchOk(base + m.file)
       .then((r) => r.json() as Promise<BookJson>)
-      .then(toBookText);
+      .then((j) => toBookText(j, text.index));
     books.set(m.code, p);
   }
   return p;
 }
 
-function toBookText(j: BookJson): BookText {
+function toBookText(j: BookJson, index: TextIndex): BookText {
+  const firstPos = index.pos(j.first_ord);
   const flags = new Uint8Array(j.words.length);
   const mark = (runs: [number, number][], bit: number) => {
-    for (const [s, e] of runs) for (let o = s; o < e; o++) flags[o - j.first_ord]! |= bit;
+    for (const [s, e] of runs) for (let p = index.pos(s); p < index.pos(e); p++) flags[p - firstPos]! |= bit;
   };
   mark(j.italic, ITALIC);
   mark(j.divine_name, DIVINE_NAME);
   mark(j.words_of_jesus, WORDS_OF_JESUS);
+  for (const o of j.joined) flags[index.pos(o) - firstPos]! |= JOINED;
   const group = <V>(entries: [number, V][]) => {
     const m = new Map<number, V[]>();
     for (const [k, v] of entries) m.set(k, [...(m.get(k) ?? []), v]);
@@ -103,7 +110,7 @@ function toBookText(j: BookJson): BookText {
   };
   return {
     code: j.book,
-    firstOrd: j.first_ord,
+    firstPos,
     words: j.words,
     flags,
     pilcrow: new Set(j.pilcrow),
@@ -115,3 +122,10 @@ function toBookText(j: BookJson): BookText {
 }
 
 export const overlaps = (a: Interval, b: Interval) => a[0] < b[1] && b[0] < a[1];
+
+/** Words as displayed: separated by spaces, except after a hyphen that joins two parts of one word. */
+export function joinWords(bt: BookText, from: number, to: number): string {
+  let out = "";
+  for (let i = from; i < to; i++) out += bt.words[i]! + (i + 1 < to && !(bt.flags[i]! & JOINED) ? " " : "");
+  return out;
+}

@@ -50,8 +50,8 @@ let
   text = pkgs.runCommand "bible-tags-text-${version}" { } ''
     ${textBuild}/bin/text-build \
       --src ${./data/source/eng-kjv2006} \
-      --golden ${./fixtures/text/kjv-1769-v1.golden.json} \
-      --out $out/kjv-1769-v1
+      --golden ${./fixtures/text/kjv-1769-v2.golden.json} \
+      --out $out/kjv-1769-v2
   '';
 
   server = pkgs.rustPlatform.buildRustPackage {

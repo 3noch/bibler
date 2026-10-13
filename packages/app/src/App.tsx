@@ -82,7 +82,7 @@ function Main(props: { text: Text; store: TagStore }) {
       lo = Math.min(lo, o);
       hi = Math.max(hi, o);
     }
-    return lo <= hi ? [lo, hi + 1] : null;
+    return lo <= hi ? [lo, index.after(hi)] : null;
   };
   const stopPainting = () => {
     setActiveTag(null);

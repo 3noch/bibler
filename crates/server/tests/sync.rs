@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tower::ServiceExt;
 
-const T1: u32 = 2 << 24; // first ordinal of the fixture text's only book (100 words)
+const T1: u32 = 2 << 24 | 1 << 16 | 1 << 8; // 1:1, the first word of the fixture text (100 words)
 
 struct Server {
     app: axum::Router,

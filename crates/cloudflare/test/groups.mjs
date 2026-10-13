@@ -1,6 +1,6 @@
 // Groups on the Cloudflare Worker + Durable Objects: shared rows, roles, comment authors, kicks, leaving.
 import assert from "node:assert/strict";
-const B = process.argv[2], G = 2 ** 25;
+const B = process.argv[2], G = 18 * 2 ** 24 + 8 * 2 ** 16 + 9 * 2 ** 8; // Esther 8:9, word 0 (90 words)
 
 async function user() {
   const r = await fetch(B + "/api/session", { method: "POST", headers: { Origin: B } });
@@ -38,11 +38,11 @@ await assert.rejects(sync(dan, g.id), /refused/, "not a member");
 const [a, b, c] = [await sync(ann, g.id), await sync(bob, g.id), await sync(cat, g.id)];
 a.op({ op_id: "t", kind: "tag_create", id: "T", name: "Grace", color: "#336699", now: 1 });
 await a.until((m) => m.type === "ack");
-c.op({ op_id: "p", kind: "paint", tag: "T", text_id: "kjv-1769-v1", start: G + 1, end: G + 5, new_id: "g1", now: 2 });
+c.op({ op_id: "p", kind: "paint", tag: "T", text_id: "kjv-1769-v2", start: G + 1, end: G + 5, new_id: "g1", now: 2 });
 c.op({ op_id: "c", kind: "comment_create", id: "c1", tagging: "g1", body: "Hi", now: 3 });
 const seen = await b.until((m) => m.type === "change" && m.change.seq === 3);
 assert.equal(seen.change.rows[0].after.author, cat.owner, "comments carry their author; readers get live changes");
-b.op({ op_id: "pb", kind: "paint", tag: "T", text_id: "kjv-1769-v1", start: G + 20, end: G + 22, new_id: "g2", now: 4 });
+b.op({ op_id: "pb", kind: "paint", tag: "T", text_id: "kjv-1769-v2", start: G + 20, end: G + 22, new_id: "g2", now: 4 });
 assert.equal((await b.until((m) => m.op_id === "pb")).code, "read_only");
 a.op({ op_id: "e", kind: "comment_update", id: "c1", body: "Mine", now: 5 });
 assert.equal((await a.until((m) => m.op_id === "e" && m.type === "reject")).code, "not_author");
@@ -52,7 +52,7 @@ const r = await ann.call("PUT", `/groups/${g.id}/members/${cat.owner}`, { role: 
 assert.equal(r.members.find((m) => m.owner === cat.owner).role, "read");
 await c.until((m) => m.type === "error");
 const c2 = await sync(cat, g.id);
-c2.op({ op_id: "pc", kind: "paint", tag: "T", text_id: "kjv-1769-v1", start: G + 30, end: G + 32, new_id: "g3", now: 6 });
+c2.op({ op_id: "pc", kind: "paint", tag: "T", text_id: "kjv-1769-v2", start: G + 30, end: G + 32, new_id: "g3", now: 6 });
 assert.equal((await c2.until((m) => m.op_id === "pc")).code, "read_only");
 // Leaving revokes access.
 await bob.call("DELETE", `/groups/${g.id}/members/${bob.owner}`);

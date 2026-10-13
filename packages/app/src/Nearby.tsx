@@ -2,7 +2,7 @@
 // its own. Each instance shows its text: short ones with some context around them, long ones fading out.
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { formatInterval, intersectRuns, nearby, type Interval } from "@bible-tags/scripture";
-import { loadBook, type Text } from "./text.ts";
+import { JOINED, joinWords, loadBook, type Text } from "./text.ts";
 import { intervalOf, type Tag, type TagStore } from "./store.ts";
 import { segStyle } from "./Verse.tsx";
 import { CloseIcon, CommentIcon, EraserIcon, PencilIcon } from "./icons.tsx";
@@ -141,18 +141,31 @@ export function Snippet(props: {
   const parts = createMemo(() => {
     const b = bt();
     if (!b) return null;
+    // Word arithmetic on dense positions (ordinals are sparse addresses).
     const [s, e] = props.iv;
-    const bookEnd = b.firstOrd + b.words.length;
-    const end = Math.min(e, bookEnd); // a cross-book instance shows its first book's part
-    const words = (from: number, to: number) => b.words.slice(from - b.firstOrd, to - b.firstOrd).join(" ");
-    if (end - s > LIMIT) return { before: "", inside: words(s, s + LIMIT), after: "", cutBefore: false, cutAfter: false, long: true };
+    const bookEnd = index.bookEnd[index.bookOf(s)]!;
+    const ps = index.pos(s);
+    const pe = index.pos(Math.min(e, bookEnd)); // a cross-book instance shows its first book's part
+    const words = (from: number, to: number) => joinWords(b, from - b.firstPos, to - b.firstPos);
+    /** The space before position p, unless the word before it is joined to it (`Beth-` + `el`). */
+    const space = (p: number) => (b.flags[p - 1 - b.firstPos]! & JOINED ? "" : " ");
+    if (pe - ps > LIMIT) return { before: "", inside: words(ps, ps + LIMIT), after: "", sepBefore: "", sepAfter: "", cutBefore: false, cutAfter: false, long: true };
     // Context stays inside the verse(s) the instance is in (no spilling into another verse, title or chapter).
-    const ctx = Math.min(CONTEXT, Math.floor((LIMIT - (end - s)) / 2));
-    const verseStart = index.slotInterval(index.slotOf(s))[0];
-    const verseEnd = index.slotInterval(index.slotOf(end - 1))[1];
-    const from = Math.max(verseStart, s - ctx);
-    const to = Math.min(verseEnd, end + ctx);
-    return { before: words(from, s), inside: words(s, end), after: words(end, to), cutBefore: from > verseStart, cutAfter: to < verseEnd, long: false };
+    const ctx = Math.min(CONTEXT, Math.floor((LIMIT - (pe - ps)) / 2));
+    const verseStart = index.pos(index.slotInterval(index.slotOf(s))[0]);
+    const verseEnd = index.pos(index.slotInterval(index.slotOf(Math.min(e, bookEnd) - 1))[1]);
+    const from = Math.max(verseStart, ps - ctx);
+    const to = Math.min(verseEnd, pe + ctx);
+    return {
+      before: words(from, ps),
+      inside: words(ps, pe),
+      after: words(pe, to),
+      sepBefore: space(ps),
+      sepAfter: space(pe),
+      cutBefore: from > verseStart,
+      cutAfter: to < verseEnd,
+      long: false,
+    };
   });
   const ref = () => formatInterval(index, props.iv, "short");
   const tagging = createMemo(() => (props.store && props.tags.length === 1 ? props.store.taggingAt(props.tags[0]!.id, props.iv[0]) : undefined));
@@ -178,13 +191,14 @@ export function Snippet(props: {
             <Show when={p().before}>
               <span class="ctx">
                 {p().cutBefore ? "…" : ""}
-                {p().before}{" "}
+                {p().before}
+                {p().sepBefore}
               </span>
             </Show>
             <mark style={segStyle(props.tags)}>{p().inside}</mark>
             <Show when={p().after}>
               <span class="ctx">
-                {" "}
+                {p().sepAfter}
                 {p().after}
                 {p().cutAfter ? "…" : ""}
               </span>

@@ -1,7 +1,7 @@
 // End-to-end check of the Cloudflare Worker + Durable Object under wrangler dev.
 import assert from "node:assert/strict";
 const B = process.argv[2];
-const G = 2 ** 25; // Genesis (book id 2) first ordinal
+const G = 18 * 2 ** 24 + 8 * 2 ** 16 + 9 * 2 ** 8; // Esther 8:9, word 0 (90 words: G..G+89 are words)
 
 async function session(cookie) {
   const r = await fetch(B + "/api/session", { method: "POST", headers: { Origin: B, ...(cookie ? { Cookie: cookie } : {}) } });
@@ -41,12 +41,12 @@ assert.deepEqual(await c1.ready, { type: "ready", seq: 0 });
 await c2.ready;
 const op = (o) => c1.ws.send(JSON.stringify({ type: "op", op: o }));
 op({ op_id: "o1", kind: "tag_create", id: "T1", name: "Grace", color: "#ff0000", now: 1 });
-op({ op_id: "o2", kind: "paint", tag: "T1", text_id: "kjv-1769-v1", start: G + 10, end: G + 20, new_id: "p1", now: 2 });
+op({ op_id: "o2", kind: "paint", tag: "T1", text_id: "kjv-1769-v2", start: G + 10, end: G + 20, new_id: "p1", now: 2 });
 assert.equal((await c1.until((m) => m.type === "ack" && m.op_id === "o2")).seq, 2);
 assert.equal((await c2.until((m) => m.type === "change" && m.change.seq === 2)).change.op_id, "o2", "the other socket sees it live");
-op({ op_id: "o3", kind: "paint", tag: "T1", text_id: "kjv-1769-v1", start: 5, end: 9, new_id: "p2", now: 3 });
+op({ op_id: "o3", kind: "paint", tag: "T1", text_id: "kjv-1769-v2", start: 5, end: 9, new_id: "p2", now: 3 });
 assert.equal((await c1.until((m) => m.op_id === "o3")).code, "bad_text");
-op({ op_id: "o4", kind: "paint", tag: "NOPE", text_id: "kjv-1769-v1", start: G, end: G + 1, new_id: "p3", now: 3 });
+op({ op_id: "o4", kind: "paint", tag: "NOPE", text_id: "kjv-1769-v2", start: G, end: G + 1, new_id: "p3", now: 3 });
 assert.equal((await c1.until((m) => m.op_id === "o4")).code, "unknown_tag");
 op({ op_id: "bad id!", kind: "tag_delete", id: "T1", now: 3 });
 assert.equal((await c1.until((m) => m.op_id === "bad id!")).code, "bad_id");

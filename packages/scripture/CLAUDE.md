@@ -4,9 +4,11 @@
 
 ## TS text index + reference parsing (DONE; `packages/scripture`, spec = `fixtures/refs/parse.json`)
 The server speaks ordinals only; parsing/formatting is client-side TS (Rust has no parser).
-- `TextIndex` (`src/textIndex.ts`) wraps `index.<hash>.bin`: `locate(ord)`, `slotOf`, `verseInterval`,
-  `chapterInterval`, `bookInterval`, `verseCount`, `chapterCount`, `hasTitle`. Tests round-trip all 790,676 ordinals
-  and all 32,291 slots against the real build (tests load `build/text/`, so run `text-build` first; the loader
+- `TextIndex` (`src/textIndex.ts`) wraps `index.<hash>.bin` (v3): `locate(ord)`, `slotOf`, `verseInterval`,
+  `chapterInterval`, `bookInterval`, `verseCount`, `chapterCount`, `hasTitle`, plus for sparse address ordinals
+  `pos(ord)` (dense word position; use it for any word arithmetic), `ordAt(pos)`, `after(ord)` (an interval's end
+  after its last word), `isWord`, `slotOrds`. Tests round-trip all 791,484 words (and the gap after each) and all
+  32,291 slots against the real build (tests load `build/text/`, so run `text-build` first; the loader
   checks the built index against the golden verseStart hash).
 - Books (`src/books.ts`): 66 books, `name` / `refName` ("Psalm" for chapter refs) / `short` (SBL) + aliases;
   258 distinct normalized aliases (not ~500; brute-force fuzzy is trivially fast). Order must match the manifest

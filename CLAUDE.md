@@ -69,12 +69,20 @@ Feldera-style server-side IVM is for later **cross-user aggregates**, which ARE 
 "most-tagged verses across all users"); build those server-side, periodic or incremental, when needed.
 
 ## Data model
-Text is addressed by **word ordinals**: sparse u32 `ord = bookId * 2^24 + local` (decided 2026-10-10). Book ids
-are stable (OT 2..40, NT 70..96, 41..69 reserved for deuterocanon, from the source's file numbering), so adding
-books never shifts existing ordinals and a text fix only touches one book's ordinals. Gaps between books hold no
-words (`end - start` is not a word count across books). JS must use `bookIdOf`/`localOf`, never `>>` (ids >= 128
-exceed int32). ~790k words in KJV. All intervals are **half-open `[start, end)`**.
-Anchors are keyed by `text_id` (versioned, e.g. `kjv-1769-v1`); other translations get their own ordinal spaces.
+Text is addressed by **word ordinals** that are addresses: u32 `bookId << 24 | chapter << 16 | verse << 8 | word`
+(decided 2026-10-12, replacing book-local word counts; no data was migrated, there were no users). Book ids are
+stable (OT 2..40, NT 70..96, 41..69 reserved for deuterocanon, from the source's file numbering); chapter/verse are
+as printed (verse 0 = title); word = position in the verse. So the same verse has the same ordinals in any text
+with the same versification (cross-translation tags project by verse), and a text can be indexed without shipping
+its words. Ordinals are sparse: never subtract them to count words or walk them one by one (`TextIndex.pos`).
+All intervals are **half-open `[start, end)`** and **tile**: an end is the next word's ordinal (`TextIndex.after`)
+or the book's end, never `last + 1` inside a book, so neighbouring verses still abut. JS must use
+`bookIdOf`/`makeOrd`, never `>>` (ids >= 128 exceed int32). ~791k words in KJV; **hyphens split words**
+(`Beth-` + `el`, the first part flagged `joined`).
+Anchors are keyed by `text_id` (versioned, now `kjv-1769-v2`); the client ignores taggings of other texts.
+Planned for licensed translations (user, 2026-10-12): build their index ahead of time from a licensed copy and
+treat it as static data (the index holds no text); if it can't be published as a file, store it in the shared
+database and let clients cache it forever. Text itself is fetched at runtime within the license's caching terms.
 
 ```sql
 tags(id ULID PK, owner_id, name, description, color, created_at, updated_at, deleted_at, UNIQUE(owner_id, id))
@@ -140,7 +148,8 @@ Rust: `crates/normalize/src/lib.rs`).
   broadcast) **on the writer thread**, so sockets see seq order. `--migrate-from OLD.db` imports the pre-spaces
   single database once (only if `--data` doesn't exist yet; into a temp dir, then renamed); personal spaces keep the
   old per-owner seqs, so clients' caches stay valid. The Makefile passes it when `build/dev.db` exists.
-  Ordinals are validated against the text index (`bad_text`), ids against `[0-9A-Za-z_-]{1,64}` (`bad_id`).
+  Ordinals are validated against the text index (`bad_text`: start is a word, end is a word or a book end), ids
+  against `[0-9A-Za-z_-]{1,64}` (`bad_id`).
   The shared ops fixtures also run through SQLite (`crates/space/tests/fixtures.rs`, which also tests a two-owner
   space; mutation-checked 2026-10-11: owner check, per-space seq, write-before-checks, duplicate scope).
 - **Cloudflare** (`crates/cloudflare`, done 2026-10-11; workers-rs 0.8.7, built for wasm32 by worker-build 0.8.7
@@ -204,7 +213,7 @@ Rust: `crates/normalize/src/lib.rs`).
   notice). Undo/redo steps = op-id lists (a multi-op step undoes in reverse). Persistence: shared base cache
   (localStorage, never regresses seq), shared **outbox** of unconfirmed ops (union across tabs, Web Lock, adopted by
   other tabs; any tab may re-send since ops are idempotent), per-tab undo (sessionStorage). Reconnect with backoff
-  and on `online`. The local-only prototype's data is imported once.
+  and on `online`.
 - Tests: end-to-end WebSocket tests (fan-out, replay, duplicates, rejects, owner isolation, revert, auth/origin,
   restart); a client convergence property test (3 clients, random edits/delivery/disconnects, 120 seeds);
   browser-tested with two tabs incl. offline -> reconnect. Comments are in the fixtures, both property tests (with
@@ -233,7 +242,8 @@ the word (superset semantics: other tags may also be present). OPEN: whether to 
 
 ## Text (frozen): see `crates/text-build/CLAUDE.md` and `docs/text-format.md`
 - **Never edit or refresh `data/source/eng-kjv2006/`.** The tokenization (hence every user's ordinals) is
-  frozen by `fixtures/text/kjv-1769-v1.golden.json`; changing it needs a new `text_id` plus an ordinal remap.
+  frozen by `fixtures/text/kjv-1769-v2.golden.json` once anyone has data; changing it then needs a new `text_id`
+  plus an ordinal remap.
 
 ## Testing philosophy
 Shared JSON fixtures are the behavioral spec for anything duplicated across TS and Rust. Property tests

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BOOKS } from "../src/books.ts";
-import { BOOK_SPAN, bookIdOf, localOf, makeOrd } from "../src/textIndex.ts";
+import { bookIdOf, makeOrd } from "../src/textIndex.ts";
 import { kjv, bookWords } from "./kjv.ts";
 
 const { index, manifest } = kjv;
@@ -10,43 +10,62 @@ test("book table matches the built text", () => {
   assert.equal(index.books, BOOKS.length);
   assert.deepEqual(manifest.books.map((b) => b.code), BOOKS.map((b) => b.code));
   assert.deepEqual([...index.bookId], BOOKS.map((b) => b.id));
-  assert.deepEqual(manifest.books.map((b) => b.first_ord), BOOKS.map((b) => b.id * BOOK_SPAN));
+  manifest.books.forEach((b, i) => assert.equal(b.first_ord, index.bookInterval(i)[0], b.code));
   manifest.books.forEach((b, i) => assert.equal(index.chapterCount(i), b.chapters, b.code));
-  assert.equal(index.tokens, 790676);
+  assert.equal(index.tokens, 791484);
   assert.equal(index.slots, 32291);
 });
 
-test("every ordinal round-trips ord -> ref -> interval; gaps between books are not words", () => {
-  let total = 0;
+test("every word round-trips pos -> ord -> ref -> interval; gaps belong to the word before them", () => {
+  let p = 0;
   for (let b = 0; b < index.books; b++) {
     const [bs, be] = index.bookInterval(b);
-    assert.equal(bs, makeOrd(BOOKS[b]!.id, 0));
-    for (let ord = bs; ord < be; ord++) {
+    assert.equal(index.ordAt(p), bs);
+    assert.equal(bs, makeOrd(BOOKS[b]!.id, 1, 1, 0), "every book starts at 1:1 (Psalm 1 has no title)");
+    for (let ord = bs; ord < be; ord = index.after(ord), p++) {
+      if (index.ordAt(p) !== ord || index.pos(ord) !== p || !index.isWord(ord)) assert.fail(`ord ${ord} at ${p}`);
       const { book, chapter, verse } = index.locate(ord);
       const [s, e] = index.verseInterval(book, chapter, verse);
       if (book !== b || !(s <= ord && ord < e)) assert.fail(`ord ${ord} -> ${book} ${chapter}:${verse} -> [${s}, ${e})`);
+      if (ord !== makeOrd(BOOKS[b]!.id, chapter, verse, ord - s)) assert.fail(`ord ${ord} is not its address`);
+      // The ordinal after a word is either the next word or a gap owned by this word.
+      const next = ord + 1;
+      if (next < be && !index.isWord(next)) {
+        if (index.pos(next) !== p + 1 || index.locate(next).verse !== verse || index.slotOf(next) !== index.slotOf(ord)) {
+          assert.fail(`gap ${next} after ${ord}`);
+        }
+      }
     }
-    total += be - bs;
+    assert.equal(index.pos(be), p, "a book's end is the position after its last word");
     assert.equal(index.bookOf(be), -1);
     assert.equal(index.bookOf(bs - 1), -1);
     assert.throws(() => index.locate(be));
   }
-  assert.equal(total, index.tokens);
+  assert.equal(p, index.tokens);
   assert.equal(index.bookOf(0), -1);
   assert.equal(index.bookOf(2 ** 32), -1);
 });
 
 test("ordinal helpers", () => {
-  const ord = makeOrd(96, 12345);
-  assert.equal(ord, 96 * 16777216 + 12345);
-  assert.deepEqual([bookIdOf(ord), localOf(ord)], [96, 12345]);
+  const ord = makeOrd(96, 22, 21, 5);
+  assert.equal(ord, 96 * 2 ** 24 + 22 * 2 ** 16 + 21 * 2 ** 8 + 5);
   // Ids >= 128 exceed int32, where `ord >> 24` would go negative; the helpers must not.
-  const big = makeOrd(200, 7);
+  const big = makeOrd(200, 1, 1, 7);
   assert.ok(big > 2 ** 31);
-  assert.deepEqual([bookIdOf(big), localOf(big)], [200, 7]);
+  assert.equal(bookIdOf(big), 200);
   const [gs] = index.bookInterval(0);
   const [, re] = index.bookInterval(65);
   assert.equal(index.wordCount([gs, re]), index.tokens, "word count skips the gaps");
+  // John 11:35 "Jesus wept." ends at 11:36's first word; the gap after "wept." is not a word.
+  const jw = makeOrd(73, 11, 35, 0);
+  assert.deepEqual(index.verseInterval(42, 11, 35), [jw, makeOrd(73, 11, 36, 0)]);
+  assert.equal(index.wordCount(index.verseInterval(42, 11, 35)), 2);
+  assert.equal(index.after(jw + 1), makeOrd(73, 11, 36, 0));
+  assert.equal(index.isWord(jw + 2), false);
+  // The last word of a chapter ends at the next chapter's first word (Psalm 3's title), the last of a book at the book's end.
+  const ps2End = index.verseInterval(18, 2, 12)[1];
+  assert.equal(ps2End, makeOrd(20, 3, 0, 0));
+  assert.equal(index.after(index.ordAt(index.pos(index.bookEnd[0]!) - 1)), index.bookEnd[0]);
 });
 
 test("every verse slot round-trips ref -> slot -> ref", () => {
@@ -73,7 +92,8 @@ test("landmarks", () => {
     const b = BOOKS.findIndex((x) => x.code === code);
     const [s, e] = index.verseInterval(b, ch, v);
     const w = bookWords(code);
-    return w.words.slice(s - w.first_ord, e - w.first_ord).join(" ");
+    const first = index.pos(w.first_ord);
+    return w.words.slice(index.pos(s) - first, index.pos(e) - first).join(" ");
   };
   assert.equal(words("JHN", 3, 16).slice(0, 26), "For God so loved the world");
   assert.equal(words("PSA", 51, 0).slice(0, 26), "To the chief Musician, A P");
@@ -82,7 +102,8 @@ test("landmarks", () => {
   assert.equal(index.hasTitle(18, 3), true);
   assert.equal(index.hasTitle(18, 1), false);
   assert.deepEqual(index.locate(index.bookEnd[65]! - 1), { book: 65, chapter: 22, verse: 21 });
-  assert.deepEqual(index.locate(makeOrd(70, 0)), { book: 39, chapter: 1, verse: 1 });
-  assert.throws(() => index.locate(makeOrd(41, 0)), "41 is reserved (Tobit) and absent");
+  assert.deepEqual(index.locate(makeOrd(70, 1, 1, 0)), { book: 39, chapter: 1, verse: 1 });
+  assert.throws(() => index.locate(makeOrd(41, 1, 1, 0)), "41 is reserved (Tobit) and absent");
+  assert.throws(() => index.locate(makeOrd(2, 1, 0, 0)), "Genesis has no title: before its first word");
   assert.throws(() => index.locate(-1));
 });

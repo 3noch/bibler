@@ -234,7 +234,7 @@ export function Bible(props: Props) {
 
   const commit = (a: number, b: number, erase: boolean) => {
     const start = Math.min(a, b);
-    const end = Math.max(a, b) + 1;
+    const end = index.after(Math.max(a, b));
     if (erase) {
       if (props.activeTag) props.store.erase(props.activeTag, start, end);
       else props.store.eraseAll(start, end);

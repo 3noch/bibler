@@ -15,7 +15,7 @@
 #   make cloudflare-deploy  deploy production to its custom domain (one-time setup in README.md)
 
 SHELL := bash
-TEXT_ID := kjv-1769-v1
+TEXT_ID := kjv-1769-v2
 TEXT := build/text/$(TEXT_ID)/manifest.json
 SERVER_ADDR ?= 127.0.0.1:8080
 NPM := npm

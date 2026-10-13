@@ -7,12 +7,25 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const TEXT_ID: &str = "kjv-1769-v1";
+pub const TEXT_ID: &str = "kjv-1769-v2";
 pub const INDEX_MAGIC: &[u8; 4] = b"BTIX";
-pub const INDEX_VERSION: u32 = 2;
-/// Ordinals are `book_id << BOOK_SHIFT | local`: books have stable ids (the source's file-number prefix: GEN = 2,
-/// MAL = 40, MAT = 70, REV = 96, leaving 41..=69 for deuterocanon), so adding a book shifts no existing ordinal.
+pub const INDEX_VERSION: u32 = 3;
+/// Ordinals are addresses: `book_id << 24 | chapter << 16 | verse << 8 | word` (chapter and verse numbers as
+/// printed, verse 0 = the title slot, word = position in the verse). Books have stable ids (the source's
+/// file-number prefix: GEN = 2, MAL = 40, MAT = 70, REV = 96, leaving 41..=69 for deuterocanon), so adding a book
+/// shifts no existing ordinal, a correction inside a verse moves no other verse's words, and any text with the
+/// same versification gives the same verse the same ordinals.
 pub const BOOK_SHIFT: u32 = 24;
+pub const CHAPTER_SHIFT: u32 = 16;
+pub const VERSE_SHIFT: u32 = 8;
+/// Chapters, verses and words per verse must each fit in 8 bits.
+pub const MAX_FIELD: u32 = 255;
+
+/// The ordinal of `word` in `chapter:verse` of book `id`.
+#[must_use]
+pub const fn make_ord(id: u8, chapter: u32, verse: u32, word: u32) -> u32 {
+    (id as u32) << BOOK_SHIFT | chapter << CHAPTER_SHIFT | verse << VERSE_SHIFT | word
+}
 
 // Index integer widths: words and slots are u32, chapter indexes u16, book indexes u8. The builder refuses input
 // that would outgrow them (`Builder::check_capacity`, the word check in `tokenize`) before anything is pushed, so
@@ -34,6 +47,8 @@ const MAX_WORDS: usize = u32::MAX as usize;
 const ITALIC: u8 = 1;
 const DIVINE_NAME: u8 = 2;
 const WORDS_OF_JESUS: u8 = 4;
+/// Not followed by a space: the word ends with a hyphen (`Beth-` of `Beth-el`).
+const JOINED: u8 = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Heading {
@@ -66,7 +81,7 @@ pub struct Book {
     pub name_short: String,
     pub abbr: String,
     pub titles: Vec<String>,
-    /// Stable book id (file-number prefix). `first_ord = id << BOOK_SHIFT`.
+    /// Stable book id (file-number prefix).
     pub id: u8,
     pub first_chapter: u32,
     pub chapters: u32,
@@ -74,21 +89,32 @@ pub struct Book {
     pub slots: u32,
     /// Index of the book's first word in `Text::words` (dense; not an ordinal).
     pub first_word: u32,
+    /// Ordinal of the book's first word.
     pub first_ord: u32,
     pub tokens: u32,
 }
 
-/// The whole tokenized text. `words`/`flags` are dense (all books concatenated); ordinals are sparse
-/// (`book.first_ord + i` for the book's i-th word). Slots are global and dense.
+/// The whole tokenized text. `words`/`flags` are dense (all books concatenated); ordinals are sparse addresses
+/// (`make_ord`). Slots are global and dense.
+///
+/// Intervals are half-open and **tile** the ordinal line: a word owns the ordinals up to the next word of its
+/// book, and a book's last word owns only itself. So an interval's end is the ordinal of the word after its last
+/// word, or the book's end (last word + 1), and painting two neighbouring verses separately still gives
+/// abutting intervals.
 #[derive(Debug, Default)]
 pub struct Text {
     pub books: Vec<Book>,
     pub words: Vec<String>,
-    /// Per-token flag bits (`ITALIC | DIVINE_NAME | WORDS_OF_JESUS`), dense like `words`.
+    /// Per-token flag bits (`ITALIC | DIVINE_NAME | WORDS_OF_JESUS | JOINED`), dense like `words`.
     pub flags: Vec<u8>,
-    /// First ordinal of each slot, plus a sentinel (= the last book's end ordinal). While building, these are dense
-    /// word indices; `build` converts them to ordinals at the end.
+    /// First ordinal of each slot, plus a sentinel (= the last book's end ordinal). An empty slot starts where the
+    /// next slot with words starts (or at the book's end). While building, these are dense word indices; `build`
+    /// converts them to ordinals at the end.
     pub verse_start: Vec<u32>,
+    /// Index in `words` of each slot's first word, plus a sentinel (= number of words).
+    pub slot_first_word: Vec<u32>,
+    /// Words in each slot.
+    pub slot_words: Vec<u8>,
     /// End ordinal (exclusive) of each book. A book's last slot ends here, not at the next book's start.
     pub book_end: Vec<u32>,
     pub chapter_of_verse: Vec<u16>,
@@ -117,29 +143,72 @@ impl Text {
         narrow32(self.words.len())
     }
 
-    /// Book index of an ordinal, if it names a real word.
+    /// Book index of an ordinal inside a book's range `[first word, end)` (a word, or a gap a word owns).
     #[must_use]
     pub fn book_of(&self, ord: u32) -> Option<usize> {
         let id = ord >> BOOK_SHIFT;
         let b = self.books.iter().position(|b| u32::from(b.id) == id)?;
-        (ord < self.book_end[b]).then_some(b)
+        (self.books[b].first_ord <= ord && ord < self.book_end[b]).then_some(b)
     }
 
-    /// The word at an ordinal.
+    /// The slot owning an ordinal of a book's range: upperBound over that book's slots, minus one.
+    fn slot_of(&self, ord: u32) -> Option<usize> {
+        let b = &self.books[self.book_of(ord)?];
+        let lo = b.first_slot as usize;
+        Some(lo + self.verse_start[lo..lo + b.slots as usize].partition_point(|&s| s <= ord) - 1)
+    }
+
+    /// The word at an ordinal, if it is a word.
     #[must_use]
     pub fn word(&self, ord: u32) -> Option<&str> {
-        let b = &self.books[self.book_of(ord)?];
-        Some(&self.words[(b.first_word + ord - b.first_ord) as usize])
+        let slot = self.slot_of(ord)?;
+        let i = ord - self.verse_start[slot];
+        (i < u32::from(self.slot_words[slot])).then(|| self.words[(self.slot_first_word[slot] + i) as usize].as_str())
     }
 
-    /// ord -> (book index, chapter number, verse number). Same algorithm the TS index uses: the book comes from the
-    /// high bits, then upperBound over that book's slots.
+    /// The book's words as displayed: hyphen-joined parts put back together.
+    #[must_use]
+    pub fn display_words(&self, b: &Book) -> Vec<String> {
+        let mut out: Vec<String> = vec![];
+        let mut glue = false;
+        for w in b.first_word..b.first_word + b.tokens {
+            let word = &self.words[w as usize];
+            match out.last_mut() {
+                Some(last) if glue => last.push_str(word),
+                _ => out.push(word.clone()),
+            }
+            glue = self.flags[w as usize] & JOINED != 0;
+        }
+        out
+    }
+
+    /// The ordinal of the word at index `w` of `words`.
+    #[must_use]
+    pub fn ord_of_word(&self, w: u32) -> u32 {
+        let slot = self.slot_first_word[..self.slot_words.len()].partition_point(|&s| s <= w) - 1;
+        self.verse_start[slot] + w - self.slot_first_word[slot]
+    }
+
+    /// The interval end after the word at index `w` of `words`: the next word's ordinal, or the book's end.
+    ///
+    /// # Panics
+    /// If `w` is not an index of `words`.
+    #[must_use]
+    pub fn end_after_word(&self, w: u32) -> u32 {
+        let book = self.books.iter().rposition(|b| b.first_word <= w).expect("a word");
+        if w + 1 < self.books[book].first_word + self.books[book].tokens {
+            self.ord_of_word(w + 1)
+        } else {
+            self.book_end[book]
+        }
+    }
+
+    /// ord -> (book index, chapter number, verse number) of the slot owning it. Same algorithm the TS index uses:
+    /// the book comes from the high bits, then upperBound over that book's slots.
     #[must_use]
     pub fn locate(&self, ord: u32) -> Option<(usize, u32, u32)> {
+        let slot = self.slot_of(ord)?;
         let book = self.book_of(ord)?;
-        let b = &self.books[book];
-        let lo = b.first_slot as usize;
-        let slot = lo + self.verse_start[lo..lo + b.slots as usize].partition_point(|&s| s <= ord) - 1;
         let ch = self.chapter_of_verse[slot];
         let verse = narrow32(slot) - self.chapter_first_verse[usize::from(ch)];
         let chapter = u32::from(ch) - u32::from(self.book_first_chapter[book]) + 1;
@@ -253,6 +322,7 @@ impl Builder {
 
     fn push_slot(&mut self, ch: usize) {
         self.text.verse_start.push(narrow32(self.text.words.len()));
+        self.text.slot_first_word.push(narrow32(self.text.words.len()));
         self.text.chapter_of_verse.push(narrow16(ch));
     }
 
@@ -302,12 +372,15 @@ impl Builder {
     }
 
     /// Tokenize the inline content of a `\v` or `\d` line into the current slot.
+    #[allow(clippy::too_many_lines)] // one scan over the line; splitting it would scatter the marker rules
     fn tokenize(&mut self, s: &str) -> Result<(), String> {
         let here = self.here();
         let mut st = Styles::default();
         let mut cur = String::new();
         let mut cur_flags = 0u8;
         let mut cur_letter = false;
+        // Just split at a hyphen: the next word must follow without a space.
+        let mut joining = false;
         let mut chars = s.char_indices().peekable();
 
         let flush = |t: &mut Text, cur: &mut String, flags: &mut u8, letter: &mut bool| -> Result<(), String> {
@@ -394,14 +467,27 @@ impl Builder {
                 continue;
             }
             if c.is_whitespace() {
+                if joining {
+                    return Err(format!("{here}: hyphen before a space"));
+                }
                 flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
                 continue;
             }
+            joining = false;
             cur.push(c);
             if c.is_alphabetic() {
                 cur_letter = true;
                 cur_flags |= st.bits();
             }
+            if c == '-' {
+                // A hyphen ends a word (`Beth-el` = `Beth-` + `el`); the first part is shown without a space after.
+                cur_flags |= JOINED;
+                flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
+                joining = true;
+            }
+        }
+        if joining {
+            return Err(format!("{here}: hyphen at the end of a verse"));
         }
         flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
         if st.add + st.nd + st.wj + st.tl != 0 {
@@ -563,34 +649,50 @@ pub fn build(src: &Path) -> Result<Text, String> {
     }
     t.chapter_first_verse.push(narrow32(t.chapter_of_verse.len()));
     t.book_first_chapter.push(narrow16(t.book_of_chapter.len()));
+    t.slot_first_word.push(t.tokens());
     sparsify(&mut t)?;
     Ok(t)
 }
 
-/// Convert the builder's dense word indices (verse starts, note anchors) to sparse ordinals.
+/// Convert the builder's dense word indices (verse starts, note anchors) to address ordinals (`make_ord`).
 fn sparsify(t: &mut Text) -> Result<(), String> {
     let mut prev_id = None;
-    for b in &mut t.books {
+    let dense = t.slot_first_word.clone();
+    t.verse_start = vec![0; t.slots() as usize];
+    t.slot_words = vec![0; t.slots() as usize];
+    for (bi, b) in t.books.iter_mut().enumerate() {
         if prev_id.is_some_and(|p| p >= b.id) {
             return Err(format!("{}: book ids must increase in canonical order", b.code));
         }
-        if b.tokens >= 1 << BOOK_SHIFT {
-            return Err(format!("{}: {} tokens do not fit in {BOOK_SHIFT} bits", b.code, b.tokens));
-        }
         prev_id = Some(b.id);
-        b.first_ord = u32::from(b.id) << BOOK_SHIFT;
-        t.book_end.push(b.first_ord + b.tokens);
-    }
-    let to_ord = |books: &[Book], dense: u32, book: usize| books[book].first_ord + dense - books[book].first_word;
-    for slot in 0..t.chapter_of_verse.len() {
-        let book = usize::from(t.book_of_chapter[usize::from(t.chapter_of_verse[slot])]);
-        t.verse_start[slot] = to_ord(&t.books, t.verse_start[slot], book);
+        if b.chapters > MAX_FIELD {
+            return Err(format!("{}: more than {MAX_FIELD} chapters", b.code));
+        }
+        // Backwards, so an empty slot can start where the next slot with words starts.
+        let mut next = None;
+        for slot in (b.first_slot as usize..(b.first_slot + b.slots) as usize).rev() {
+            let ch = usize::from(t.chapter_of_verse[slot]);
+            let chapter = narrow32(ch) - u32::from(t.book_first_chapter[bi]) + 1;
+            let verse = narrow32(slot) - t.chapter_first_verse[ch];
+            let words = dense[slot + 1] - dense[slot];
+            if verse > MAX_FIELD || words > MAX_FIELD {
+                return Err(format!("{} {chapter}:{verse}: verse number or word count over {MAX_FIELD}", b.code));
+            }
+            t.slot_words[slot] = narrow8(words as usize);
+            if words > 0 {
+                let start = make_ord(b.id, chapter, verse, 0);
+                if next.is_none() {
+                    t.book_end.push(start + words);
+                }
+                next = Some(start);
+            }
+            t.verse_start[slot] = next.ok_or_else(|| format!("{}: no words", b.code))?;
+        }
+        b.first_ord = t.verse_start[b.first_slot as usize];
     }
     t.verse_start.push(*t.book_end.last().unwrap());
-    for n in &mut t.notes {
-        let book = t.books.iter().rposition(|b| b.first_word <= n.after).unwrap();
-        n.after = to_ord(&t.books, n.after, book);
-    }
+    let notes = std::mem::take(&mut t.notes);
+    t.notes = notes.into_iter().map(|n| Note { after: t.ord_of_word(n.after), ..n }).collect();
     Ok(())
 }
 
@@ -609,6 +711,7 @@ pub fn index_bytes(t: &Text) -> Vec<u8> {
     t.book_first_chapter.iter().for_each(|v| out.extend_from_slice(&v.to_le_bytes()));
     out.extend_from_slice(&t.book_of_chapter);
     out.extend(t.books.iter().map(|b| b.id));
+    out.extend_from_slice(&t.slot_words);
     out
 }
 
@@ -629,7 +732,10 @@ pub struct GoldenBook {
     pub tokens: u32,
     /// sha256 of the book's tokens joined by `\n`.
     pub tokens_sha256: String,
-    /// sha256 of the book's verse starts as book-local offsets (u32 LE).
+    /// sha256 of the book's words as displayed (hyphen-joined parts put back together) joined by `\n`: pins the
+    /// text itself apart from how it is split into words.
+    pub display_sha256: String,
+    /// sha256 of the book's verse starts without the book id bits (u32 LE).
     pub verse_starts_sha256: String,
 }
 
@@ -648,7 +754,7 @@ pub fn golden(t: &Text) -> Golden {
         .map(|b| {
             let words = &t.words[b.first_word as usize..(b.first_word + b.tokens) as usize];
             let slots = &t.verse_start[b.first_slot as usize..(b.first_slot + b.slots) as usize];
-            let vs: Vec<u8> = slots.iter().flat_map(|v| (v - b.first_ord).to_le_bytes()).collect();
+            let vs: Vec<u8> = slots.iter().flat_map(|v| (v & ((1 << BOOK_SHIFT) - 1)).to_le_bytes()).collect();
             GoldenBook {
                 code: b.code.clone(),
                 id: b.id,
@@ -656,6 +762,7 @@ pub fn golden(t: &Text) -> Golden {
                 slots: b.slots,
                 tokens: b.tokens,
                 tokens_sha256: sha256_hex(words.join("\n").as_bytes()),
+                display_sha256: sha256_hex(t.display_words(b).join("\n").as_bytes()),
                 verse_starts_sha256: sha256_hex(&vs),
             }
         })
@@ -663,15 +770,16 @@ pub fn golden(t: &Text) -> Golden {
     Golden { text_id: TEXT_ID.to_string(), book_shift: BOOK_SHIFT, books }
 }
 
-/// Half-open ordinal runs `[s, e)` of the book's words whose flags contain `bit`.
+/// Half-open ordinal runs `[s, e)` of the book's words whose flags contain `bit` (ends as for any interval: the
+/// next word's ordinal, or the book's end).
 fn runs(t: &Text, b: &Book, bit: u8) -> Vec<[u32; 2]> {
     let mut out: Vec<[u32; 2]> = vec![];
-    for i in 0..b.tokens {
-        if t.flags[(b.first_word + i) as usize] & bit != 0 {
-            let ord = b.first_ord + i;
+    for w in b.first_word..b.first_word + b.tokens {
+        if t.flags[w as usize] & bit != 0 {
+            let (ord, end) = (t.ord_of_word(w), t.end_after_word(w));
             match out.last_mut() {
-                Some(r) if r[1] == ord => r[1] = ord + 1,
-                _ => out.push([ord, ord + 1]),
+                Some(r) if r[1] == ord => r[1] = end,
+                _ => out.push([ord, end]),
             }
         }
     }
@@ -688,6 +796,7 @@ struct BookFile<'a> {
     italic: Vec<[u32; 2]>,
     divine_name: Vec<[u32; 2]>,
     words_of_jesus: Vec<[u32; 2]>,
+    joined: Vec<u32>,
     pilcrow: Vec<u32>,
     breaks: Vec<&'a (u32, String)>,
     headings: Vec<&'a Heading>,
@@ -735,8 +844,8 @@ pub fn write_artifacts(t: &Text, out: &Path) -> Result<Manifest, String> {
     write(&index_name, &index)?;
 
     let mut books = vec![];
-    for b in &t.books {
-        let ords = b.first_ord..b.first_ord + b.tokens;
+    for (i, b) in t.books.iter().enumerate() {
+        let ords = b.first_ord..t.book_end[i];
         let slots = b.first_slot..b.first_slot + b.slots;
         let file = BookFile {
             book: &b.code,
@@ -747,6 +856,10 @@ pub fn write_artifacts(t: &Text, out: &Path) -> Result<Manifest, String> {
             italic: runs(t, b, ITALIC),
             divine_name: runs(t, b, DIVINE_NAME),
             words_of_jesus: runs(t, b, WORDS_OF_JESUS),
+            joined: (b.first_word..b.first_word + b.tokens)
+                .filter(|&w| t.flags[w as usize] & JOINED != 0)
+                .map(|w| t.ord_of_word(w))
+                .collect(),
             pilcrow: t.pilcrow.iter().copied().filter(|s| slots.contains(s)).collect(),
             breaks: t.breaks.iter().filter(|(s, _)| slots.contains(s)).collect(),
             headings: t.headings.iter().filter(|h| slots.contains(&h.slot)).collect(),

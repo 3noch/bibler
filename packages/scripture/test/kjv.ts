@@ -1,10 +1,10 @@
-// Loads the KJV artifacts produced by `cargo run -p text-build --release` (build/text/kjv-1769-v1/).
+// Loads the KJV artifacts produced by `cargo run -p text-build --release` (build/text/kjv-1769-v2/).
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { TextIndex } from "../src/textIndex.ts";
 
 const root = new URL("../../../", import.meta.url);
-const dir = new URL("build/text/kjv-1769-v1/", root);
+const dir = new URL("build/text/kjv-1769-v2/", root);
 
 export interface Manifest {
   text_id: string;
@@ -23,7 +23,7 @@ function load() {
   const bytes = readFileSync(new URL(manifest.index, dir));
   const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const index = new TextIndex(buf);
-  const golden = JSON.parse(readFileSync(new URL("fixtures/text/kjv-1769-v1.golden.json", root), "utf8")) as {
+  const golden = JSON.parse(readFileSync(new URL("fixtures/text/kjv-1769-v2.golden.json", root), "utf8")) as {
     books: { code: string; id: number; verse_starts_sha256: string }[];
   };
   golden.books.forEach((g, b) => {
@@ -40,7 +40,7 @@ function load() {
 
 export const kjv = load();
 
-export function bookWords(code: string): { first_ord: number; words: string[] } {
+export function bookWords(code: string): { first_ord: number; words: string[]; joined: number[] } {
   const b = kjv.manifest.books.find((x) => x.code === code)!;
   return JSON.parse(readFileSync(new URL(b.file, dir), "utf8"));
 }

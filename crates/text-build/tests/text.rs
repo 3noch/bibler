@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use text_build::{build, default_source, golden, golden_path, index_bytes, Golden, HeadingPos, Text, BOOK_SHIFT};
+use text_build::{build, default_source, golden, golden_path, index_bytes, make_ord, Golden, HeadingPos, Text};
 
 fn kjv() -> Text {
     build(&default_source()).expect("build KJV")
@@ -18,21 +18,34 @@ fn golden_matches_vendored_source() {
 fn every_ordinal_round_trips() {
     let t = kjv();
     for (i, b) in t.books.iter().enumerate() {
-        assert_eq!(b.first_ord, u32::from(b.id) << BOOK_SHIFT, "{}", b.code);
-        assert_eq!(t.book_end[i], b.first_ord + b.tokens);
-        for ord in b.first_ord..b.first_ord + b.tokens {
+        assert_eq!(b.first_ord, t.ord_of_word(b.first_word), "{}", b.code);
+        let last = b.first_word + b.tokens - 1;
+        assert_eq!(t.book_end[i], t.ord_of_word(last) + 1, "a book ends right after its last word");
+        let mut prev = None;
+        for w in b.first_word..=last {
+            let ord = t.ord_of_word(w);
+            assert_eq!(t.word(ord), Some(t.words[w as usize].as_str()));
             let (book, chapter, verse) = t.locate(ord).unwrap();
             assert_eq!(book, i);
+            // The ordinal is the word's address: chapter, verse and position in the verse.
             let (s, e) = t.interval(book, chapter, verse);
+            assert_eq!(ord, make_ord(b.id, chapter, verse, ord - s), "{} {chapter}:{verse}", b.code);
             assert!(s <= ord && ord < e, "ord {ord} -> {book} {chapter}:{verse} -> [{s}, {e})");
+            // Intervals tile: the previous word's end is this word, and the ordinals between are not words.
+            if let Some(p) = prev {
+                assert_eq!(t.end_after_word(w - 1), ord);
+                assert!((p + 1..ord).all(|o| t.word(o).is_none() && t.locate(o) == t.locate(p)), "gap after {p}");
+            }
+            prev = Some(ord);
         }
+        assert_eq!(t.end_after_word(last), t.book_end[i]);
         // A book's last verse ends at the book's end, not at the next book's first ordinal.
         let last_ch = b.chapters;
         let ch_index = (b.first_chapter + last_ch - 1) as usize;
         let last_v = t.chapter_first_verse[ch_index + 1] - t.chapter_first_verse[ch_index] - 1;
         assert_eq!(t.interval(i, last_ch, last_v).1, t.book_end[i], "{} last verse", b.code);
         // Ordinals in the gap after a book (and before the first) are not words.
-        assert_eq!(t.locate(b.first_ord + b.tokens), None);
+        assert_eq!(t.locate(t.book_end[i]), None);
         assert_eq!(t.locate(b.first_ord.wrapping_sub(1)), None);
     }
     assert_eq!(t.locate(0), None);
@@ -58,7 +71,7 @@ fn kjv_landmarks() {
     let book = |c: &str| t.books.iter().position(|b| b.code == c).unwrap();
     let words = |b: &str, c: u32, v: u32| {
         let (s, e) = t.interval(book(b), c, v);
-        (s..e).map(|o| t.word(o).unwrap()).collect::<Vec<_>>().join(" ")
+        (s..e).filter_map(|o| t.word(o)).collect::<Vec<_>>().join(" ")
     };
     assert_eq!(words("GEN", 1, 1), "In the beginning God created the heaven and the earth.");
     assert_eq!(words("PSA", 3, 0), "A Psalm of David, when he fled from Absalom his son.");
@@ -68,7 +81,13 @@ fn kjv_landmarks() {
     assert_eq!(words("REV", 22, 21), "The grace of our Lord Jesus Christ be with you all. Amen.");
     let ids: Vec<u8> = t.books.iter().map(|b| b.id).collect();
     assert_eq!((ids[0], ids[38], ids[39], ids[65]), (2, 40, 70, 96), "GEN, MAL, MAT, REV ids leave 41..=69 free");
-    assert_eq!(t.locate(2 << BOOK_SHIFT), Some((0, 1, 1)));
+    assert_eq!(t.books[0].first_ord, make_ord(2, 1, 1, 0), "Gen 1:1, first word");
+    assert_eq!(t.locate(make_ord(2, 1, 1, 0)), Some((0, 1, 1)));
+    assert_eq!(t.locate(make_ord(2, 1, 1, 200)), Some((0, 1, 1)), "a gap belongs to the word before it");
+    assert_eq!(t.locate(make_ord(2, 1, 0, 0)), None, "before Genesis' first word");
+    assert_eq!(t.interval(book("JHN"), 11, 35), (make_ord(73, 11, 35, 0), make_ord(73, 11, 36, 0)));
+    let longest = t.slot_words.iter().max().unwrap();
+    assert_eq!(*longest, 90, "Esther 8:9: 8 bits per verse leave room");
     assert_eq!(t.locate(*t.book_end.last().unwrap() - 1), Some((65, 22, 21)));
 
     let titles = (1..=150).filter(|&c| !words("PSA", c, 0).is_empty()).count();
@@ -79,7 +98,11 @@ fn kjv_landmarks() {
     assert_eq!(t.pilcrow.len(), 2970);
     assert_eq!(t.notes.len(), 6959);
     let count = |bit: u8| t.flags.iter().filter(|&&f| f & bit != 0).count();
-    assert_eq!((count(1), count(2), count(4)), (27063, 6892, 41545), "italic, divine name, words of Jesus");
+    assert_eq!(
+        (count(1), count(2), count(4)),
+        (27066, 6892, 41546),
+        "italic, divine name, words of Jesus (hyphen parts counted apart)"
+    );
 }
 
 #[test]
@@ -88,8 +111,8 @@ fn index_layout_is_exact() {
     let bytes = index_bytes(&t);
     let (nb, nc, ns) = (t.books.len(), t.chapters() as usize, t.slots() as usize);
     assert_eq!(&bytes[..4], b"BTIX");
-    assert_eq!(bytes.len(), 24 + 4 * (ns + 1) + 4 * nb + 4 * (nc + 1) + 2 * ns + 2 * (nb + 1) + nc + nb);
-    assert_eq!(&bytes[4..8], &2u32.to_le_bytes(), "index version");
+    assert_eq!(bytes.len(), 24 + 4 * (ns + 1) + 4 * nb + 4 * (nc + 1) + 2 * ns + 2 * (nb + 1) + nc + nb + ns);
+    assert_eq!(&bytes[4..8], &3u32.to_le_bytes(), "index version");
 }
 
 // ---- tokenizer unit tests on synthetic USFM ----
@@ -126,9 +149,10 @@ fn markers_spacing_and_flags() {
         t.words,
         ["A", "title.", "In", "the", "beginning,", "LORD’s", "it", "was.", "Follow", "me", "said;", "he."]
     );
-    let base = 2 << BOOK_SHIFT; // the synthetic book file is 02-TST
-    assert_eq!(t.verse_start, [base, base + 2, base + 8, base + 12]);
-    assert_eq!(t.book_end, [base + 12]);
+    let at = |v, w| make_ord(2, 1, v, w); // the synthetic book file is 02-TST
+    assert_eq!(t.verse_start, [at(0, 0), at(1, 0), at(2, 0), at(2, 4)]);
+    assert_eq!(t.slot_words, [2, 6, 4]);
+    assert_eq!(t.book_end, [at(2, 4)]);
     let f = |i: usize| t.flags[i];
     assert_eq!((f(0), f(1)), (0, 1), "title italic");
     assert_eq!((f(4), f(5), f(6), f(7)), (0, 2, 1, 1), "beginning plain, LORD divine name, it was italic");
@@ -138,7 +162,7 @@ fn markers_spacing_and_flags() {
     assert_eq!(t.notes.len(), 1);
     assert_eq!(
         (t.notes[0].after, t.notes[0].text.as_str(), t.notes[0].reference.as_str()),
-        (base + 11, "Or, LORD note", "1.2")
+        (at(2, 3), "Or, LORD note", "1.2")
     );
     assert_eq!(t.headings.len(), 1);
     assert_eq!((t.headings[0].slot, t.headings[0].pos), (2, HeadingPos::After));
@@ -155,6 +179,9 @@ fn strictness() {
     assert!(err("\\c 1\n\\v 1 x ;\n").contains("punctuation-only"));
     assert!(err("\\c 1\n\\v 1 \\add x\n").contains("unclosed"));
     assert!(err("\\c 1\n\\v 1\n").contains("empty verse"));
+    assert!(err("\\c 1\n\\v 1 x- y\n").contains("hyphen before a space"));
+    assert!(err("\\c 1\n\\v 1 x y-\n").contains("hyphen at the end"));
+    assert!(err("\\c 1\n\\v 1 x -;\n").contains("punctuation-only"));
     assert!(err("\\c 1\n\\v 1 x\n\\d late title\n").contains("precede verse 1"));
 }
 
@@ -168,12 +195,55 @@ fn chapters(n: u32) -> String {
 }
 
 #[test]
-fn refuses_input_that_overflows_the_index_widths() {
-    // Chapter indexes and the chapter-count sentinel are u16: 65,535 chapters fit exactly; one more must be
-    // refused rather than silently wrapped.
-    let t = synth(&chapters(65_535)).unwrap();
-    assert_eq!(t.book_first_chapter, [0, 65_535]);
-    assert_eq!(t.chapter_of_verse.last(), Some(&65_534));
-    let err = synth(&chapters(65_536)).unwrap_err();
-    assert!(err.contains("too many chapters"), "{err}");
+fn refuses_input_that_overflows_the_ordinal_fields() {
+    // Chapter, verse and word-in-verse are 8 bits each: 255 fit exactly; one more must be refused rather than
+    // silently spill into the next field.
+    let t = synth(&chapters(255)).unwrap();
+    assert_eq!(*t.book_end.last().unwrap(), make_ord(2, 255, 1, 1));
+    assert!(synth(&chapters(256)).unwrap_err().contains("more than 255 chapters"));
+    let verses = |n: u32| {
+        use std::fmt::Write as _;
+        (1..=n).fold(String::new(), |mut s, v| {
+            let _ = writeln!(s, "\\v {v} x");
+            s
+        })
+    };
+    assert!(synth(&format!("\\c 1\n{}", verses(255))).is_ok());
+    assert!(synth(&format!("\\c 1\n{}", verses(256))).unwrap_err().contains("over 255"));
+    let words = |n: usize| vec!["x"; n].join(" ");
+    let t = synth(&format!("\\c 1\n\\v 1 {}\n\\v 2 y\n", words(255))).unwrap();
+    assert_eq!(t.verse_start[2], make_ord(2, 1, 2, 0));
+    assert_eq!(t.end_after_word(254), make_ord(2, 1, 2, 0), "the last word of a full verse ends at the next verse");
+    assert!(synth(&format!("\\c 1\n\\v 1 {}\n", words(256))).unwrap_err().contains("over 255"));
+}
+
+#[test]
+fn hyphens_split_words() {
+    let t = synth("\\c 1\n\\v 1 to Beth-el-\\nd bethel\\nd*, and\n").unwrap();
+    assert_eq!(t.words, ["to", "Beth-", "el-", "bethel,", "and"]);
+    assert_eq!(t.flags, [0, 8, 8, 2, 0], "joined parts; each part keeps its own flags");
+    assert_eq!(t.display_words(&t.books[0]), ["to", "Beth-el-bethel,", "and"]);
+    let kjv = kjv();
+    let gen = &kjv.books[0];
+    let (s, e) = kjv.interval(0, 28, 19);
+    let words: Vec<&str> = (s..e).filter_map(|o| kjv.word(o)).collect();
+    let i = words.iter().position(|&w| w == "Beth-").unwrap();
+    assert_eq!(&words[i - 1..i + 2], ["place", "Beth-", "el:"]);
+    assert!(kjv.display_words(gen).iter().any(|w| w == "Beth-el:"));
+}
+
+#[test]
+fn flag_runs_cross_verses() {
+    let t = synth("\\c 1\n\\v 1 a \\wj b\\wj*\n\\v 2 \\wj c\\wj* d\n").unwrap();
+    assert_eq!(t.flags, [0, 4, 4, 0]);
+    let dir = scratch_dir();
+    text_build::write_artifacts(&t, &dir).unwrap();
+    let file = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().contains("02-TST"))
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
+    // One run from "b" (1:1, word 1) to "d" (1:2, word 1): ends point at the next word, so runs merge across verses.
+    assert_eq!(json["words_of_jesus"], serde_json::json!([[make_ord(2, 1, 1, 1), make_ord(2, 1, 2, 1)]]));
 }

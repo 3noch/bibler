@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import crypto from "node:crypto";
-const B = process.argv[2], G = 2 ** 25;
+const B = process.argv[2], G = 18 * 2 ** 24 + 8 * 2 ** 16 + 9 * 2 ** 8; // Esther 8:9, word 0 (90 words)
 const FAKE_PORT = Number(process.argv[3]);
 const b64 = (s) => Buffer.from(s).toString("base64url");
 
@@ -66,7 +66,7 @@ async function signIn(cookie, who, ret = "#john/3") {
 const a = await session();
 await ops(a.cookie, [
   { op_id: "a1", kind: "tag_create", id: "TA", name: "Grace", color: "#ff0000", now: 1 },
-  { op_id: "a2", kind: "paint", tag: "TA", text_id: "kjv-1769-v1", start: G + 10, end: G + 20, new_id: "pa", now: 2 },
+  { op_id: "a2", kind: "paint", tag: "TA", text_id: "kjv-1769-v2", start: G + 10, end: G + 20, new_id: "pa", now: 2 },
 ]);
 const s1 = await signIn(a.cookie, { sub: "s1", name: "Ann", email: "ann@example.com" });
 assert.equal(s1.location, "/#john/3");
@@ -81,9 +81,9 @@ assert.notEqual((await session(a.cookie)).owner, a.owner, "the old session is go
 const b = await session();
 await ops(b.cookie, [
   { op_id: "b1", kind: "tag_create", id: "TB", name: "grace", color: "#00ff00", now: 3 },
-  { op_id: "b2", kind: "paint", tag: "TB", text_id: "kjv-1769-v1", start: G + 15, end: G + 30, new_id: "pb", now: 4 },
+  { op_id: "b2", kind: "paint", tag: "TB", text_id: "kjv-1769-v2", start: G + 15, end: G + 30, new_id: "pb", now: 4 },
   { op_id: "b3", kind: "tag_create", id: "TL", name: "Love", color: "#0000ff", now: 5 },
-  { op_id: "b4", kind: "paint", tag: "TL", text_id: "kjv-1769-v1", start: G + 50, end: G + 60, new_id: "pl", now: 6 },
+  { op_id: "b4", kind: "paint", tag: "TL", text_id: "kjv-1769-v2", start: G + 50, end: G + 60, new_id: "pl", now: 6 },
 ]);
 const live = await sync(s1.cookie); // a's socket sees the merge live
 await live.until((m) => m.type === "ready");

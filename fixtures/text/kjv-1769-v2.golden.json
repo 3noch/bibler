@@ -1,0 +1,666 @@
+{
+  "text_id": "kjv-1769-v2",
+  "book_shift": 24,
+  "books": [
+    {
+      "code": "GEN",
+      "id": 2,
+      "chapters": 50,
+      "slots": 1583,
+      "tokens": 38323,
+      "tokens_sha256": "24a2cd48eba9eae91d89bbf3738700a2a604631963bcd235f0c042caa5039adc",
+      "display_sha256": "610e9c1d91ecd57f63da6f6f5bc6b6a39b7d8b0baabe608eff867980d79d8df7",
+      "verse_starts_sha256": "e833ab59ef8348beea6355e2616d9479ac579088b3128dbb76e20e4deaafece3"
+    },
+    {
+      "code": "EXO",
+      "id": 3,
+      "chapters": 40,
+      "slots": 1253,
+      "tokens": 32691,
+      "tokens_sha256": "b40a9a99a1aba82e0897fe8dbca8ae0d2379adc3a02806114add26908d461513",
+      "display_sha256": "a2397c7e584e4cde822a4a7f4a3e4b5a380ade7034656b199f357857ebd6dc4c",
+      "verse_starts_sha256": "2446bc8c8dbcd13032f69e681aca63ac783d1717f984bf28f0fa0f107cc47339"
+    },
+    {
+      "code": "LEV",
+      "id": 4,
+      "chapters": 27,
+      "slots": 886,
+      "tokens": 24541,
+      "tokens_sha256": "c557d4f62805a3a5f6f79d455145dc388736f8e82e80f93ced85c63f2f22385d",
+      "display_sha256": "c557d4f62805a3a5f6f79d455145dc388736f8e82e80f93ced85c63f2f22385d",
+      "verse_starts_sha256": "78074be78aad74221d356d77c22c3452e3608abed97547ae9c77567cd3012f86"
+    },
+    {
+      "code": "NUM",
+      "id": 5,
+      "chapters": 36,
+      "slots": 1324,
+      "tokens": 32931,
+      "tokens_sha256": "eccb60f71823b54fe3f1f85ee7f5ab9350f07659fd0d66240213ebe605cdee29",
+      "display_sha256": "c0b2da43166d6a2b722b2d811d003da25dfaab306bc6adc2babe853db30c0eba",
+      "verse_starts_sha256": "06f42aa84f8479c47e63612674ba110207de1a11201a89cd0db9a572261b2c32"
+    },
+    {
+      "code": "DEU",
+      "id": 6,
+      "chapters": 34,
+      "slots": 993,
+      "tokens": 28367,
+      "tokens_sha256": "a7020619cd31ff79473cc5a16940d68d989a008d1084879da1479d63387c8fd6",
+      "display_sha256": "f1a4c8aa6ca49ed35c2be9ae3a4179772075c9f41a5b1fa97d8fd1142567ae0a",
+      "verse_starts_sha256": "81ab27a037f2b857fb49fea18b6cdbb04311fea30c08dc12a4d57ffb0993fa30"
+    },
+    {
+      "code": "JOS",
+      "id": 7,
+      "chapters": 24,
+      "slots": 682,
+      "tokens": 18977,
+      "tokens_sha256": "92fdb4834e80ce05fdb72991af9b27a8166e0561d8f9954411e86a7cc81e1be7",
+      "display_sha256": "0f5aa485cae039aa6549a6de713472228460cb004b91b585e1e418a6685fe8ac",
+      "verse_starts_sha256": "4f9bd47d232cfccc4e6f09183724eb3e06aa379744d8178f864f4b33397a5da7"
+    },
+    {
+      "code": "JDG",
+      "id": 8,
+      "chapters": 21,
+      "slots": 639,
+      "tokens": 19031,
+      "tokens_sha256": "05cc03154c0aad3adfef829fe6c338779fcd2cd4b4dc9824c11861d32d67324b",
+      "display_sha256": "8f68f4a2566934a907a55b08aa8258b10155559bd4679f7b100b93a4f414615c",
+      "verse_starts_sha256": "7edde6a564c266b9f130d37a2af6e5421120a72eb5f733e16ab1b0381f645f89"
+    },
+    {
+      "code": "RUT",
+      "id": 9,
+      "chapters": 4,
+      "slots": 89,
+      "tokens": 2583,
+      "tokens_sha256": "de2f828c549b7894b32bfe2a38380362607abe68f6584e6e300af627c248792e",
+      "display_sha256": "4b3ebb925027aa509102c62a790841d7abca38292dba7f9d61c3836189049948",
+      "verse_starts_sha256": "dfbb81b13bd35562a43bc702de751298cc8109da62d056544f244ea2f5b06b58"
+    },
+    {
+      "code": "1SA",
+      "id": 10,
+      "chapters": 31,
+      "slots": 841,
+      "tokens": 25098,
+      "tokens_sha256": "d91aac61177416517d481f8e78e8fdb335c658849f7b5b4c00b9c11581ae847d",
+      "display_sha256": "f0ecd70191ee3abc02c22ae3ab866b001ccd9a0dd2efc16d8dbcd65bbbf7e80f",
+      "verse_starts_sha256": "969409de4f476684683fc826acf4be484c68e91bd60652d698b7515fca288cf4"
+    },
+    {
+      "code": "2SA",
+      "id": 11,
+      "chapters": 24,
+      "slots": 719,
+      "tokens": 20654,
+      "tokens_sha256": "6235a6cf42df6afb6cd546381d33c8a6c27345f9b93c702188c3934cf6b72788",
+      "display_sha256": "5ec9d2a5216282e728d5f663dd34a300844399243e5a9c4ba38855a56adc9987",
+      "verse_starts_sha256": "b2d48af739e11a517331071c2f28c631d6e57de77acaf0e932790c7d310278f2"
+    },
+    {
+      "code": "1KI",
+      "id": 12,
+      "chapters": 22,
+      "slots": 838,
+      "tokens": 24571,
+      "tokens_sha256": "b21016655370681313c85e0f9b204fc1e55128268800bf9b3251005281ff069b",
+      "display_sha256": "9f0e32e2462d8318fe139300a383a508c8ef4bd46907d326b4e52452dd6d812d",
+      "verse_starts_sha256": "63a93baf2b994f892cb6b463d914812e2f7fd6260f48c2caa73f6608df1e078b"
+    },
+    {
+      "code": "2KI",
+      "id": 13,
+      "chapters": 25,
+      "slots": 744,
+      "tokens": 23574,
+      "tokens_sha256": "7140a16c5574ae76bc4966d00c7e653ddadfe9fe95dda14d8069e8ebae6b8140",
+      "display_sha256": "bd079c65a56f4723c73a4acd412517cd3f0dc0d9fbc57baa90f7970abc4c6b53",
+      "verse_starts_sha256": "c23f0617a2d458270741510641a25dbab40ce716b0a57f530c3902a5de66c6b3"
+    },
+    {
+      "code": "1CH",
+      "id": 14,
+      "chapters": 29,
+      "slots": 971,
+      "tokens": 20441,
+      "tokens_sha256": "03fbe6727c7daf16a9f535afb77f1b7632154b141dfcf7a8f2873f7d62facbfb",
+      "display_sha256": "5637e41ca1a9169006d1aa966fb14760941580630300b35d27a3c8d43dd1a2a1",
+      "verse_starts_sha256": "3dad5266ba4fcd60dc960b85e46fc3ec0e22352817b9ceca73934277651cc7b3"
+    },
+    {
+      "code": "2CH",
+      "id": 15,
+      "chapters": 36,
+      "slots": 858,
+      "tokens": 26103,
+      "tokens_sha256": "bf6602310eaef28a99e578833150d20c8e321d5d175a61e78eebd29622309ed0",
+      "display_sha256": "bf746ed132600374f9194138bcad52253cc0136d29da3e886e5887eb30c87b59",
+      "verse_starts_sha256": "1642f4cb36e071ee1da6a1cb2c13973243f0636c0eadb5f2d0930fef1267c39c"
+    },
+    {
+      "code": "EZR",
+      "id": 16,
+      "chapters": 10,
+      "slots": 290,
+      "tokens": 7453,
+      "tokens_sha256": "501c31ad9cd9d467ad48aa1c2892f48517e4afbc9071edb7da2000081176b475",
+      "display_sha256": "6dc61dd3efd2389d3847cdef5b3c674f4e04357869f957780be07ea7eb7fa384",
+      "verse_starts_sha256": "862e2b18fd0ccf12dfd8082d2638eec5d237e58ba1c7fa194d54ed67fce9c566"
+    },
+    {
+      "code": "NEH",
+      "id": 17,
+      "chapters": 13,
+      "slots": 419,
+      "tokens": 10500,
+      "tokens_sha256": "b18684f6246b9c66b53d1650766608bf678e4a895543af27f1f73018f61a5d70",
+      "display_sha256": "be665b96cbd04ec2f9f43a4ef2b0002313eda3954c9b03c914de126a8103aaed",
+      "verse_starts_sha256": "4a02a0666148525408f750b16539ee9b46a500d64f9aa80c32b3bcc0028b2be7"
+    },
+    {
+      "code": "EST",
+      "id": 18,
+      "chapters": 10,
+      "slots": 177,
+      "tokens": 5633,
+      "tokens_sha256": "e0bfbdfc8cfe79c7183763a2596ce11af330c34fbde4310b3d29e154392bf77b",
+      "display_sha256": "e0bfbdfc8cfe79c7183763a2596ce11af330c34fbde4310b3d29e154392bf77b",
+      "verse_starts_sha256": "ae6140c268b81f9026ad18cfc178a749ee9f3b31ea0dc4371d0972d2c2d2dc0d"
+    },
+    {
+      "code": "JOB",
+      "id": 19,
+      "chapters": 42,
+      "slots": 1112,
+      "tokens": 18099,
+      "tokens_sha256": "e74bdaedacaa15d2c00627e4061e7a5350a876d558824a79d5815181dba4c5ad",
+      "display_sha256": "76712542e2ef07b3201602493a32a60527c8d53ba5bbaac59d7366ffb45b32e2",
+      "verse_starts_sha256": "a98f1f3e38aece4773a038bf793297dfcafe78cf188b8f5b58ffa3c7ee1a41f3"
+    },
+    {
+      "code": "PSA",
+      "id": 20,
+      "chapters": 150,
+      "slots": 2611,
+      "tokens": 43729,
+      "tokens_sha256": "d55f7ba62803ce327dc033e2a6c177642bd067af5fe8247dfba158f5df739f66",
+      "display_sha256": "84b8f308c448e46d8e8379d85eff33cd66c2f41dd97e9eda315b4710b6f3c4a6",
+      "verse_starts_sha256": "73e3d738736bbe455fda7919d179a96259c0eef138f28cf101987b2345ff5314"
+    },
+    {
+      "code": "PRO",
+      "id": 21,
+      "chapters": 31,
+      "slots": 946,
+      "tokens": 15038,
+      "tokens_sha256": "17d65635e9f1130e118b9f8b1ca0b6c2bbc6fbdab53d8ea425d650cdd54c2c06",
+      "display_sha256": "17d65635e9f1130e118b9f8b1ca0b6c2bbc6fbdab53d8ea425d650cdd54c2c06",
+      "verse_starts_sha256": "6ff75219e59c8b001f5fb144ace89f6a01e3b751427c3c0a72430d39fc762e1a"
+    },
+    {
+      "code": "ECC",
+      "id": 22,
+      "chapters": 12,
+      "slots": 234,
+      "tokens": 5579,
+      "tokens_sha256": "7fe6405eb061f8b3f85f0e6bae8d6d3959da72ddc6ee7b339cfc8bb1399de8f8",
+      "display_sha256": "7fe6405eb061f8b3f85f0e6bae8d6d3959da72ddc6ee7b339cfc8bb1399de8f8",
+      "verse_starts_sha256": "a9217cf48f6124e73e5995c18974ad1301833a4df20cd30626c69030fd4f46f8"
+    },
+    {
+      "code": "SNG",
+      "id": 23,
+      "chapters": 8,
+      "slots": 125,
+      "tokens": 2661,
+      "tokens_sha256": "98181e9717e21c64da315754dbb79fc9bf775398d1c1a0b2704701344d5a4d82",
+      "display_sha256": "405d7f6acde05024ee9f87287776b3e55115f7e964f049f9eb74e52c5652192e",
+      "verse_starts_sha256": "4806f2bd493815fb59fd920f94c611d0d46e74bbd1a3d2c280890b7d0ce506a5"
+    },
+    {
+      "code": "ISA",
+      "id": 24,
+      "chapters": 66,
+      "slots": 1358,
+      "tokens": 37049,
+      "tokens_sha256": "65b3a47babdbbe14d1d3623c90acf48476974f25e3d086bf0842bd52099c0e65",
+      "display_sha256": "31dbb68583d44b8f9a11be01e45e87346ca8e1691e08153213114bb407fdac0b",
+      "verse_starts_sha256": "2a151c1fd97752ec2a65808878f447f849049b6800b1e8a212be942d1912c0ed"
+    },
+    {
+      "code": "JER",
+      "id": 25,
+      "chapters": 52,
+      "slots": 1416,
+      "tokens": 42695,
+      "tokens_sha256": "46222bc6088fb0e03174a5a0617ef090f250119758c03ed4556acd06e18e2b1b",
+      "display_sha256": "133d3ec2a049296862b3334c9052e473f7aa21621d094e40dced6b8a97e9341d",
+      "verse_starts_sha256": "f9884ea5f80f9939dc7f6194bcd4b4df01ff1a9a93de516478671fc7cd268392"
+    },
+    {
+      "code": "LAM",
+      "id": 26,
+      "chapters": 5,
+      "slots": 159,
+      "tokens": 3411,
+      "tokens_sha256": "cb9eb01e2118c4cfa63e97268a1be1acb084752d89d07b1345c808680b590cdb",
+      "display_sha256": "cb9eb01e2118c4cfa63e97268a1be1acb084752d89d07b1345c808680b590cdb",
+      "verse_starts_sha256": "017a310463104e5f35ae07a10521f6f3657051e6fa98a2087e94da160ecd58a8"
+    },
+    {
+      "code": "EZK",
+      "id": 27,
+      "chapters": 48,
+      "slots": 1321,
+      "tokens": 39412,
+      "tokens_sha256": "ef2841c5588c383c18ce5a877835af58aa25d4e60ae3480dfb52b3ca137f8350",
+      "display_sha256": "423fb08fcbc56dfadf4af248dc41713870cd69c97f29880be6bab703f6feb171",
+      "verse_starts_sha256": "0e1caf633037ccf6c6379da68b732dfee70e6c64e28a57079833c42bfc0d8893"
+    },
+    {
+      "code": "DAN",
+      "id": 28,
+      "chapters": 12,
+      "slots": 369,
+      "tokens": 11617,
+      "tokens_sha256": "b6c517d02cb5bbb5d1d3b0b81cd8f73f77336940d4750a171d716942089f1597",
+      "display_sha256": "e64a42bb6056d150323a298770bf5302672fb04bda6a1e0d8ee6455c3d565755",
+      "verse_starts_sha256": "7682a15f49cf1dfc5350789f4a589b380f256d27aed69fb3a6603e16a8c8e359"
+    },
+    {
+      "code": "HOS",
+      "id": 29,
+      "chapters": 14,
+      "slots": 211,
+      "tokens": 5185,
+      "tokens_sha256": "cdf39e248620fc52bc2ad75c8327630512ed33e92c0b108f715246fd4a5d7c8d",
+      "display_sha256": "cc3e83e54bb51cc51fd0b8573b27f3fda3221ac0bbaffcb8440ef837358ffee9",
+      "verse_starts_sha256": "986d565aad04064f423bbcc01325e9a0c263c1f4c261c996649c150b5b8dd596"
+    },
+    {
+      "code": "JOL",
+      "id": 30,
+      "chapters": 3,
+      "slots": 76,
+      "tokens": 2033,
+      "tokens_sha256": "dbeee9c0291750edfe81c1d48312ab23bc7230cf45ca58edb13cdee0326e0e5d",
+      "display_sha256": "dbeee9c0291750edfe81c1d48312ab23bc7230cf45ca58edb13cdee0326e0e5d",
+      "verse_starts_sha256": "f1e95df4b4185c9c1608c2b44b06df69b25a23d463c768a60b9b052797a87bad"
+    },
+    {
+      "code": "AMO",
+      "id": 31,
+      "chapters": 9,
+      "slots": 155,
+      "tokens": 4226,
+      "tokens_sha256": "dcb54411654e642692b6ec34a1a5135d03b4b4a900548bec3291c45f224af527",
+      "display_sha256": "afa6374d5cb139bea5248a5112719809d5ded4ee746eac9edb562bd12411ef03",
+      "verse_starts_sha256": "99fc1c4bb632736ad51fec02c4e247f84928d67cffeaa274001c9ac8157b3ded"
+    },
+    {
+      "code": "OBA",
+      "id": 32,
+      "chapters": 1,
+      "slots": 22,
+      "tokens": 669,
+      "tokens_sha256": "73144e0104a67f64678521bae2b844967390b68b6e31cd7864e2596024dc9f0a",
+      "display_sha256": "73144e0104a67f64678521bae2b844967390b68b6e31cd7864e2596024dc9f0a",
+      "verse_starts_sha256": "372bee8e1a4050aa1ab60eca7c6ffd6785d6f04a63e95a537c82c1bad71e25c2"
+    },
+    {
+      "code": "JON",
+      "id": 33,
+      "chapters": 4,
+      "slots": 52,
+      "tokens": 1320,
+      "tokens_sha256": "a913f1d7edb5e372dd487003c7b39dfd165a07b06e138d45251b4fd6bace5489",
+      "display_sha256": "a913f1d7edb5e372dd487003c7b39dfd165a07b06e138d45251b4fd6bace5489",
+      "verse_starts_sha256": "ea33ec1e637a556f9715f711cfc97822622c2136ddb28c4dfc03e70316306d71"
+    },
+    {
+      "code": "MIC",
+      "id": 34,
+      "chapters": 7,
+      "slots": 112,
+      "tokens": 3155,
+      "tokens_sha256": "205f9afb0e7f8e279ad68b395db732721bafe473263db6d2377b0ceab90006ec",
+      "display_sha256": "84fcd2a959354d8b5502b4b52d363b6a084aafaa6a91feb3b238a8f9e5238133",
+      "verse_starts_sha256": "3a9f2b6998bcd008d1401720f13d6848dbf026945ab7335ac3a4c531225e342b"
+    },
+    {
+      "code": "NAM",
+      "id": 35,
+      "chapters": 3,
+      "slots": 50,
+      "tokens": 1284,
+      "tokens_sha256": "7a4d47998591c9edeaabb2ff36f31f774c98d215bbf0eba9483695ab6bbdbd54",
+      "display_sha256": "7a4d47998591c9edeaabb2ff36f31f774c98d215bbf0eba9483695ab6bbdbd54",
+      "verse_starts_sha256": "8e284d44047f95c182d0c63651cef1100a635f01c24c57c23bea501430fdf6de"
+    },
+    {
+      "code": "HAB",
+      "id": 36,
+      "chapters": 3,
+      "slots": 59,
+      "tokens": 1475,
+      "tokens_sha256": "bc204bba6e7f92bf4a96eba9b0d487b26a8cab3c42c1e93b901eeff32b96e282",
+      "display_sha256": "bc204bba6e7f92bf4a96eba9b0d487b26a8cab3c42c1e93b901eeff32b96e282",
+      "verse_starts_sha256": "5df1fc746ed5c1a1d9b38b7d82b336e0d3b6451b0ad763d0c7c90952df5c4285"
+    },
+    {
+      "code": "ZEP",
+      "id": 37,
+      "chapters": 3,
+      "slots": 56,
+      "tokens": 1616,
+      "tokens_sha256": "91a9653600abbb24b5ea0322cb52309980c55829a86305ed3329fd08744c70fb",
+      "display_sha256": "91a9653600abbb24b5ea0322cb52309980c55829a86305ed3329fd08744c70fb",
+      "verse_starts_sha256": "f6c3f779c009b22a1ba2a7e4c8c33f6b1a01e78a917491ee7bbe8bda23b56325"
+    },
+    {
+      "code": "HAG",
+      "id": 38,
+      "chapters": 2,
+      "slots": 40,
+      "tokens": 1130,
+      "tokens_sha256": "8fd206185c0bd24de06d56cf91fdeb66c03517caa26ea6b1e41356b1f6efa01f",
+      "display_sha256": "8fd206185c0bd24de06d56cf91fdeb66c03517caa26ea6b1e41356b1f6efa01f",
+      "verse_starts_sha256": "16b6622fdb42a27b7a2b85b14c362d1e32c5c823b6179721b017bf7627012940"
+    },
+    {
+      "code": "ZEC",
+      "id": 39,
+      "chapters": 14,
+      "slots": 225,
+      "tokens": 6444,
+      "tokens_sha256": "0a97163b83f188a2db6c87b2ad0de7dd5060f03bc18a75a3556f9f0d829ac680",
+      "display_sha256": "d9bbad4567bda4bc25e99765c6a4f04000c87d41e4b0d2054f7688b3a22e2ab4",
+      "verse_starts_sha256": "1da4d2b0d0624f9e2734b9a30854b435a9e7f33d5d200c88d034b1fb035754cc"
+    },
+    {
+      "code": "MAL",
+      "id": 40,
+      "chapters": 4,
+      "slots": 59,
+      "tokens": 1781,
+      "tokens_sha256": "f4084f64d2c0bf2bc1101640040823bc2835cf6bab7308cb8333a8201fe1dd6c",
+      "display_sha256": "f4084f64d2c0bf2bc1101640040823bc2835cf6bab7308cb8333a8201fe1dd6c",
+      "verse_starts_sha256": "131637d66dbe16620bf637bf42b414456cfbe3959b83e0ee09b1cfa3a24732ef"
+    },
+    {
+      "code": "MAT",
+      "id": 70,
+      "chapters": 28,
+      "slots": 1099,
+      "tokens": 23685,
+      "tokens_sha256": "60df6b5f9226cb2079fbccab3f6cb0c7acf55172c473c2afdd0eb1f0c295b6a8",
+      "display_sha256": "b21aff78e0a34417adbe63386dc5e4a5a5b6e64b74a21b68e4737becf8424708",
+      "verse_starts_sha256": "362412135bcae8ee435198f08f802fa04b1f75c3ffbdaa14edd40082cbd5b153"
+    },
+    {
+      "code": "MRK",
+      "id": 71,
+      "chapters": 16,
+      "slots": 694,
+      "tokens": 15166,
+      "tokens_sha256": "bf6605154b13ea286e42fdb06524dd7f5f0ff8c5696e9292885df94d420f7af4",
+      "display_sha256": "bf6605154b13ea286e42fdb06524dd7f5f0ff8c5696e9292885df94d420f7af4",
+      "verse_starts_sha256": "afa66c1229990663e56eca54252629747df59d76c58439a44d745b28e5c0fece"
+    },
+    {
+      "code": "LUK",
+      "id": 72,
+      "chapters": 24,
+      "slots": 1175,
+      "tokens": 25939,
+      "tokens_sha256": "1f3f9d886083bf54ddffcd894c30d0563f45f43ddea9db1c2bdf9c2327e1142b",
+      "display_sha256": "1f3f9d886083bf54ddffcd894c30d0563f45f43ddea9db1c2bdf9c2327e1142b",
+      "verse_starts_sha256": "228830cc5a07e31ed15b7af4d87c8e9c0c3487c12229da3e06079c04887bfec9"
+    },
+    {
+      "code": "JHN",
+      "id": 73,
+      "chapters": 21,
+      "slots": 900,
+      "tokens": 19094,
+      "tokens_sha256": "9ae524ac2dd2fc816ab6d59fd51fdf38d2ebf27b006e934abed085ce9b444c01",
+      "display_sha256": "9ae524ac2dd2fc816ab6d59fd51fdf38d2ebf27b006e934abed085ce9b444c01",
+      "verse_starts_sha256": "8f9a33a811d07980deb6bd17b44b267bae9beb644149c5d01c714a5eec8655e4"
+    },
+    {
+      "code": "ACT",
+      "id": 74,
+      "chapters": 28,
+      "slots": 1035,
+      "tokens": 24249,
+      "tokens_sha256": "7ddd56086fcb53028249c8558d658d07d78dc01f4d7993265f52586b4b147cc1",
+      "display_sha256": "a610fc637fbca273a64200a98c4b1c79a857adeefb8efcdb419299ae885f6c3e",
+      "verse_starts_sha256": "5028d93aabde2f123df3d52bfac03253ab33df766e297b78d61996100d86ed7d"
+    },
+    {
+      "code": "ROM",
+      "id": 75,
+      "chapters": 16,
+      "slots": 449,
+      "tokens": 9423,
+      "tokens_sha256": "07daa49b40c49c6774ad7b08e8ca47e3f53ab1723fb3746672933a73e0404d3e",
+      "display_sha256": "6d7b11f4b4671e8b3e1e451bc3dd9a0fc270d7de11778f7892adf3c1dc019224",
+      "verse_starts_sha256": "b8650d7bfb5cc4275014d2ed5c3ea4790979bba389eb7d175a9b66a1c73818b7"
+    },
+    {
+      "code": "1CO",
+      "id": 76,
+      "chapters": 16,
+      "slots": 453,
+      "tokens": 9462,
+      "tokens_sha256": "da26d7decac398c27edb0ffd62df00e5ff48c6c028da48255c6a6619980f6b24",
+      "display_sha256": "da26d7decac398c27edb0ffd62df00e5ff48c6c028da48255c6a6619980f6b24",
+      "verse_starts_sha256": "7059bf3bdb438c458829e528bb3328e619dff8b968b38437c1dd5ffc7e860953"
+    },
+    {
+      "code": "2CO",
+      "id": 77,
+      "chapters": 13,
+      "slots": 270,
+      "tokens": 6068,
+      "tokens_sha256": "95e906590f18af80e42bc0353bb10d77212516d86690c872d401c09c52a9a82c",
+      "display_sha256": "21101f86273451f2e2024bcb4d5e6d5d8552f409aad0fcc08a93af3110d8a8ed",
+      "verse_starts_sha256": "17d91be24309eca4f9b4254db9a54a7d75124d1db887a8e379b28b79b0cda7a3"
+    },
+    {
+      "code": "GAL",
+      "id": 78,
+      "chapters": 6,
+      "slots": 155,
+      "tokens": 3084,
+      "tokens_sha256": "50f3883fd34cc8f9dfdb2761401713e2345a02850cf4de7306f35fa1fbcbd38d",
+      "display_sha256": "50f3883fd34cc8f9dfdb2761401713e2345a02850cf4de7306f35fa1fbcbd38d",
+      "verse_starts_sha256": "5f63f1f01a41db8db62746b2953d28ff579e715b74ad48442c5b7137cb71c22b"
+    },
+    {
+      "code": "EPH",
+      "id": 79,
+      "chapters": 6,
+      "slots": 161,
+      "tokens": 3024,
+      "tokens_sha256": "0b3c832624e7c793851db6c241a65957e228244e36cadce85fc214f3489aab02",
+      "display_sha256": "9be7f4ed9f436d06ad38ccb15a251e74bb54f241b1efd1bea50e4d13068935a8",
+      "verse_starts_sha256": "0dbd5508750fb4613f9bf02a67dfa8919b2c210408cc612b441a105447cec5d4"
+    },
+    {
+      "code": "PHP",
+      "id": 80,
+      "chapters": 4,
+      "slots": 108,
+      "tokens": 2183,
+      "tokens_sha256": "7c87afa253f2419574dff9ee85ac8d408b92492099f6477de3689b5c622b2376",
+      "display_sha256": "7c87afa253f2419574dff9ee85ac8d408b92492099f6477de3689b5c622b2376",
+      "verse_starts_sha256": "f9f4f32737773a851bcfdb61e636e3b497b01f19a6d913bfc3e90aecd9954c97"
+    },
+    {
+      "code": "COL",
+      "id": 81,
+      "chapters": 4,
+      "slots": 99,
+      "tokens": 1981,
+      "tokens_sha256": "587524a3dba303ab57e647d021733134aa5338dabd8586df2e2bc91d09624a00",
+      "display_sha256": "587524a3dba303ab57e647d021733134aa5338dabd8586df2e2bc91d09624a00",
+      "verse_starts_sha256": "c8e175fbbe48de4f02c2b16e3740024ee2b1a5a0d8cfe3d0007919c544caaf60"
+    },
+    {
+      "code": "1TH",
+      "id": 82,
+      "chapters": 5,
+      "slots": 94,
+      "tokens": 1838,
+      "tokens_sha256": "788bb21dc69d0a961002e2c4b3f6ce168a29bf3469021db64b883501500cfabb",
+      "display_sha256": "939bd141a79bf84319aadaee683cc68ca2820986a8993727f1c44b4d5cbd4c7b",
+      "verse_starts_sha256": "1ffe084a7e5f5fbca411d328fdd5f9d517c21e836e005f0d04174fe53d70589a"
+    },
+    {
+      "code": "2TH",
+      "id": 83,
+      "chapters": 3,
+      "slots": 50,
+      "tokens": 1022,
+      "tokens_sha256": "44e7246e5005e4471a8107b9b8405795efe11716c7830c706fda6b72f8fb2da4",
+      "display_sha256": "44e7246e5005e4471a8107b9b8405795efe11716c7830c706fda6b72f8fb2da4",
+      "verse_starts_sha256": "742ebaba27ca7de93d07d38ca5aa9bce053517f649cacfb88da5f7c256f60bbe"
+    },
+    {
+      "code": "1TI",
+      "id": 84,
+      "chapters": 6,
+      "slots": 119,
+      "tokens": 2247,
+      "tokens_sha256": "a0079b32f361259f003377e95607f4534b78e279b0a4dd03c7ed2071a9dfee9e",
+      "display_sha256": "a0079b32f361259f003377e95607f4534b78e279b0a4dd03c7ed2071a9dfee9e",
+      "verse_starts_sha256": "8923eec5790da8a5a1a21d626cf75d48891f36ec4141d51bae5a8ee4c173d65d"
+    },
+    {
+      "code": "2TI",
+      "id": 85,
+      "chapters": 4,
+      "slots": 87,
+      "tokens": 1669,
+      "tokens_sha256": "7af90c35ca5e6162c1a699c6acf87af24cefa65ad40d7647b7d697a87f79a0f3",
+      "display_sha256": "7af90c35ca5e6162c1a699c6acf87af24cefa65ad40d7647b7d697a87f79a0f3",
+      "verse_starts_sha256": "6065d81bbc23cc56fe1a0c4b0ec76ad099f05696ed7ec82713784ff16c25ac9e"
+    },
+    {
+      "code": "TIT",
+      "id": 86,
+      "chapters": 3,
+      "slots": 49,
+      "tokens": 896,
+      "tokens_sha256": "c6e6aa7671307207800d2ab9983793272d0c99193744b4dbcd9cf175a5089e06",
+      "display_sha256": "c6e6aa7671307207800d2ab9983793272d0c99193744b4dbcd9cf175a5089e06",
+      "verse_starts_sha256": "1812481ab318849d96888e4ce5d5af8dc424508fbff231bdc5e28647397fc062"
+    },
+    {
+      "code": "PHM",
+      "id": 87,
+      "chapters": 1,
+      "slots": 26,
+      "tokens": 430,
+      "tokens_sha256": "94999673b75237fc613d77ee9041d38e8901e67554433aa1319c34355970bb83",
+      "display_sha256": "94999673b75237fc613d77ee9041d38e8901e67554433aa1319c34355970bb83",
+      "verse_starts_sha256": "c901dd0a4f3d012f631900ee61c9d0e98fdbbff0298b6ef3ba2edf750b573fb9"
+    },
+    {
+      "code": "HEB",
+      "id": 88,
+      "chapters": 13,
+      "slots": 316,
+      "tokens": 6899,
+      "tokens_sha256": "09169ed8ae8f9495bf25a82551803cfa81b9c51811dae75fbecfbf5183f8f983",
+      "display_sha256": "09169ed8ae8f9495bf25a82551803cfa81b9c51811dae75fbecfbf5183f8f983",
+      "verse_starts_sha256": "3b9cb799854db478e39fa9239f199f46b5f5180e73d7524f28c72de199f958d6"
+    },
+    {
+      "code": "JAS",
+      "id": 89,
+      "chapters": 5,
+      "slots": 113,
+      "tokens": 2304,
+      "tokens_sha256": "f37e4a5c2bff29ed80c3c8b83b9e142871600099d0df70c28d3f1e900a0df355",
+      "display_sha256": "f37e4a5c2bff29ed80c3c8b83b9e142871600099d0df70c28d3f1e900a0df355",
+      "verse_starts_sha256": "465beb4e69df82f7d9c8fcaf90d8982ee0015777ec63a97c925efe10b06e75aa"
+    },
+    {
+      "code": "1PE",
+      "id": 90,
+      "chapters": 5,
+      "slots": 110,
+      "tokens": 2476,
+      "tokens_sha256": "3e0cbf065749af85e61e31f20ad24ba52890b68b584975d81e64045ed488a391",
+      "display_sha256": "3e0cbf065749af85e61e31f20ad24ba52890b68b584975d81e64045ed488a391",
+      "verse_starts_sha256": "c17344c01703ea078721bbd50e5455ccdde9502b46b1d1841d7b9aac62f6b6f2"
+    },
+    {
+      "code": "2PE",
+      "id": 91,
+      "chapters": 3,
+      "slots": 64,
+      "tokens": 1554,
+      "tokens_sha256": "29200b40b0a5aad593096de07ab7dcec0447f923485202d5847ba57e88eb562c",
+      "display_sha256": "1ae25f7f8bfc942a0f83093d7630deb3e140bcc2f6e664b7ebfa92b249125581",
+      "verse_starts_sha256": "e1c43b1ada902d0d75d6f398b12271d5b5c2e27fd09fca06c434fef2590720da"
+    },
+    {
+      "code": "1JN",
+      "id": 92,
+      "chapters": 5,
+      "slots": 110,
+      "tokens": 2517,
+      "tokens_sha256": "dfac5f1a127a2914bd67d4743f780c5762f882372e968b3637832f2b351be59f",
+      "display_sha256": "dfac5f1a127a2914bd67d4743f780c5762f882372e968b3637832f2b351be59f",
+      "verse_starts_sha256": "aaaab73ddd350fb475fafc47a80d01c0aaed14ad59e14b653c69af209e1a4eaf"
+    },
+    {
+      "code": "2JN",
+      "id": 93,
+      "chapters": 1,
+      "slots": 14,
+      "tokens": 298,
+      "tokens_sha256": "2af5600784c6761d03b82b8b1a1f181a84b4232495c6579c22ed24d5515e9a22",
+      "display_sha256": "2af5600784c6761d03b82b8b1a1f181a84b4232495c6579c22ed24d5515e9a22",
+      "verse_starts_sha256": "7be442ace697a3db61d25988b586d1cf11b410343964b433e0687fd4c6a2517d"
+    },
+    {
+      "code": "3JN",
+      "id": 94,
+      "chapters": 1,
+      "slots": 15,
+      "tokens": 294,
+      "tokens_sha256": "8344ed750bc6364ee02721be0a7b6ff9686b28db68830da0e9132c79ef94c1ae",
+      "display_sha256": "8344ed750bc6364ee02721be0a7b6ff9686b28db68830da0e9132c79ef94c1ae",
+      "verse_starts_sha256": "717aa7d21fcf191e2d85e93d306a85b9d0c8c702c7386894f4adcd61f2cd98be"
+    },
+    {
+      "code": "JUD",
+      "id": 95,
+      "chapters": 1,
+      "slots": 26,
+      "tokens": 608,
+      "tokens_sha256": "e329fb8cb110cda1d9f737da62005c1fb1a63ac771a0d90029a92e345efa7337",
+      "display_sha256": "e329fb8cb110cda1d9f737da62005c1fb1a63ac771a0d90029a92e345efa7337",
+      "verse_starts_sha256": "c901dd0a4f3d012f631900ee61c9d0e98fdbbff0298b6ef3ba2edf750b573fb9"
+    },
+    {
+      "code": "REV",
+      "id": 96,
+      "chapters": 22,
+      "slots": 426,
+      "tokens": 11995,
+      "tokens_sha256": "f5c00ab6faf5d269b024656f5546cf22546536d5dd57c2b383f9ae53c3e73e81",
+      "display_sha256": "f5c00ab6faf5d269b024656f5546cf22546536d5dd57c2b383f9ae53c3e73e81",
+      "verse_starts_sha256": "9dade8d18bd4080b9cdd82c7076a2e56880da74d1e91a67d823370f2437fb50f"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { createMemo, For, Index, type JSX, Show } from "solid-js";
 import type { Interval, Tagging } from "@bible-tags/scripture";
-import { DIVINE_NAME, ITALIC, WORDS_OF_JESUS, type BookText, type Text } from "./text.ts";
+import { DIVINE_NAME, ITALIC, JOINED, WORDS_OF_JESUS, type BookText, type Text } from "./text.ts";
 import type { Tag, TagStore } from "./store.ts";
 
 export interface Stroke {
@@ -26,7 +26,7 @@ interface Segment {
 
 export function Verse(props: VerseProps) {
   const index = props.text.index;
-  const [s, e] = index.slotInterval(props.slot);
+  const ords = index.slotOrds(props.slot);
   const { verse } = index.locateSlot(props.slot);
   const bt = props.bt;
 
@@ -35,7 +35,7 @@ export function Verse(props: VerseProps) {
     const out: Segment[] = [];
     let key = "";
     const tagById = props.store.tagById();
-    for (let ord = s; ord < e; ord++) {
+    for (const ord of ords) {
       const tags = props.taggings()
         .filter((t) => t.start <= ord && ord < t.end)
         .map((t) => tagById.get(t.tag))
@@ -50,9 +50,11 @@ export function Verse(props: VerseProps) {
   });
 
   const breaks = bt.breaks.get(props.slot) ?? [];
+  const local = (ord: number) => index.pos(ord) - bt.firstPos;
+  /** A space follows the word unless it is the first part of a hyphenated word. */
+  const spaced = (ord: number) => !(bt.flags[local(ord)]! & JOINED);
   const word = (ord: number) => {
-    const local = ord - bt.firstOrd;
-    const f = bt.flags[local]!;
+    const f = bt.flags[local(ord)]!;
     const notes = bt.notes.get(ord);
     return (
       <>
@@ -68,7 +70,7 @@ export function Verse(props: VerseProps) {
             target: inTarget(ord),
           }}
         >
-          {bt.words[local]}
+          {bt.words[local(ord)]}
         </span>
         <Show when={notes}>
           <sup class="note" title={notes!.map((n) => n.text).join("\n")}>
@@ -96,7 +98,7 @@ export function Verse(props: VerseProps) {
       <Show when={breaks.includes("q1")}>
         <span class="line-break" />
       </Show>
-      <Show when={e > s}>
+      <Show when={ords.length > 0}>
         <span class="verse" classList={{ title: verse === 0 }} data-slot={props.slot}>
           <Show when={verse > 0}>
             <sup class="vn">{verse}</sup>
@@ -111,13 +113,13 @@ export function Verse(props: VerseProps) {
                   <Index each={seg().ords}>
                     {(ord, j) => (
                       <>
-                        {j > 0 ? " " : ""}
+                        {j > 0 && spaced(seg().ords[j - 1]!) ? " " : ""}
                         {word(ord())}
                       </>
                     )}
                   </Index>
                 </span>
-                <Show when={i < segments().length - 1}>
+                <Show when={i < segments().length - 1 && spaced(seg().ords[seg().ords.length - 1]!)}>
                   <span class="seg" style={segStyle(shared(seg().tags, segments()[i + 1]!.tags))}>
                     {" "}
                   </span>

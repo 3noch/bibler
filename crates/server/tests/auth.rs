@@ -21,7 +21,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tower::ServiceExt;
 
-const T1: u32 = 2 << 24;
+const T1: u32 = 2 << 24 | 1 << 16 | 1 << 8; // 1:1, the first word of the fixture text (100 words)
 
 /// code -> (PKCE challenge, `redirect_uri`, `sub`)
 type Codes = Arc<Mutex<HashMap<String, (String, String, String)>>>;
