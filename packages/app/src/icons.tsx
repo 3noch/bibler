@@ -46,7 +46,8 @@ export const SearchIcon = () => (
     <path d="m20 20-3.5-3.5" />
   </Icon>
 );
-export const UserIcon = () => <Icon><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></Icon>;
+/** An account: a person in a circle (unlike GroupIcon's two bare figures). */
+export const UserIcon = () => <Icon><circle cx="12" cy="12" r="10" /><circle cx="12" cy="10" r="3" /><path d="M6.2 19.2a6.5 6.5 0 0 1 11.6 0" /></Icon>;
 /** Google's "G" (multi-colour, as its sign-in branding asks). */
 export const GoogleIcon = () => (
   <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
