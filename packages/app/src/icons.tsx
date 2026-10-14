@@ -12,6 +12,7 @@ const Icon = (props: { children: JSX.Element; title?: string }) => (
 export const UndoIcon = () => <Icon><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></Icon>;
 export const RedoIcon = () => <Icon><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></Icon>;
 export const EraserIcon = () => <Icon><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21" /><path d="M22 21H7" /><path d="m5 11 9 9" /></Icon>;
+export const MenuIcon = () => <Icon><path d="M4 6h16M4 12h16M4 18h16" /></Icon>;
 export const PlusIcon = () => <Icon><path d="M12 5v14M5 12h14" /></Icon>;
 export const CloseIcon = () => <Icon><path d="M18 6 6 18M6 6l12 12" /></Icon>;
 export const PencilIcon = () => <Icon><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></Icon>;
@@ -46,8 +47,6 @@ export const SearchIcon = () => (
     <path d="m20 20-3.5-3.5" />
   </Icon>
 );
-/** An account: a person in a circle (unlike GroupIcon's two bare figures). */
-export const UserIcon = () => <Icon><circle cx="12" cy="12" r="10" /><circle cx="12" cy="10" r="3" /><path d="M6.2 19.2a6.5 6.5 0 0 1 11.6 0" /></Icon>;
 /** Google's "G" (multi-colour, as its sign-in branding asks). */
 export const GoogleIcon = () => (
   <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">

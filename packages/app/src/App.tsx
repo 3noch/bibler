@@ -6,9 +6,9 @@ import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
-import { AccountButton, AccountCard } from "./Account.tsx";
+import { Menu } from "./Menu.tsx";
 import { SpaceButton, SpacesCard } from "./Groups.tsx";
-import { BrushIcon, CloseIcon, EraserIcon, HelpIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
+import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, TagsIcon } from "./icons.tsx";
 
 export function App() {
   const [text] = createResource(loadText);
@@ -32,7 +32,7 @@ function Main(props: { text: Text; store: TagStore }) {
   const [near, setNear] = createSignal<{ tags: string[]; pos: number } | null>(null);
   const [sheetTag, setSheetTag] = createSignal<string | null>(null);
   const [help, setHelp] = createSignal(false);
-  const [accountOpen, setAccountOpen] = createSignal(false);
+  const [menuOpen, setMenuOpen] = createSignal(false);
   const [spacesOpen, setSpacesOpen] = createSignal(false);
   const [chips, setChips] = createSignal<Chip[]>([]);
   const [tagsOpen, setTagsOpen] = createSignal(false);
@@ -136,10 +136,10 @@ function Main(props: { text: Text; store: TagStore }) {
       const tag = store.palette()[Number(key) - 1];
       if (tag) chooseTag(tag);
     } else if (key === "escape") {
-      if (near() || help() || accountOpen() || spacesOpen() || sheetTag()) {
+      if (near() || help() || menuOpen() || spacesOpen() || sheetTag()) {
         setNear(null);
         setHelp(false);
-        setAccountOpen(false);
+        setMenuOpen(false);
         setSpacesOpen(false);
         setSheetTag(null);
       } else if (tagsOpen()) setTagsOpen(false); else if (chips().length) setChips([]);
@@ -163,6 +163,9 @@ function Main(props: { text: Text; store: TagStore }) {
   return (
     <>
       <header class="topbar">
+        <button class="icon" classList={{ on: menuOpen() }} onClick={() => setMenuOpen((o) => !o)} title="Menu" aria-label="Menu" aria-expanded={menuOpen()}>
+          <MenuIcon />
+        </button>
         <Omnibox
           text={props.text}
           store={store}
@@ -177,57 +180,39 @@ function Main(props: { text: Text; store: TagStore }) {
           onGo={goRef}
         />
         <div class="actions">
-          <button class="icon" disabled={!store.canUndo()} onClick={() => store.undo()} title="Undo (⌘Z)" aria-label="Undo">
-            <UndoIcon />
-          </button>
-          <button class="icon" disabled={!store.canRedo()} onClick={() => store.redo()} title="Redo (⇧⌘Z)" aria-label="Redo">
-            <RedoIcon />
-          </button>
           <Show when={store.mode === "local"} fallback={<SyncDot store={store} />}>
             <button class="local-badge" onClick={() => setHelp((h) => !h)} title="Your tags are only stored in this browser. Click for details.">
-              <span aria-hidden="true">⚠</span> Local only
+              <span aria-hidden="true">⚠</span> <span class="local-text">Local only</span>
             </button>
           </Show>
-          <Show when={store.mode === "server"}>
-            <SpaceButton
-              store={store}
-              open={spacesOpen()}
-              onToggle={() => {
-                setHelp(false);
-                setAccountOpen(false);
-                setSpacesOpen((o) => !o);
-              }}
-            />
-          </Show>
-          <AccountButton
+          <SpaceButton
             store={store}
-            open={accountOpen()}
+            open={spacesOpen()}
             onToggle={() => {
               setHelp(false);
-              setSpacesOpen(false);
-              setAccountOpen((o) => !o);
+              setSpacesOpen((o) => !o);
             }}
           />
-          <button
-            class="icon"
-            classList={{ on: help() }}
-            onClick={() => {
-              setAccountOpen(false);
-              setSpacesOpen(false);
-              setHelp((h) => !h);
-            }}
-            title="Help"
-            aria-label="Help"
-          >
-            <HelpIcon />
-          </button>
         </div>
       </header>
+      <Show when={menuOpen()}>
+        <Menu
+          store={store}
+          onSpaces={() => {
+            setMenuOpen(false);
+            setHelp(false);
+            setSpacesOpen(true);
+          }}
+          onHelp={() => {
+            setMenuOpen(false);
+            setSpacesOpen(false);
+            setHelp(true);
+          }}
+          onClose={() => setMenuOpen(false)}
+        />
+      </Show>
       <Show when={help()}>
         <Help local={store.mode === "local"} onClose={() => setHelp(false)} />
-      </Show>
-      <Show when={accountOpen()}>
-        <AccountCard store={store} onClose={() => setAccountOpen(false)} />
       </Show>
       <Show when={spacesOpen()}>
         <SpacesCard store={store} onClose={() => setSpacesOpen(false)} />
@@ -385,6 +370,8 @@ function Help(props: { local: boolean; onClose: () => void }) {
         <dd>Tap the active tag again (or Esc). Its pencil edits it.</dd>
         <dt>Search</dt>
         <dd>Type in the top box: pick tags (all must overlap) and ranges like “Romans” or “Gospels”. <kbd>n</kbd> / <kbd>p</kbd> step through results.</dd>
+        <dt>Undo</dt>
+        <dd>In the menu (top left), or <kbd>⌘Z</kbd>.</dd>
         <dt>Look up</dt>
         <dd>Tap tagged words to see nearby places with the same tags.</dd>
         <dt>Keys</dt>

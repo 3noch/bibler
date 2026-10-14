@@ -1,6 +1,6 @@
-// Spaces: your own tags, or a group's (shared with its members; see api::groups on the server). A top-bar button
-// names the open space; its card switches spaces, creates groups and, for the open group, shows members, roles,
-// invite links (one per role; a new one revokes the old) and "Leave".
+// Spaces: your own tags, or a group's (shared with its members; see api::groups on the server). The menu has a row
+// for it and the top bar names the open group; the card switches spaces, creates groups and, for the open group,
+// shows members, roles, invite links (one per role; a new one revokes the old) and "Leave".
 import { createResource, createSignal, For, Show } from "solid-js";
 import type { GroupDetail, Member, Role, TagStore } from "./store.ts";
 import { CloseIcon, CopyIcon, GroupIcon } from "./icons.tsx";
@@ -12,19 +12,20 @@ export function memberName(m: Member | undefined): string {
   return m?.name ?? m?.email ?? "Anonymous";
 }
 
+/** The open group, named in the top bar (nothing in your own space): painting there is seen by its members. */
 export function SpaceButton(props: { store: TagStore; open: boolean; onToggle: () => void }) {
-  const g = () => props.store.group();
-  const label = () => (g() ? `Group: ${g()!.name}` : "My tags · groups");
   return (
-    <button class="space-btn" classList={{ on: props.open, group: !!g() }} onClick={props.onToggle} title={label()} aria-label={label()}>
-      <GroupIcon />
-      <Show when={g()}>
-        <span class="space-name">{g()!.name}</span>
-        <Show when={props.store.readOnly()}>
-          <span class="ro-badge">view only</span>
-        </Show>
-      </Show>
-    </button>
+    <Show when={props.store.group()}>
+      {(g) => (
+        <button class="space-btn group" classList={{ on: props.open }} onClick={props.onToggle} title={`Group: ${g().name}`} aria-label={`Group: ${g().name}`}>
+          <GroupIcon />
+          <span class="space-name">{g().name}</span>
+          <Show when={props.store.readOnly()}>
+            <span class="ro-badge">view only</span>
+          </Show>
+        </button>
+      )}
+    </Show>
   );
 }
 

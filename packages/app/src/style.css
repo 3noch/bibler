@@ -50,7 +50,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.location, .omnibox { position: relative; flex: 1; max-width: 26rem; }
+.location, .omnibox { position: relative; flex: 1; min-width: 0; max-width: 26rem; }
 .location input {
   width: 100%; height: 36px; padding: 0 12px; border-radius: 10px;
   border: 1px solid transparent; background: transparent;
@@ -62,7 +62,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   position: absolute; top: 40px; left: 0; margin: 0; padding: 6px 10px; border-radius: 8px;
   background: var(--surface); box-shadow: var(--shadow); font-size: 0.85rem; color: #b5651d; white-space: nowrap;
 }
-.actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.actions { margin-left: auto; flex: none; display: flex; align-items: center; gap: 2px; }
 .icon {
   display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: var(--muted);
 }
@@ -236,7 +236,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 @media (max-width: 560px) { .omni-kbd { display: none; } }
 .omnibox.focused .omni-field, .omnibox.searching .omni-field { background: var(--surface); border-color: var(--line); }
 .omni-field input {
-  flex: 1; min-width: 7rem; height: 34px; padding: 0 6px; border: 0; background: transparent; outline: none;
+  flex: 1; min-width: 5rem; height: 34px; padding: 0 6px; border: 0; background: transparent; outline: none;
   font-family: var(--serif); font-size: 1.1rem; font-weight: 600;
 }
 .omnibox.focused input, .omnibox.searching input { font-weight: 400; font-size: 1rem; font-family: var(--sans); }
@@ -373,17 +373,38 @@ button.primary { border-radius: 8px; background: var(--accent); color: #fff; fon
 button.primary.small { padding: 4px 12px; font-size: 0.8rem; }
 button.primary:disabled { opacity: 0.45; cursor: default; }
 
-/* ---------------------------------------------------------------- account */
-.account-btn .avatar, .avatar {
+/* ---------------------------------------------------------------- menu (drawer), account */
+.scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / 0.18); animation: fade-in 0.15s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+.menu {
+  position: fixed; z-index: 30; top: 0; bottom: 0; left: 0; width: min(21rem, 88vw); overflow-y: auto;
+  padding: calc(6px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  background: var(--surface); box-shadow: var(--shadow); border-right: 1px solid var(--line);
+  border-radius: 0 16px 16px 0; animation: slide-right 0.18s ease-out;
+}
+@keyframes slide-right { from { transform: translateX(-16px); opacity: 0; } }
+.menu-head { display: flex; align-items: center; height: var(--bar); margin-top: -6px; }
+.menu-section { padding: 8px 0; border-top: 1px solid var(--line); }
+.menu-head + .menu-section { border-top: 0; }
+.menu-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 6px 10px; border-radius: 10px;
+  text-align: left; color: var(--ink);
+}
+.menu-row svg { flex: none; color: var(--muted); }
+.menu-row:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.menu-label { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-label .muted { font-size: 0.8rem; }
+.undo-row { display: flex; gap: 4px; }
+.undo-row .menu-row { flex: 1; }
+.avatar {
   display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
   background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 700;
 }
 .avatar.big { width: 40px; height: 40px; font-size: 1.1rem; flex: none; }
-.account h2 { margin: 0 28px 6px 0; font-size: 1rem; }
-.account p { margin: 0 0 12px; line-height: 1.45; }
-.account .who { display: flex; align-items: center; gap: 12px; margin: 0 28px 12px 0; }
-.account .muted { color: var(--muted); }
-.account .who .muted { overflow-wrap: anywhere; }
+.account p { margin: 0 4px 12px; font-size: 0.9rem; line-height: 1.45; }
+.account .who { display: flex; align-items: center; gap: 12px; padding: 0 4px; }
+.who-text { flex: 1; min-width: 0; }
+.account .who .muted { overflow-wrap: anywhere; font-size: 0.85rem; }
 button.google, button.secondary {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 40px; padding: 0 16px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 600;
@@ -400,6 +421,7 @@ button.google:hover, button.secondary:hover { background: color-mix(in srgb, var
   display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 8px; border-radius: 10px;
   color: var(--muted); max-width: 12rem;
 }
+.space-btn svg { flex: none; }
 .space-btn.group { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .space-btn.on, .space-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; }
@@ -428,3 +450,9 @@ button.google:hover, button.secondary:hover { background: color-mix(in srgb, var
 .invite .copied { width: 3.5rem; font-size: 0.8rem; }
 .spaces .leave { margin-top: 14px; }
 .comment-author { font-weight: 600; color: var(--ink); }
+/* Narrow top bar: the search box keeps most of the room. */
+@media (max-width: 560px) {
+  .local-text, .space-btn .ro-badge { display: none; }
+  .space-btn { max-width: 7.5rem; }
+  .omnibox { min-width: 9rem; }
+}
