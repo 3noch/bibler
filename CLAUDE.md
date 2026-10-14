@@ -18,6 +18,9 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   custom domain only: `workers_dev`/`preview_urls` false, deploy refuses until `routes` is set). Bindings aren't
   inherited by wrangler environments, so `[env.qa]` repeats them; secrets are per environment;
   all rebuild `build/cloudflare/assets` (client in server mode + `build/text` + `texts.json` + `_headers`).
+  Deploy on push = Cloudflare Workers Builds (dashboard; README): root `crates/cloudflare`, deploy command
+  `./ci.sh deploy --env qa`; `ci.sh` installs Rust via rustup (the build image has none), runs the Makefile and
+  wrangler (pinned version in the script). Trial-run from a fresh clone with `--dry-run` (~4 min, nothing cached).
   `make check` also runs clippy for `wasm32-unknown-unknown` on `crates/cloudflare` (it compiles natively too).
 - **GitHub Pages (offline-only build)**: `make pages` -> `build/pages/` (client built with `VITE_SYNC=local`,
   `VITE_BASE=./`, plus the text artifacts and `.nojekyll`); `make pages-serve` previews it. `.github/workflows/pages.yml`

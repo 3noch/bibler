@@ -59,6 +59,13 @@ make dev       # http://localhost:5173
   - Sign-in, per deployment: `wrangler secret put GOOGLE_CLIENT_ID` and `wrangler secret put GOOGLE_CLIENT_SECRET`
     in `crates/cloudflare` (add `--env qa` for QA), and add `https://<that URL>/api/auth/google/callback` to the
     OAuth client (below; one client can list both URLs).
+  - Deploy on push (Cloudflare's Workers Builds; optional, instead of running `make` yourself): in the dashboard,
+    *Workers & Pages → bible-tags-qa → Settings → Build → Connect* this repository, branch `main`, then set
+    *Root directory* `crates/cloudflare`, *Build command* empty, *Deploy command* `./ci.sh deploy --env qa`, and
+    turn off builds for non-production branches. `ci.sh` installs Rust (the build image has none), builds with
+    the Makefile and runs wrangler; a build takes several minutes (about 4 on a laptop) since nothing Rust is cached. For production,
+    connect the `bible-tags` Worker the same way with *Deploy command* `./ci.sh deploy` but to a release branch
+    (say `production`), so pushing to `main` updates QA only and releasing is `git push origin main:production`.
 
 ## Sign in with Google (optional)
 
