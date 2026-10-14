@@ -198,6 +198,12 @@ function Main(props: { text: Text; store: TagStore }) {
       <Show when={menuOpen()}>
         <Menu
           store={store}
+          index={index}
+          here={here()}
+          onChapter={(ch) => {
+            setMenuOpen(false);
+            goTo(ch);
+          }}
           onSpaces={() => {
             setMenuOpen(false);
             setHelp(false);

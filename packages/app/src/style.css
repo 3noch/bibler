@@ -396,6 +396,22 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .menu-label .muted { font-size: 0.8rem; }
 .undo-row { display: flex; gap: 4px; }
 .undo-row .menu-row { flex: 1; }
+.contents h3 { margin: 10px 10px 4px; font: 600 0.75rem var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.contents ul { list-style: none; margin: 0; padding: 0; }
+.book-row {
+  display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 40px; padding: 0 10px;
+  border-radius: 10px; text-align: left; font-family: var(--serif); font-size: 1.02rem;
+}
+.book-row .muted { font: 0.8rem var(--sans); }
+.book-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.book-row.current { font-weight: 600; }
+.chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 4px; padding: 4px 6px 10px; }
+.chapter-grid button {
+  height: 40px; border-radius: 8px; font-variant-numeric: tabular-nums; font-size: 0.9rem;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.chapter-grid button:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.chapter-grid button.current { background: var(--accent); color: var(--surface); font-weight: 700; }
 .avatar {
   display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
   background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 700;
