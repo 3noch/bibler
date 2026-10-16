@@ -36,7 +36,9 @@ export function SpacesCard(props: { store: TagStore; onClose: () => void }) {
     const n = name().trim();
     if (!n) return;
     const g = await s.groupCall<GroupDetail>("POST", "/groups", { name: n }).catch(() => undefined);
-    if (g) s.switchSpace(g.id);
+    if (!g) return;
+    setName("");
+    s.switchSpace(g.id);
   };
   return (
     <div class="help spaces" role="dialog" aria-label="Spaces">
@@ -68,7 +70,7 @@ export function SpacesCard(props: { store: TagStore; onClose: () => void }) {
           Create group
         </button>
       </form>
-      <Show when={s.space}>{(id) => <GroupPanel store={s} id={id()} />}</Show>
+      <Show when={s.space} keyed>{(id) => <GroupPanel store={s} id={id} />}</Show>
     </div>
   );
 }

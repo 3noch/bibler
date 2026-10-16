@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { BOOKS, parseRef, type Interval } from "@bible-tags/scripture";
 import { loadText, type Text } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
@@ -100,6 +100,20 @@ function Main(props: { text: Text; store: TagStore }) {
     setActiveTag(id);
     setEraser(false);
   };
+  // Another space has other tags: close whatever showed this one's.
+  createEffect(
+    on(
+      () => store.space,
+      () => {
+        stopPainting();
+        setNear(null);
+        setSheetTag(null);
+        setTagsOpen(false);
+        setChips([]);
+      },
+      { defer: true },
+    ),
+  );
   // A selected tag that no longer exists (deleted here or on another device, or its creation undone) is deselected.
   createEffect(() => {
     const id = activeTag();

@@ -3,7 +3,8 @@
 // up on reconnect.
 //
 // Spaces: the user's own tags (personal space) or a group's, shared with its members (see groups.ts). One space is
-// open at a time; switching reloads the page. Caches are per space (the personal space keeps the original keys).
+// open at a time; switching replaces its sync state, caches and socket in place (no reload). Caches are per space
+// (the personal space keeps the original keys).
 //
 // Persistence (several tabs share one origin):
 //   localStorage  BASE_KEY    confirmed rows at a seq (a cache; any tab may write it, never to a lower seq)
@@ -14,7 +15,7 @@
 // Offline-only builds (VITE_SYNC=local, e.g. GitHub Pages): no server, no account. `localServer.ts` stands in for the
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
-import { createMemo, createSignal } from "solid-js";
+import { batch, createMemo, createSignal } from "solid-js";
 import { resolveTagging, SyncState, type CommentRow, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
@@ -150,75 +151,33 @@ async function takeJoin(): Promise<string | undefined> {
   }
 }
 
+/** One open space: its sync state, caches and connection. Replaced as a whole when switching spaces. */
+interface Opened {
+  /** The open group, or null for the personal space. */
+  space: string | null;
+  /** Rows' owner here: the group, or (personal space) this session's owner. */
+  owner: string;
+  sync: SyncState;
+  keyOf: (k: string) => string;
+  close: () => void;
+}
+
 export async function openTagStore() {
-  let base: Base | undefined;
-  let owner: string;
   let session: Session | undefined;
   const joined = LOCAL_ONLY ? undefined : await takeJoin();
-  /** The open group, or null for the personal space. */
-  let space: string | null = LOCAL_ONLY ? null : storageGet(SPACE_KEY);
   let groups: GroupSummary[] = [];
-  const keyOf = (k: string) => (space ? `${k}:${space}` : k);
-  if (LOCAL_ONLY) {
-    const db = loadLocalDb();
-    owner = "local";
-    base = { owner, seq: db.seq, rows: db.rows, changes: db.changes, confirmed: db.changes.map((c) => c.op_id) };
-  } else {
+  let initialSpace: string | null = LOCAL_ONLY ? null : storageGet(SPACE_KEY);
+  if (!LOCAL_ONLY) {
     try {
       session = await fetchSession();
       groups = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
-      if (space && !groups.some((g) => g.id === space)) {
-        storageSet(SPACE_KEY, (space = null)); // no longer a member
+      if (initialSpace && !groups.some((g) => g.id === initialSpace)) {
+        storageSet(SPACE_KEY, (initialSpace = null)); // no longer a member
       }
     } catch {
       // offline: keep working on local state
     }
-    base = read<Base>(localStorage, keyOf(BASE_KEY));
-    // A group's caches are keyed by the group (its rows belong to it); the personal space's by the owner.
-    const id = space ?? session?.owner ?? base?.owner;
-    if (!id) throw new Error("first run needs the server once");
-    owner = id;
   }
-  const me = session?.owner ?? (space ? undefined : owner);
-  const [role, setRole] = createSignal<Role>(space ? (groups.find((g) => g.id === space)?.role ?? "read") : "admin");
-  const [groupList, setGroupList] = createSignal(groups);
-  const [members, setMembers] = createSignal<Member[]>([]);
-  const refreshGroups = async () => {
-    if (LOCAL_ONLY) return;
-    try {
-      const list = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
-      setGroupList(list);
-      if (space) {
-        const g = list.find((x) => x.id === space);
-        if (!g) {
-          notify("You're no longer a member of this group.");
-          switchSpace(null);
-          return;
-        }
-        setRole(g.role);
-        setMembers((await groupsApi<GroupDetail>("GET", `/groups/${space}`)).members);
-      }
-    } catch {
-      // offline
-    }
-  };
-  /** Open another space (null: your own tags). Reloads the page. */
-  const switchSpace = (id: string | null) => {
-    clearTimeout(saveTimer);
-    save();
-    storageSet(SPACE_KEY, id);
-    location.reload();
-  };
-  const undo = read<Undo>(sessionStorage, keyOf(UNDO_KEY));
-  const snap: Snapshot | undefined = base && {
-    ...base,
-    pending: [],
-    undo: undo?.owner === owner ? undo.undo : [],
-    redo: undo?.owner === owner ? undo.redo : [],
-  };
-  const sync = new SyncState(owner, ulid, Date.now, snap);
-  const outbox = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
-  if (outbox?.owner === owner) sync.adopt(outbox.ops);
 
   const [version, setVersion] = createSignal(0);
   const [notices, setNotices] = createSignal<{ id: number; text: string }[]>([]);
@@ -228,23 +187,18 @@ export async function openTagStore() {
     setNotices((n) => [...n, { id, text }]);
     setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), 6000);
   };
-  sync.onNotice(notify);
-  const authError = takeAuthError();
-  if (authError) notify(authError);
-  if (joined) notify(joined);
-
-  /** Tags hidden from the text, per space (this device only). */
-  const hiddenKey = `${HIDDEN_KEY}:${space ?? "me"}`;
-  const [hidden, setHiddenSet] = createSignal(new Set<string>(JSON.parse(storageGet(hiddenKey) ?? "[]") as string[]));
-  const setHidden = (ids: Iterable<string>) => {
-    const next = new Set(ids);
-    setHiddenSet(next);
-    storageSet(hiddenKey, next.size ? JSON.stringify([...next]) : null);
-  };
+  const [groupList, setGroupList] = createSignal(groups);
+  const roleIn = (space: string | null): Role => (space ? (groupList().find((g) => g.id === space)?.role ?? "read") : "admin");
+  const [role, setRole] = createSignal<Role>(roleIn(initialSpace));
+  const [members, setMembers] = createSignal<Member[]>([]);
+  const hiddenKeyOf = (space: string | null) => `${HIDDEN_KEY}:${space ?? "me"}`;
+  const loadHidden = (space: string | null) => new Set<string>(JSON.parse(storageGet(hiddenKeyOf(space)) ?? "[]") as string[]);
 
   let saveTimer: number | undefined;
-  const save = () =>
+  /** Write a space's state to this device (base cache, shared outbox, this tab's undo). */
+  const save = (o: Opened) =>
     withStorageLock(() => {
+      const { sync, owner, keyOf } = o;
       try {
         const snap = sync.snapshot();
         const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, keyOf(BASE_KEY));
@@ -263,23 +217,111 @@ export async function openTagStore() {
         notify("Could not save locally (storage full or blocked); changes still sync while online.");
       }
     });
-  sync.onChange(() => {
-    setVersion((v) => v + 1);
+
+  /** Open a space from this device's caches and connect it. */
+  const open = (space: string | null): Opened => {
+    const keyOf = (k: string) => (space ? `${k}:${space}` : k);
+    let base: Base | undefined;
+    let owner: string;
+    if (LOCAL_ONLY) {
+      const db = loadLocalDb();
+      owner = "local";
+      base = { owner, seq: db.seq, rows: db.rows, changes: db.changes, confirmed: db.changes.map((c) => c.op_id) };
+    } else {
+      base = read<Base>(localStorage, keyOf(BASE_KEY));
+      // A group's caches are keyed by the group (its rows belong to it); the personal space's by the owner.
+      const id = space ?? session?.owner ?? base?.owner;
+      if (!id) throw new Error("first run needs the server once");
+      owner = id;
+    }
+    const undo = read<Undo>(sessionStorage, keyOf(UNDO_KEY));
+    const snap: Snapshot | undefined = base && {
+      ...base,
+      pending: [],
+      undo: undo?.owner === owner ? undo.undo : [],
+      redo: undo?.owner === owner ? undo.redo : [],
+    };
+    const sync = new SyncState(owner, ulid, Date.now, snap);
+    const outbox = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
+    if (outbox?.owner === owner) sync.adopt(outbox.ops);
+    const opened: Opened = { space, owner, sync, keyOf, close: () => {} };
+    sync.onNotice(notify);
+    sync.onChange(() => {
+      setVersion((v) => v + 1);
+      clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => save(opened), 200);
+    });
+    // Another tab queued ops (e.g. while offline): take them too, so whichever tab is online sends them.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== keyOf(OUTBOX_KEY) || !e.newValue) return;
+      const theirs = JSON.parse(e.newValue) as Outbox;
+      if (theirs.owner === owner) sync.adopt(theirs.ops);
+    };
+    window.addEventListener("storage", onStorage);
+    const disconnect = LOCAL_ONLY ? (connectLocal(sync, notify), () => {}) : connectForever(sync, space, () => void refreshGroups());
+    opened.close = () => {
+      disconnect();
+      window.removeEventListener("storage", onStorage);
+    };
+    return opened;
+  };
+
+  const [current, setCurrent] = createSignal(open(initialSpace));
+  /** The open space's sync state (reactive: switching spaces replaces it). */
+  const sync = () => current().sync;
+  /** Tags hidden from the text, per space (this device only). */
+  const [hidden, setHiddenSet] = createSignal(loadHidden(initialSpace));
+  const setHidden = (ids: Iterable<string>) => {
+    const next = new Set(ids);
+    setHiddenSet(next);
+    storageSet(hiddenKeyOf(current().space), next.size ? JSON.stringify([...next]) : null);
+  };
+
+  const refreshGroups = async () => {
+    if (LOCAL_ONLY) return;
+    try {
+      const list = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
+      setGroupList(list);
+      const space = current().space;
+      if (space) {
+        const g = list.find((x) => x.id === space);
+        if (!g) {
+          notify("You're no longer a member of this group.");
+          switchSpace(null);
+          return;
+        }
+        setRole(g.role);
+        const detail = await groupsApi<GroupDetail>("GET", `/groups/${space}`);
+        if (current().space === space) setMembers(detail.members);
+      }
+    } catch {
+      // offline
+    }
+  };
+  /** Open another space (null: your own tags) in place: the old one is saved and disconnected. */
+  const switchSpace = (id: string | null) => {
+    const old = current();
+    if (old.space === id) return;
     clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(save, 200);
-  });
-  // Another tab queued ops (e.g. while offline): take them too, so whichever tab is online sends them.
-  window.addEventListener("storage", (e) => {
-    if (e.key !== keyOf(OUTBOX_KEY) || !e.newValue) return;
-    const theirs = JSON.parse(e.newValue) as Outbox;
-    if (theirs.owner === owner) sync.adopt(theirs.ops);
-  });
+    save(old);
+    old.close();
+    storageSet(SPACE_KEY, id);
+    batch(() => {
+      setRole(roleIn(id));
+      setMembers([]);
+      setHiddenSet(loadHidden(id));
+      setCurrent(open(id));
+      setVersion((v) => v + 1);
+    });
+    void refreshGroups();
+  };
 
-  if (LOCAL_ONLY) connectLocal(sync, notify);
-  else connectForever(sync, space, () => void refreshGroups());
-  if (space) void refreshGroups();
+  const authError = takeAuthError();
+  if (authError) notify(authError);
+  if (joined) notify(joined);
+  if (initialSpace) void refreshGroups();
 
-  const view = createMemo(() => (version(), sync.view), undefined, { equals: false });
+  const view = createMemo(() => (version(), sync().view), undefined, { equals: false });
   const tags = createMemo(() => [...view().tags.values()].filter((t) => t.deleted_at === null));
   // Only this text's taggings: another text's ordinals mean other words.
   const taggings = createMemo(() => [...view().taggings.values()].filter((t) => t.deleted_at === null && t.text_id === TEXT_ID));
@@ -327,7 +369,7 @@ export async function openTagStore() {
       notify(MESSAGES.read_only!);
       return false;
     }
-    const err = sync.submit(intents);
+    const err = sync().submit(intents);
     if (err) notify(MESSAGES[err.code] ?? `Not applied: ${err.code}`);
     return !err;
   };
@@ -341,7 +383,7 @@ export async function openTagStore() {
     /** Off to Google; back on this page (same location) once signed in. This device's tags go with it: they
      *  become the account's, or are added to an existing account's. Refused while edits are still unsent. */
     signIn() {
-      if (sync.pending.length > 0 || sync.status !== "synced") {
+      if (sync().pending.length > 0 || sync().status !== "synced") {
         notify("Still syncing your changes. Try again in a moment.");
         return;
       }
@@ -349,7 +391,7 @@ export async function openTagStore() {
     },
     /** End the session and forget this account's data on this device; the page restarts anonymous. */
     async signOut() {
-      if (sync.pending.length > 0 && !confirm("Some changes haven't synced yet and will be lost. Sign out anyway?")) return;
+      if (sync().pending.length > 0 && !confirm("Some changes haven't synced yet and will be lost. Sign out anyway?")) return;
       const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
       if (!res?.ok) {
         notify("Couldn't sign out (offline?). Try again when connected.");
@@ -363,10 +405,14 @@ export async function openTagStore() {
         location.reload();
       });
     },
-    /** This session's owner (comment authors are owners). */
-    me,
+    /** This session's owner (comment authors are owners); unknown in a group while offline at startup. */
+    get me() {
+      return session?.owner ?? (current().space ? undefined : current().owner);
+    },
     /** The open group's id, or null for your own tags. */
-    space,
+    get space() {
+      return current().space;
+    },
     /** Your role here ("admin" in your own space). */
     role,
     readOnly: () => role() === "read",
@@ -375,7 +421,7 @@ export async function openTagStore() {
     /** The open group's members (empty in your own space). */
     members,
     /** The open group, if any. */
-    group: () => groupList().find((g) => g.id === space),
+    group: () => groupList().find((g) => g.id === current().space),
     switchSpace,
     refreshGroups,
     /** Groups API (api::groups); rejects with a readable message. */
@@ -402,10 +448,10 @@ export async function openTagStore() {
     /** The live tagging of `tag` starting at `start` (a single tag's instances are its taggings). */
     taggingAt: (tag: string, start: number) => byTag().get(tag)?.find((t) => t.start === start),
     notices,
-    status: () => (version(), sync.status),
-    pendingCount: () => (version(), sync.pending.length),
-    canUndo: () => (version(), sync.canUndo()),
-    canRedo: () => (version(), sync.canRedo()),
+    status: () => (version(), sync().status),
+    pendingCount: () => (version(), sync().pending.length),
+    canUndo: () => (version(), sync().canUndo()),
+    canRedo: () => (version(), sync().canRedo()),
 
     paint: (tag: string, start: number, end: number) =>
       submit([{ kind: "paint", tag, text_id: TEXT_ID, start, end, new_id: ulid(), now: Date.now() }]),
@@ -426,7 +472,7 @@ export async function openTagStore() {
       const pal = view().pal?.tags ?? [];
       const intents: OpIntent[] = [{ kind: "tag_create", id, name, color, now }];
       if (pal.length < 9) intents.push({ kind: "palette_set", tags: [...pal, id], now });
-      return submit(intents) ? sync.view.tags.get(id) : undefined;
+      return submit(intents) ? sync().view.tags.get(id) : undefined;
     },
     updateTag: (id: string, patch: { name?: string; color?: string }) =>
       submit([{ kind: "tag_update", id, name: patch.name ?? null, color: patch.color ?? null, now: Date.now() }]),
@@ -438,44 +484,56 @@ export async function openTagStore() {
       submit([{ kind: "comment_create", id: ulid(), tagging, body, now: Date.now() }]),
     editComment: (id: string, body: string) => submit([{ kind: "comment_update", id, body, now: Date.now() }]),
     deleteComment: (id: string) => submit([{ kind: "comment_delete", id, now: Date.now() }]),
-    undo: () => sync.undoStep(),
-    redo: () => sync.redoStep(),
+    undo: () => sync().undoStep(),
+    redo: () => sync().redoStep(),
   };
 }
 
 /** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online.
- *  `onOpen` runs on each connection (a group refreshes the role, which may have changed). */
-function connectForever(sync: SyncState, space: string | null, onOpen: () => void) {
+ *  `onOpen` runs on each connection (a group refreshes the role, which may have changed). Returns a function that
+ *  closes it for good (switching spaces). */
+function connectForever(sync: SyncState, space: string | null, onOpen: () => void): () => void {
   let delay = 1000;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
+  let closed = false;
   const open = () => {
     clearTimeout(timer);
-    if (ws) return;
+    if (ws || closed) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const query = space ? `?space=${encodeURIComponent(space)}` : "";
     const sock = new WebSocket(`${proto}://${location.host}/api/sync${query}`);
     ws = sock;
     sock.onopen = () => {
+      if (closed) return sock.close();
       sync.connected((m) => sock.send(JSON.stringify(m)));
       onOpen();
     };
     sock.onmessage = (e) => {
+      if (closed) return;
       const msg = JSON.parse(e.data as string);
       if (msg.type === "ready") delay = 1000;
       if (!sync.receive(msg)) sock.close();
     };
     sock.onclose = (e) => {
       ws = null;
+      if (closed) return;
       if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
       sync.disconnected();
       timer = window.setTimeout(open, delay);
       delay = Math.min(delay * 2, 30_000);
     };
   };
-  window.addEventListener("online", () => {
+  const online = () => {
     delay = 1000;
     if (!ws) open();
-  });
+  };
+  window.addEventListener("online", online);
   open();
+  return () => {
+    closed = true;
+    clearTimeout(timer);
+    window.removeEventListener("online", online);
+    ws?.close();
+  };
 }

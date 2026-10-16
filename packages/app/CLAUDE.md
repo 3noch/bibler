@@ -94,9 +94,11 @@
   `store.visibleTaggings` feeds the text, tap-to-inspect and the eraser; search, Nearby lists and the tag list still
   show hidden tags. All-tags sheet: an eye per row plus "Hide all" / "Show all" under the search box; hidden wells
   in the dock are dimmed.
-- **Spaces / groups** (`Groups.tsx`, `store.ts`; 2026-10-12): a top-bar button (people icon; the group's name and a
-  "view only" badge when a group is open) opens a card: My tags + your groups (click to switch: sets
-  `bible-tags/space/v1` and reloads), "New group", and for the open group its members (admins: role select,
+- **Spaces / groups** (`Groups.tsx`, `store.ts`; 2026-10-12): the menu's space row, or the top-bar chip (the open
+  group's name and a "view only" badge), opens a card: My tags + your groups (click to switch: sets
+  `bible-tags/space/v1` and switches in place, no reload (2026-10-16): the store saves and disconnects the old
+  space's `Opened` (SyncState, caches, socket) and opens the new one; `store.space`/`store.me` are getters; the app
+  stops painting and closes Nearby/tag sheet/tag list/search on a switch), "New group", and for the open group its members (admins: role select,
   remove), invite links per role (create / copy / new link) and Leave. Caches (base, outbox, undo) are keyed
   `<key>:<group id>` (the personal space keeps the old keys, so nothing migrates). `?join=<token>` joins before the
   store opens. View-only: `submit` refuses with a notice, and the dock's New tag/eraser, the tag list's
