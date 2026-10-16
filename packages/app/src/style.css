@@ -472,3 +472,23 @@ button.google:hover, button.secondary:hover { background: color-mix(in srgb, var
   .space-btn { max-width: 7.5rem; }
   .omnibox { min-width: 9rem; }
 }
+
+/* ---------------------------------------------------------------- nearby: the taggings at the clicked word */
+.here { margin-bottom: 4px; }
+.here-title { margin: 0 0 6px; font: 600 0.75rem var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.here-item { padding: 8px 10px 4px; border-radius: 12px; background: color-mix(in srgb, var(--c) 9%, transparent); box-shadow: inset 3px 0 0 var(--c); }
+.here-item + .here-item { margin-top: 8px; }
+.here-head { display: flex; align-items: center; gap: 8px; font: 600 0.9rem var(--sans); }
+.here-head .swatch { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.here-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.here-actions .icon.small { margin-left: 0; }
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 999px;
+  font: 500 0.8rem var(--sans); color: var(--muted); border: 1px solid var(--line); background: var(--surface);
+}
+.chip-btn svg { width: 15px; height: 15px; }
+.chip-btn:hover { color: #c2410c; border-color: color-mix(in srgb, #c2410c 40%, transparent); }
+.here-item .snippet { padding: 6px 0; }
+.here-item .snippet:hover { background: none; }
+.here-item .comments { margin: 0 0 6px; }
+.here + .nearby-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

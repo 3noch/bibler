@@ -1,5 +1,7 @@
-// Nearby instances of the tags at a clicked word: the combination first (all of them overlapping), then each tag on
-// its own. Each instance shows its text: short ones with some context around them, long ones fading out.
+// The tags at a clicked word. "Here" comes first: each tag's tagging at that word, with its comments and a button to
+// remove it, so acting on one place never means finding it in a list. Then nearby instances, for moving around: the
+// combination (all of them overlapping), then each tag on its own; opening one makes it "here". Each instance shows
+// its text: short ones with some context around them, long ones fading out.
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { formatInterval, intersectRuns, nearby, type Interval } from "@bible-tags/scripture";
 import { JOINED, joinWords, loadBook, type Text } from "./text.ts";
@@ -36,6 +38,13 @@ export function NearbyPanel(props: Props) {
     return new Map(tags().map((t) => [t.id, (byTag.get(t.id) ?? []).map(intervalOf)]));
   });
   const combo = createMemo(() => (tags().length > 1 ? intersectRuns(tags().map((t) => lists().get(t.id)!)) : null));
+  /** Each tag's tagging covering the position (a tag missing there, after moving to another instance, is skipped). */
+  const here = createMemo(() =>
+    tags().flatMap((t) => {
+      const iv = lists().get(t.id)?.find((x) => x[0] <= props.pos && props.pos < x[1]);
+      return iv ? [{ tag: t, iv }] : [];
+    }),
+  );
   return (
     <aside class="sheet nearby" role="dialog" aria-label="Nearby">
       <div class="sheet-head">
@@ -45,11 +54,38 @@ export function NearbyPanel(props: Props) {
         </button>
       </div>
       <div class="nearby-body">
+        <Show when={here().length}>
+          <section class="here">
+            <h3 class="here-title">Here</h3>
+            <For each={here()}>
+              {(h) => (
+                <div class="here-item" style={{ "--c": h.tag.color }}>
+                  <div class="here-head">
+                    <span class="swatch" />
+                    <span class="nearby-name">{h.tag.name}</span>
+                    <span class="here-actions">
+                      <Show when={!props.store.readOnly()}>
+                        <button class="chip-btn" onClick={() => props.onUnhighlight(h.tag.id, h.iv)} title={`Remove ${h.tag.name} from ${formatInterval(props.text.index, h.iv, "short")} (undo brings it back)`}>
+                          <EraserIcon /> Remove
+                        </button>
+                      </Show>
+                      <button class="icon small" onClick={() => props.onEdit(h.tag.id)} title={`Edit ${h.tag.name}`} aria-label={`Edit ${h.tag.name}`}>
+                        <PencilIcon />
+                      </button>
+                    </span>
+                  </div>
+                  <Snippet text={props.text} iv={h.iv} tags={[h.tag]} current={false} onClick={() => props.onGo(h.iv)} />
+                  <Show when={props.store.taggingAt(h.tag.id, h.iv[0])}>{(t) => <CommentThread store={props.store} tagging={t().id} />}</Show>
+                </div>
+              )}
+            </For>
+          </section>
+        </Show>
         <Show when={combo()}>
-          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
+          {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
         </Show>
         <For each={tags()}>
-          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} onUnhighlight={props.onUnhighlight} />}
+          {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
         </For>
       </div>
     </aside>
@@ -68,7 +104,6 @@ function Section(props: {
   onGo: (iv: Interval) => void;
   onEdit: (tagId: string) => void;
   onSearch: (tagIds: string[]) => void;
-  onUnhighlight: (tagId: string, iv: Interval) => void;
 }) {
   const [before, setBefore] = createSignal(STEP);
   const [after, setAfter] = createSignal(STEP);
@@ -105,9 +140,8 @@ function Section(props: {
                 iv={iv}
                 tags={props.members}
                 current={i() === view().current}
+                thread={false}
                 onClick={() => props.onGo(iv)}
-                // A single tag's instances are its taggings; a combination is not removable as one thing.
-                onUnhighlight={props.members.length === 1 ? () => props.onUnhighlight(props.members[0]!.id, iv) : undefined}
               />
             </li>
           )}
@@ -129,6 +163,8 @@ export function Snippet(props: {
   iv: Interval;
   tags: Tag[];
   current: boolean;
+  /** Show the current snippet's comment thread under it (default true). */
+  thread?: boolean;
   onClick: () => void;
   /** Remove this highlight (only for a single tag's tagging, never for a combination). */
   onUnhighlight?: () => void;
@@ -217,7 +253,7 @@ export function Snippet(props: {
           <EraserIcon />
         </button>
       </Show>
-      <Show when={props.current && tagging()}>{(t) => <CommentThread store={props.store!} tagging={t().id} />}</Show>
+      <Show when={props.current && props.thread !== false && tagging()}>{(t) => <CommentThread store={props.store!} tagging={t().id} />}</Show>
     </div>
   );
 }

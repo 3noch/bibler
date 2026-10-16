@@ -21,8 +21,8 @@
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user
   found right-click too subtle; right-click / touch long-press remain as shortcuts).
 - **Unhighlight** (the primary way to remove ONE tag from an overlap; the eraser removes everything): every
-  snippet of a single tag's instances (Nearby single-tag sections, tag sheet, single-tag search) has an eraser
-  button that erases exactly that tagging (`store.erase(tag, start, end)`; undoable). Combination rows get none (a
+  "Here" card in Nearby has a labelled Remove button, and every snippet of a single tag's instances in the tag
+  sheet and single-tag search has an eraser button that erases exactly that tagging (`store.erase(tag, start, end)`; undoable). Combination rows get none (a
   combination isn't one tagging). Visible on the current row and on hover; always on touch devices.
 - Selection rules (`Main` in `App.tsx`): the eraser and a selected tag are exclusive (eraser on deselects the tag
   and erases ALL tags; picking a tag turns the eraser off; Alt-drag with a tag erases just that tag). All selection
@@ -46,7 +46,10 @@
 - Location label = the chapter at the middle of the reading area; after a navigation it is pinned to the target's
   chapter until the user scrolls by hand (wheel/touch/scroll keys/pointer), else a centered target or a very short
   chapter would name a neighbouring chapter.
-- Tapping tagged words opens the **Nearby** panel (`Nearby.tsx`; right drawer, bottom sheet on phones): the
+- Tapping tagged words opens the **Nearby** panel (`Nearby.tsx`; right drawer, bottom sheet on phones). First
+  **Here** (2026-10-14; the user found removing/commenting hard when the place sat mid-list between its neighbours):
+  one card per tag with its tagging covering the position (the clicked word, or the instance opened since): Remove,
+  edit, the snippet, and its comment thread always open. Then, for navigation only (no erase buttons or threads), the
   combination of all tags at that word first (`intersectRuns`), then each tag alone, each a window of nearby
   instances (`nearby`, +-5, "N earlier/later" to expand) shown as text snippets: <= 40 words with up to 10 words of
   dimmed context clipped to the instance's verse(s); longer ones show 40 words and fade. Clicking one navigates
@@ -69,8 +72,8 @@
   browser (not saved elsewhere, not backed up, not synced; clearing site data erases them). Browser-tested under a
   `/pages/` subpath: no `/api` requests, persistence across reloads, live sync between two tabs, per-tab undo.
   Limits: localStorage (~5 MB) holds everything; IndexedDB and export/import are the natural next steps.
-- **Comments** (`Comments.tsx`): a single tag's snippets (Nearby single-tag sections, tag sheet, single-tag search)
-  show a speech-bubble count; the **current** one shows its thread (oldest first, "edited", hover pencil/trash, always
+- **Comments** (`Comments.tsx`): in Nearby, each "Here" card shows its thread; elsewhere a single tag's snippets
+  (Nearby single-tag sections, tag sheet, single-tag search) show a speech-bubble count; the **current** one shows its thread (oldest first, "edited", hover pencil/trash, always
   visible on touch) and an "Add a comment…" box (never autofocused; Enter = newline, ⌘/Ctrl+Enter or Post posts; Esc
   cancels an edit). Combination rows have no comments. `store.commentsByTagging` follows merge chains. Browser-tested:
   post (focus stays), multi-line, edit, delete, undo of each, merge shows all comments on the survivor and undo splits
