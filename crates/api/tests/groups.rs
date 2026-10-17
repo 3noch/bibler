@@ -132,5 +132,5 @@ fn signing_in_moves_an_anonymous_owners_memberships_to_the_account() {
     assert_eq!(role(&only_cat, "bob"), Some(Role::Edit));
     assert_eq!(role(&cats, "bob"), Some(Role::Admin), "the group cat made is bob's to run");
     assert_eq!([role(&both, "cat"), role(&only_cat, "cat"), role(&cats, "cat")], [None, None, None]);
-    assert!(run(api::groups::spaces_of(&db, "cat")).unwrap().is_empty());
+    assert_eq!(run(api::groups::spaces_of(&db, "cat")).unwrap(), Vec::<String>::new());
 }
