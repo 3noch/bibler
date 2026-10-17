@@ -48,6 +48,8 @@ export function Bible(props: Props) {
   let root!: HTMLDivElement;
   let busy = false;
   let navigating = false;
+  let navSeq = 0;
+  let flashTimer = 0;
   /** After a navigation, keep reporting its chapter until the user scrolls by hand (a centered target or a very
    *  short chapter would otherwise make the label name a neighbouring chapter). */
   let pinned = false;
@@ -147,20 +149,31 @@ export function Bible(props: Props) {
     on(
       () => props.nav,
       async (nav) => {
+        // Navigations may overlap (`n` pressed twice across books that aren't loaded yet): only the latest may
+        // set the range, scroll and flash, whichever book finishes loading last.
+        const seq = ++navSeq;
         navigating = true;
         const r = range();
         if (!r || nav.ch < r[0] || nav.ch > r[1]) {
           const lo = Math.max(0, nav.ch - 1);
           const hi = Math.min(lastChapter, nav.ch + 1);
-          await ensure(lo, hi);
+          try {
+            await ensure(lo, hi);
+          } catch (e) {
+            if (seq === navSeq) navigating = false; // else scrolling would never load more chapters
+            throw e;
+          }
+          if (seq !== navSeq) return;
           setRange([lo, hi]);
         }
         requestAnimationFrame(() => {
+          if (seq !== navSeq) return;
           const word = nav.target && root.querySelector(`[data-ord="${nav.target[0]}"]`);
           if (word) word.scrollIntoView({ block: "center" });
           else root.querySelector(`[data-ch="${nav.ch}"]`)?.scrollIntoView({ block: "start" });
           setTarget(nav.target);
-          if (nav.target) setTimeout(() => setTarget(null), 2500);
+          clearTimeout(flashTimer); // an earlier navigation's timer would end this flash early
+          if (nav.target) flashTimer = window.setTimeout(() => setTarget(null), 2500);
           navigating = false;
           pinned = true;
           reported = nav.ch;
