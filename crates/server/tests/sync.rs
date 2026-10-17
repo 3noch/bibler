@@ -526,9 +526,8 @@ async fn a_space_file_is_created_by_its_first_write_not_by_reading_it() {
     let cfg = config("lazy-spaces");
     let srv = start(&cfg).await;
     let files = || {
-        std::fs::read_dir(cfg.data.join("spaces")).map_or(0, |d| {
-            d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sqlite")).count()
-        })
+        std::fs::read_dir(cfg.data.join("spaces"))
+            .map_or(0, |d| d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sqlite")).count())
     };
     let cookie = session(&srv).await;
     let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
