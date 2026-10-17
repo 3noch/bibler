@@ -7,9 +7,10 @@
 //! socket right after it is stored. `space::apply` checks everything before its first write (there is no rollback).
 //!
 //! Only the Worker can reach a Durable Object; it authenticates the session, checks the owner's role in the space
-//! (`api::groups`) and passes them in headers:
+//! (`api::groups`, for an early 403) and passes them in headers; the object checks the role again itself (see
+//! `/sync`):
 //! ```text
-//! GET  /sync   (WebSocket upgrade, x-owner, x-space, x-role)   the sync protocol
+//! GET  /sync   (WebSocket upgrade, x-owner, x-space)   the sync protocol
 //! POST /kick?owner=                           close that owner's sockets (their role changed or they left)
 //! GET  /export?owner=   -> [Row]              an owner's live data (space::export)
 //! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
@@ -31,6 +32,7 @@ use worker::{
 #[durable_object]
 pub struct Space {
     state: State,
+    env: Env,
     db: Sql,
     texts: Rc<RefCell<Texts>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
@@ -62,15 +64,15 @@ impl DurableObject for Space {
         }
         // Events wait until the texts are loaded, so ops are checked (and applied) in arrival order.
         let texts = Rc::new(RefCell::new(Texts::default()));
-        let slot = texts.clone();
+        let (slot, assets) = (texts.clone(), env.clone());
         drop(state.block_concurrency_while(async move {
-            match load_texts(&env).await {
+            match load_texts(&assets).await {
                 Ok(t) => *slot.borrow_mut() = t,
                 Err(e) => worker::console_error!("loading texts: {e}"),
             }
             Ok(())
         }));
-        Space { state, db, texts, retention_ms }
+        Space { state, env, db, texts, retention_ms }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -78,11 +80,21 @@ impl DurableObject for Space {
         match url.path() {
             "/sync" => {
                 let h = req.headers();
-                let (Some(owner), Some(space), Some(role)) = (h.get("x-owner")?, h.get("x-space")?, h.get("x-role")?)
-                else {
+                let (Some(owner), Some(space)) = (h.get("x-owner")?, h.get("x-space")?) else {
                     return Response::error("no owner", 400);
                 };
-                let write = api::groups::Role::parse(&role).is_some_and(api::groups::Role::can_write);
+                // The Worker checked the role, but a removal or role change may have landed since, and its kick
+                // found no socket to close. Check again while no other event runs: a later kick finds this socket.
+                let (env, o, s) = (self.env.clone(), owner.clone(), space.clone());
+                let role = self
+                    .state
+                    .block_concurrency_while(async move {
+                        let db = crate::D1Accounts(env.d1("ACCOUNTS")?);
+                        api::groups::role_of(&db, &s, &o).await.map_err(worker::Error::RustError)
+                    })
+                    .await?;
+                let Some(role) = role else { return Response::error("not a member", 403) };
+                let write = role.can_write();
                 let pair = WebSocketPair::new()?;
                 self.state.accept_websocket_with_tags(&pair.server, &[&owner]);
                 pair.server.serialize_attachment(Socket { owner, space, write, ready: false })?;

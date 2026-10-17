@@ -189,9 +189,10 @@ async fn sync(req: Request, env: &Env) -> Result<Response> {
     if !api::check::valid_id(&space) {
         return Response::error("bad space", 400);
     }
-    let Some(role) = groups::role_of(&D1Accounts(db), &space, &owner).await.map_err(worker::Error::RustError)? else {
+    // An early refusal; the Durable Object checks again when it accepts the socket.
+    if groups::role_of(&D1Accounts(db), &space, &owner).await.map_err(worker::Error::RustError)?.is_none() {
         return Response::error("not a member", 403);
-    };
+    }
     let headers = Headers::new();
     for name in ["Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version"] {
         if let Some(v) = req.headers().get(name)? {
@@ -200,7 +201,6 @@ async fn sync(req: Request, env: &Env) -> Result<Response> {
     }
     headers.set("x-owner", &owner)?;
     headers.set("x-space", &space)?;
-    headers.set("x-role", role.as_str())?;
     let mut init = RequestInit::new();
     init.with_headers(headers);
     space_stub(env, &space)?.fetch_with_request(Request::new_with_init("https://space/sync", &init)?).await

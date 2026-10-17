@@ -191,7 +191,9 @@ Rust: `crates/normalize/src/lib.rs`).
   invite link per role (a new one revokes the old; tokens stored plain so admins can re-copy them). HTTP API and
   rules in `api::groups::handle` over the async `AccountsDb` trait (rusqlite via the blocking pool on the server, D1
   on Cloudflare), tested in `crates/api/tests/groups.rs`. The socket picks its space with `/api/sync?space=`; the
-  role is checked at upgrade (403 if not a member) and fixed for the connection; read-only sockets get every change
+  role is checked at upgrade (403 if not a member) and again once the socket can receive kicks (server: after
+  subscribing to the hub; Durable Object: inside `block_concurrency_while` before accepting), so a removal racing a
+  connect can't leave a socket with its old role; it is then fixed for the connection; read-only sockets get every change
   but ops are rejected `read_only`. Role changes and removals disconnect that member (`Reply::kicks`: hub `Event::Kick`
   on the server, DO `POST /kick` + socket tags on Cloudflare) so they reconnect with the new role. Tested: server
   `groups_share_rows_with_roles`, Cloudflare `test/groups.mjs`, browser (create group, invite links, a scripted

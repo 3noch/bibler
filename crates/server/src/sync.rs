@@ -124,12 +124,13 @@ pub async fn sync(
     if !crate::store::valid_space(&space) {
         return (StatusCode::BAD_REQUEST, "bad space").into_response();
     }
-    let role = match api::groups::role_of(&crate::groups::Accounts(st.store.clone()), &space, &owner).await {
-        Ok(Some(r)) => r,
+    // An early refusal; the socket checks again once it can hear kicks (`run_socket`).
+    match api::groups::role_of(&crate::groups::Accounts(st.store.clone()), &space, &owner).await {
+        Ok(Some(_)) => {}
         Ok(None) => return (StatusCode::FORBIDDEN, "not a member").into_response(),
         Err(e) => return internal(&e),
-    };
-    ws.max_message_size(MAX_FRAME).on_upgrade(move |socket| run_socket(socket, st, owner, space, role))
+    }
+    ws.max_message_size(MAX_FRAME).on_upgrade(move |socket| run_socket(socket, st, owner, space))
 }
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -164,10 +165,23 @@ async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64
     }
 }
 
-async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: String, role: Role) {
+async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: String) {
     let (mut tx, mut rx) = socket.split();
     // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
     let mut live = st.hub.subscribe(&space);
+    // The role was checked before the upgrade, but a removal or role change may have landed since, and its kick
+    // reached no one (we weren't subscribed). Check again now that a later kick will reach us.
+    let role = match api::groups::role_of(&crate::groups::Accounts(st.store.clone()), &space, &owner).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            let _ = send(&mut tx, &ServerMsg::Error { message: "not a member" }).await;
+            return;
+        }
+        Err(e) => {
+            tracing::error!("role of {owner} in {space}: {e}");
+            return;
+        }
+    };
     let (mut last, mut pending) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => {
