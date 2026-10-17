@@ -342,7 +342,7 @@ impl Store for SqliteStore {
     ) -> Result<Option<space::Reset>, String> {
         self.read(space, |c| {
             let tx = c.unchecked_transaction().map_err(|e| e.to_string())?; // one snapshot for every read
-            if !space::needs_reset(&*tx, after, last_op)? {
+            if !space::needs_reset(&*tx, after, last_op, space::REPLAY_LIMIT)? {
                 return Ok(None);
             }
             space::reset(&*tx, space, pending).map(Some)

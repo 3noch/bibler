@@ -145,7 +145,9 @@ impl DurableObject for Space {
             (false, Ok(ClientMsg::Hello { after, last_op, mut pending })) => {
                 let mut after = after;
                 // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead.
-                if space::needs_reset(&self.db, after, last_op.as_deref()).map_err(worker::Error::RustError)? {
+                if space::needs_reset(&self.db, after, last_op.as_deref(), space::REPLAY_LIMIT)
+                    .map_err(worker::Error::RustError)?
+                {
                     pending.truncate(MAX_HELLO_PENDING);
                     let reset = space::reset(&self.db, &socket.space, &pending).map_err(worker::Error::RustError)?;
                     ws.send_with_str(ServerMsg::reset(&reset).json())?;

@@ -301,14 +301,26 @@ pub fn prune(db: &impl Db, before: i64, limit: usize) -> Result<usize, String> {
     Ok(rows.iter().take_while(|r| int(&r[0]).is_ok_and(|s| s <= last)).count())
 }
 
+/// How much a client may be sent as a replay; past either bound it gets a [`reset`] (usually smaller: one row per
+/// row instead of every change to it), so a client far behind can't make a server queue a huge replay at once.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplayLimit {
+    pub changes: u64,
+    /// Payload bytes.
+    pub bytes: u64,
+}
+
+/// The limit both servers use.
+pub const REPLAY_LIMIT: ReplayLimit = ReplayLimit { changes: 10_000, bytes: 4 << 20 };
+
 /// Whether a client that holds every change through seq `after` (the last one being op `last_op`, if it says) must
 /// get a [`reset`] instead of a replay: the space has no change `after` or a different one there (it was restored
-/// from an older backup or lost its storage: replaying would skip changes the client wrongly thinks it has), or
-/// changes after `after` were pruned.
+/// from an older backup or lost its storage: replaying would skip changes the client wrongly thinks it has),
+/// changes after `after` were pruned, or the replay would exceed `limit`. Reads at most `limit.changes + 1` changes.
 ///
 /// # Errors
 /// On storage failure.
-pub fn needs_reset(db: &impl Db, after: u64, last_op: Option<&str>) -> Result<bool, String> {
+pub fn needs_reset(db: &impl Db, after: u64, last_op: Option<&str>, limit: ReplayLimit) -> Result<bool, String> {
     if after > 0 {
         let at = db.query("SELECT op_id FROM changes WHERE seq = ?", &[after.into()])?;
         let Some(row) = at.first() else { return Ok(true) };
@@ -316,7 +328,17 @@ pub fn needs_reset(db: &impl Db, after: u64, last_op: Option<&str>) -> Result<bo
             return Ok(true);
         }
     }
-    Ok(after < pruned_through(db)?)
+    if after < pruned_through(db)? {
+        return Ok(true);
+    }
+    let backlog = db.query(
+        "SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB))), 0) \
+         FROM (SELECT payload FROM changes WHERE seq > ? ORDER BY seq LIMIT ?)",
+        &[after.into(), (limit.changes + 1).into()],
+    )?;
+    let r = backlog.first().ok_or("no backlog row")?;
+    let n = |v| int(v).and_then(|n| u64::try_from(n).map_err(|e| e.to_string()));
+    Ok(n(&r[0])? > limit.changes || n(&r[1])? > limit.bytes)
 }
 
 /// What a client that can't be replayed to gets instead: the space's current state.
