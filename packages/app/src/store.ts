@@ -43,6 +43,10 @@ const UNDO_KEY = "bible-tags/undo/v1";
 /** The open group (absent: the personal space). */
 const SPACE_KEY = "bible-tags/space/v1";
 const HIDDEN_KEY = "bible-tags/hidden/v1";
+/** The last session and group list from the server, for starting offline (else a group's role is unknown and it
+ *  opens view-only, and your own comments aren't recognized as yours). */
+const SESSION_KEY = "bible-tags/session/v1";
+const GROUPS_KEY = "bible-tags/groups/v1";
 const COLORS = ["#e6a23c", "#4fa3e0", "#6cc070", "#e06c9f", "#9b7be0", "#e0c84f", "#4fc9c0", "#e07b4f", "#8fa0b0"];
 
 type Base = Pick<Snapshot, "owner" | "seq" | "rows" | "changes" | "confirmed">;
@@ -170,12 +174,16 @@ export async function openTagStore() {
   if (!LOCAL_ONLY) {
     try {
       session = await fetchSession();
+      storageSet(SESSION_KEY, JSON.stringify(session));
       groups = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
+      storageSet(GROUPS_KEY, JSON.stringify(groups));
       if (initialSpace && !groups.some((g) => g.id === initialSpace)) {
         storageSet(SPACE_KEY, (initialSpace = null)); // no longer a member
       }
     } catch {
-      // offline: keep working on local state
+      // Offline: keep working on local state, with what the server said last time.
+      session ??= read<Session>(localStorage, SESSION_KEY);
+      groups = read<GroupSummary[]>(localStorage, GROUPS_KEY) ?? [];
     }
   }
 
@@ -282,6 +290,7 @@ export async function openTagStore() {
     try {
       const list = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
       setGroupList(list);
+      storageSet(GROUPS_KEY, JSON.stringify(list));
       const space = current().space;
       if (space) {
         const g = list.find((x) => x.id === space);
@@ -298,10 +307,12 @@ export async function openTagStore() {
       // offline
     }
   };
-  /** Open another space (null: your own tags) in place: the old one is saved and disconnected. */
-  const switchSpace = (id: string | null) => {
+  /** Open another space (null: your own tags) in place: the old one is saved and disconnected. `known`: a group
+   *  just created or joined, so its role is known before the list is refreshed. */
+  const switchSpace = (id: string | null, known?: GroupSummary) => {
     const old = current();
     if (old.space === id) return;
+    if (known && !groupList().some((g) => g.id === known.id)) setGroupList((l) => [...l, known]);
     clearTimeout(saveTimer);
     save(old);
     old.close();
@@ -399,7 +410,7 @@ export async function openTagStore() {
       }
       clearTimeout(saveTimer);
       withStorageLock(() => {
-        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY];
+        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY, SESSION_KEY, GROUPS_KEY];
         for (const k of Object.keys(localStorage)) if (ours.some((o) => k === o || k.startsWith(`${o}:`))) localStorage.removeItem(k);
         for (const k of Object.keys(sessionStorage)) if (k.startsWith(UNDO_KEY)) sessionStorage.removeItem(k);
         location.reload();

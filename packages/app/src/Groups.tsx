@@ -38,7 +38,7 @@ export function SpacesCard(props: { store: TagStore; onClose: () => void }) {
     const g = await s.groupCall<GroupDetail>("POST", "/groups", { name: n }).catch(() => undefined);
     if (!g) return;
     setName("");
-    s.switchSpace(g.id);
+    s.switchSpace(g.id, { id: g.id, name: g.name, role: g.role });
   };
   return (
     <div class="help spaces" role="dialog" aria-label="Spaces">
