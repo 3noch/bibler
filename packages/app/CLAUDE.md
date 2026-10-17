@@ -66,7 +66,9 @@
   Not yet: query in the URL, highlighting only matching instances in the text, "A&B and nothing else".
 - **Offline-only build** (`VITE_SYNC=local`; GitHub Pages): `localServer.ts` stands in for the sync server inside
   the browser (same protocol and canonical `effect`), storing the confirmed state (rows + last 1000 changes = undo
-  targets) in localStorage `bible-tags/local-db/v1` under a Web Lock; tabs exchange changes over a BroadcastChannel
+  targets + the op ids of older changes, so a re-sent op is a duplicate forever) in localStorage
+  `bible-tags/local-db/v1` under a Web Lock; ops are checked like the server's (`checkOp` in packages/scripture, the
+  TS twin of `api::check`: ids, tagging ends against the text index, which it awaits); tabs exchange changes over a BroadcastChannel
   and a tab that falls behind gets a `reset` (a SyncState message added for this). `BASE_KEY` is not written in this
   mode. Text/asset paths use Vite's `BASE_URL` ("./" here) so any subpath works; routing is in the hash. The UI shows
   an amber "Local only" badge instead of the sync dot, and the help card explains that tags are kept only in this

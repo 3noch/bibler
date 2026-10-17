@@ -6,3 +6,4 @@ export * from "./ops.ts";
 export * from "./syncState.ts";
 export * from "./queries.ts";
 export * from "./scopes.ts";
+export * from "./check.ts";

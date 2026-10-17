@@ -11,8 +11,9 @@ import { SpaceButton, SpacesCard } from "./Groups.tsx";
 import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, TagsIcon } from "./icons.tsx";
 
 export function App() {
-  const [text] = createResource(loadText);
-  const [store] = createResource(openTagStore);
+  const textP = loadText();
+  const [text] = createResource(() => textP);
+  const [store] = createResource(() => openTagStore(textP.then((t) => t.index)));
   const failure = () =>
     text.error ? `Couldn't load the text (${text.error})` : store.error ? `Couldn't reach the server (${store.error})` : null;
   return (

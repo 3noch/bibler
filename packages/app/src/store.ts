@@ -16,7 +16,7 @@
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
-import { resolveTagging, SyncState, type CommentRow, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow } from "@bible-tags/scripture";
+import { resolveTagging, SyncState, type CommentRow, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
@@ -166,7 +166,8 @@ interface Opened {
   close: () => void;
 }
 
-export async function openTagStore() {
+/** `textIndex` checks ops in the offline-only build (its in-browser server does what the server would). */
+export async function openTagStore(textIndex: Promise<TextIndex>) {
   let session: Session | undefined;
   const joined = LOCAL_ONLY ? undefined : await takeJoin();
   let groups: GroupSummary[] = [];
@@ -272,7 +273,7 @@ export async function openTagStore() {
       if (theirs.owner === owner) sync.adopt(theirs.ops);
     };
     window.addEventListener("storage", onStorage);
-    const disconnect = LOCAL_ONLY ? (connectLocal(sync, notify), () => {}) : connectForever(sync, space, () => void refreshGroups());
+    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups());
     opened.close = () => {
       disconnect();
       window.removeEventListener("storage", onStorage);
