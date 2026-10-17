@@ -316,6 +316,15 @@ export async function openTagStore() {
     const old = current();
     if (old.space === id) return;
     if (known && !groupList().some((g) => g.id === known.id)) setGroupList((l) => [...l, known]);
+    // Open the new space before closing the old one: opening can fail (your own tags have never been loaded on
+    // this device and the server can't be reached), and then you stay where you were, still syncing.
+    let next: Opened;
+    try {
+      next = open(id);
+    } catch {
+      notify("That space hasn't been opened on this device yet; it needs a connection the first time.");
+      return;
+    }
     clearTimeout(saveTimer);
     save(old);
     old.close();
@@ -324,7 +333,7 @@ export async function openTagStore() {
       setRole(roleIn(id));
       setMembers([]);
       setHiddenSet(loadHidden(id));
-      setCurrent(open(id));
+      setCurrent(next);
       setVersion((v) => v + 1);
     });
     void refreshGroups();
