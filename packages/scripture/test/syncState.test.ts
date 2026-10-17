@@ -22,10 +22,13 @@ class FakeServer {
 
   handle(conn: Conn, m: ClientMsg) {
     if (m.type === "hello") {
-      if (m.after < this.prunedThrough) {
-        // Too far behind to replay: the whole state, and which of the client's pending ops are already in it.
+      const at = m.after > 0 ? this.log[m.after - 1] : undefined;
+      const gone = m.after > 0 && (!at || (m.last_op != null && at.op_id !== m.last_op)); // space::needs_reset
+      if (gone || m.after < this.prunedThrough) {
+        // Can't replay: the whole state, and which of the client's pending ops are already in it.
         const applied = (m.pending ?? []).filter((id) => this.log.some((c) => c.op_id === id));
-        conn.down.push({ type: "reset", seq: this.log.length, rows: this.rows.allRows(), changes: [], applied });
+        const last_op = this.log.at(-1)?.op_id ?? null;
+        conn.down.push({ type: "reset", seq: this.log.length, last_op, rows: this.rows.allRows(), changes: [], applied });
       } else for (const c of this.log) if (c.seq > m.after) conn.down.push({ type: "change", change: c });
       conn.down.push({ type: "ready", seq: this.log.length });
       conn.live = true;
@@ -402,7 +405,7 @@ test("sync: a client behind the retention window gets a reset; its already-appli
   assert.equal(a.pending.length, 1);
   assert.equal(a.undo.length, 2);
   const again = server.connect(a);
-  assert.deepEqual(again.up[0], { type: "hello", after: 1, pending: [a.pending[0]!.op_id] });
+  assert.deepEqual(again.up[0], { type: "hello", after: 1, last_op: a.lastOp, pending: [a.pending[0]!.op_id] });
   again.flush();
   converged(server, a);
   assert.deepEqual(notices, [], "the tag already exists because the op was applied, not because of a conflict");
@@ -450,4 +453,40 @@ test("sync: after a reset, an op missing from the hello isn't dropped; the serve
   assert.deepEqual(notices, [], "they were applied, not refused");
   assert.ok(b.isConfirmed(tagOp!.op_id) && b.isConfirmed(paintOp!.op_id));
   converged(server, b);
+});
+
+test("sync: a client ahead of a space restored from an older backup is reset to it, keeping its unsent edits", () => {
+  const server = new FakeServer();
+  const a = client();
+  const conn = server.connect(a);
+  conn.flush();
+  a.submit([createTag("T", "Grace")]);
+  conn.flush();
+  const backup = { rows: server.rows.clone(), log: [...server.log] }; // seq 1
+  a.submit([createTag("U", "Hope")]);
+  a.submit([paint("T", 10, 20, "g1")]);
+  conn.flush(); // a has seen seq 3
+  assert.equal(a.seq, 3);
+  assert.equal(a.lastOp, server.log[2]!.op_id, "the op of the change at its seq");
+  conn.close();
+  // The space is restored to seq 1, then someone else's edit takes seq 2 (a's seq 2 was "U").
+  server.rows = backup.rows;
+  server.log = backup.log;
+  const b = client();
+  const cb = server.connect(b);
+  cb.flush();
+  b.submit([createTag("V", "Peace")]);
+  cb.flush();
+  a.submit([createTag("W", "Joy")]); // offline meanwhile
+  const again = server.connect(a);
+  assert.deepEqual(again.up[0], { type: "hello", after: 3, last_op: a.lastOp, pending: [a.pending[0]!.op_id] });
+  again.flush();
+  cb.flush();
+  converged(server, a, b);
+  assert.ok(a.view.tag("V") && a.view.tag("W") && !a.view.tag("U"), "the server's state plus the unsent edit");
+  assert.ok(a.wentBack);
+  // Once the space passes a's old seq, a stale client is still caught by the op at its seq.
+  const c = new SyncState("owner", newId, now, { owner: "owner", seq: 2, lastOp: "lost", rows: [], changes: [], pending: [], undo: [], redo: [] });
+  server.connect(c).flush();
+  converged(server, c);
 });

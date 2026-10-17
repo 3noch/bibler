@@ -301,11 +301,31 @@ pub fn prune(db: &impl Db, before: i64, limit: usize) -> Result<usize, String> {
     Ok(rows.iter().take_while(|r| int(&r[0]).is_ok_and(|s| s <= last)).count())
 }
 
-/// What a client that is too far behind to replay gets instead: the space's current state.
+/// Whether a client that holds every change through seq `after` (the last one being op `last_op`, if it says) must
+/// get a [`reset`] instead of a replay: the space has no change `after` or a different one there (it was restored
+/// from an older backup or lost its storage: replaying would skip changes the client wrongly thinks it has), or
+/// changes after `after` were pruned.
+///
+/// # Errors
+/// On storage failure.
+pub fn needs_reset(db: &impl Db, after: u64, last_op: Option<&str>) -> Result<bool, String> {
+    if after > 0 {
+        let at = db.query("SELECT op_id FROM changes WHERE seq = ?", &[after.into()])?;
+        let Some(row) = at.first() else { return Ok(true) };
+        if last_op.is_some_and(|op| text(&row[0]).is_ok_and(|have| have != op)) {
+            return Ok(true);
+        }
+    }
+    Ok(after < pruned_through(db)?)
+}
+
+/// What a client that can't be replayed to gets instead: the space's current state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reset {
     /// The space's last seq.
     pub seq: u64,
+    /// The op of the change at `seq` (none in an empty space), for the client's next `hello`.
+    pub last_op: Option<String>,
     /// Every row of the data owner, deleted ones included (comments on merged taggings follow tombstones).
     pub rows: Vec<Row>,
     /// Which of the op ids the client still holds (its `hello.pending`) are already applied, so it can drop them
@@ -318,8 +338,11 @@ pub struct Reset {
 /// # Errors
 /// On storage failure.
 pub fn reset(db: &impl Db, owner: &str, pending: &[String]) -> Result<Reset, String> {
-    let seq = db.query("SELECT COALESCE(MAX(seq), 0) FROM changes", &[])?;
-    let seq = u64::try_from(int(&seq[0][0])?).map_err(|e| e.to_string())?;
+    let last = db.query("SELECT seq, op_id FROM changes ORDER BY seq DESC LIMIT 1", &[])?;
+    let (seq, last_op) = match last.first() {
+        Some(r) => (u64::try_from(int(&r[0])?).map_err(|e| e.to_string())?, Some(text(&r[1])?.to_string())),
+        None => (0, None),
+    };
     let src = Rows { db, owner, err: RefCell::new(None) };
     let mut rows: Vec<Row> = vec![];
     let tags = format!("SELECT {TAG_COLS} FROM tags WHERE owner_id = ? ORDER BY id");
@@ -338,7 +361,7 @@ pub fn reset(db: &impl Db, owner: &str, pending: &[String]) -> Result<Reset, Str
             applied.push(id.clone());
         }
     }
-    Ok(Reset { seq, rows, applied })
+    Ok(Reset { seq, last_op, rows, applied })
 }
 
 /// Load `owner`'s rows and recorded changes as-is (no `effect`, seqs kept): fixtures, migrations, imports.

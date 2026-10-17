@@ -2,7 +2,7 @@
 //! reverted, and a client that is too far behind gets a `reset` instead.
 use ops::{Op, OpError, Row};
 use rusqlite::Connection;
-use space::{apply, changes_since, init, prune, pruned_through, reset, ApplyError};
+use space::{apply, changes_since, init, needs_reset, prune, pruned_through, reset, ApplyError};
 
 fn open() -> Connection {
     let db = Connection::open_in_memory().unwrap();
@@ -83,4 +83,24 @@ fn reset_sends_every_row_and_which_pending_ops_are_applied() {
         .collect();
     assert_eq!(tags, vec![("T1", true), ("T2", false)], "deleted rows too");
     assert_eq!(r.applied, vec!["o2".to_string()], "only this owner's applied ops");
+}
+
+#[test]
+fn a_client_that_cannot_be_replayed_to_needs_a_reset() {
+    let db = space_with(5);
+    let needs = |after, last_op| needs_reset(&db, after, last_op).unwrap();
+    assert!(!needs(0, None), "a new client replays everything");
+    assert!(!needs(3, Some("o3")), "the same change at its seq");
+    assert!(!needs(3, None), "an older client that doesn't say");
+    assert!(!needs(5, Some("o5")), "up to date");
+    // The space was restored from a backup older than what the client has seen.
+    assert!(needs(6, Some("o6")), "ahead of the space");
+    assert!(needs(6, None), "ahead of the space, even unsaid");
+    assert!(needs(3, Some("other")), "a different change at its seq: the space went back, then on");
+    prune(&db, 35, 64).unwrap();
+    assert!(needs(2, Some("o2")), "pruned");
+    assert!(!needs(3, Some("o3")), "the pruning point itself still replays");
+    let r = reset(&db, "me", &[]).unwrap();
+    assert_eq!((r.seq, r.last_op.as_deref()), (5, Some("o5")));
+    assert_eq!(reset(&open(), "me", &[]).unwrap().last_op, None, "an empty space");
 }

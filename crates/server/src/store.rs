@@ -48,7 +48,13 @@ pub trait Store: Send + Sync {
     ///
     /// # Errors
     /// On storage failure.
-    fn catch_up(&self, space: &str, after: u64, pending: &[String]) -> Result<Option<space::Reset>, String>;
+    fn catch_up(
+        &self,
+        space: &str,
+        after: u64,
+        last_op: Option<&str>,
+        pending: &[String],
+    ) -> Result<Option<space::Reset>, String>;
     /// The space's changes with `seq > after`, oldest first, at most `limit`.
     ///
     /// # Errors
@@ -327,10 +333,16 @@ impl Store for SqliteStore {
         self.read("", |c| c.query(sql, &params))
     }
 
-    fn catch_up(&self, space: &str, after: u64, pending: &[String]) -> Result<Option<space::Reset>, String> {
+    fn catch_up(
+        &self,
+        space: &str,
+        after: u64,
+        last_op: Option<&str>,
+        pending: &[String],
+    ) -> Result<Option<space::Reset>, String> {
         self.read(space, |c| {
             let tx = c.unchecked_transaction().map_err(|e| e.to_string())?; // one snapshot for every read
-            if after >= space::pruned_through(&*tx)? {
+            if !space::needs_reset(&*tx, after, last_op)? {
                 return Ok(None);
             }
             space::reset(&*tx, space, pending).map(Some)

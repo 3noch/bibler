@@ -492,6 +492,36 @@ async fn a_client_behind_the_retention_window_gets_a_reset() {
 }
 
 #[tokio::test]
+async fn a_client_ahead_of_a_restored_space_gets_a_reset() {
+    let cfg = config("restored");
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    for op in [tag_create("op1", "T", "Grace"), paint("op2", "T", T1, T1 + 5, "g1")] {
+        a.op(op).await;
+        a.recv().await;
+        a.recv().await; // ack + change
+    }
+    // Say the space was restored from a backup taken at seq 2, after the client saw seqs 3 and 4 (and then the
+    // space went on to a different seq 2: the client's is "lost-op"). Replaying would skip changes it thinks it has.
+    for (after, last_op) in [(4, json!("op4")), (4, Value::Null), (2, json!("lost-op"))] {
+        let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+        c.send(json!({"type": "hello", "after": after, "last_op": last_op, "pending": []})).await;
+        let reset = c.recv().await;
+        assert_eq!((reset["type"].as_str(), reset["seq"].as_u64()), (Some("reset"), Some(2)), "after {after}");
+        assert_eq!(reset["last_op"], "op2");
+        assert_eq!(reset["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(c.recv().await, json!({"type": "ready", "seq": 2}));
+    }
+    // The same change at its seq replays as usual.
+    let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+    c.send(json!({"type": "hello", "after": 1, "last_op": "op1", "pending": []})).await;
+    assert_eq!(c.recv().await["change"]["seq"], 2);
+    assert_eq!(c.recv().await, json!({"type": "ready", "seq": 2}));
+}
+
+#[tokio::test]
 async fn a_storage_failure_closes_the_socket_instead_of_rejecting_the_op() {
     let cfg = config("storage-failure");
     let srv = start(&cfg).await;

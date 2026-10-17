@@ -7,7 +7,7 @@
 // (the personal space keeps the original keys).
 //
 // Persistence (several tabs share one origin):
-//   localStorage  BASE_KEY    confirmed rows at a seq (a cache; any tab may write it, never to a lower seq)
+//   localStorage  BASE_KEY    confirmed rows at a seq (a cache; any tab may write it, never to a lower seq unless its space went back)
 //   localStorage  OUTBOX_KEY  unconfirmed ops of every tab (union; an op leaves only once confirmed or dropped),
 //                             updated under a Web Lock. Any tab may (re)send any op: ops are idempotent.
 //   sessionStorage UNDO_KEY   this tab's undo/redo history
@@ -49,7 +49,7 @@ const SESSION_KEY = "bible-tags/session/v1";
 const GROUPS_KEY = "bible-tags/groups/v1";
 const COLORS = ["#e6a23c", "#4fa3e0", "#6cc070", "#e06c9f", "#9b7be0", "#e0c84f", "#4fc9c0", "#e07b4f", "#8fa0b0"];
 
-type Base = Pick<Snapshot, "owner" | "seq" | "rows" | "changes" | "confirmed">;
+type Base = Pick<Snapshot, "owner" | "seq" | "lastOp" | "rows" | "changes" | "confirmed">;
 type Outbox = { owner: string; ops: Op[] };
 type Undo = Pick<Snapshot, "owner" | "undo" | "redo">;
 
@@ -214,9 +214,11 @@ export async function openTagStore() {
     try {
       const snap = sync.snapshot();
       const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, keyOf(BASE_KEY));
-      if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq)) {
-        const { owner: o, seq, rows, changes, confirmed } = snap;
-        localStorage.setItem(keyOf(BASE_KEY), JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
+      // (Never to a lower seq, unless the space went back: see SyncState.wentBack.)
+      if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq || sync.wentBack)) {
+        const { owner: o, seq, lastOp, rows, changes, confirmed } = snap;
+        localStorage.setItem(keyOf(BASE_KEY), JSON.stringify({ owner: o, seq, lastOp, rows, changes, confirmed } satisfies Base));
+        sync.wentBack = false;
       }
       const theirs = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
       const ops = theirs?.owner === owner ? [...theirs.ops] : [];

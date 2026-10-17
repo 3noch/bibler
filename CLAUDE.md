@@ -215,7 +215,10 @@ Rust: `crates/normalize/src/lib.rs`).
   client confirms `applied` silently, rebases the rest, drops undo steps it can't revert, and treats an `ack` at or
   below its seq as confirmation. Ops it holds but didn't list (adopted after the hello, or past the 1000 cap) that
   no longer apply are kept, unshown, until the server acks (a duplicate) or rejects them, instead of being dropped
-  with a false notice. Tested: `crates/space/tests/retention.rs` (mutation-checked, 6/6), server
+  with a false notice. **A space restored from an older backup** (2026-10-17, from a review): `hello.last_op` names
+  the client's change at `after`; if the space has no change there or a different one, the client gets a `reset`
+  too (`space::needs_reset`, both servers), keeping its unsent ops; such a tab may overwrite a device cache at a
+  higher seq (`SyncState.wentBack`). Changes the client had seen confirmed that the restored space lacks are lost. Tested: `crates/space/tests/retention.rs` (mutation-checked, 6/6), server
   `a_client_behind_the_retention_window_gets_a_reset`, Cloudflare `test/retention.mjs` (second wrangler run with
   `RETENTION_MS:0`), TS sync tests (mutation-checked, 4/4).
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,

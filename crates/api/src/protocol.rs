@@ -1,11 +1,15 @@
 //! The sync WebSocket (`GET /api/sync`), JSON text frames:
 //! ```text
-//! client: {"type":"hello","after":seq,"pending":[op_id]}  first message: the last seq the client has, and the
-//!                                                  ops it holds unconfirmed (only used for a reset)
+//! client: {"type":"hello","after":seq,"last_op":op_id,"pending":[op_id]}  first message: the last seq the
+//!                                                  client has and that change's op (so a space restored from an
+//!                                                  older backup is noticed), and the ops it holds unconfirmed
+//!                                                  (only used for a reset)
 //!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
 //! server: {"type":"change","change":{seq,...}}     every change after `after`, then live, in seq order
-//!         {"type":"reset","seq":n,"rows":[..],"changes":[],"applied":[op_id]}   instead of the replay when
-//!                                                  changes after `after` were pruned: the whole state at seq n;
+//!         {"type":"reset","seq":n,"last_op":..,"rows":[..],"changes":[],"applied":[op_id]}   instead of the
+//!                                                  replay when one can't be trusted or done (`space::needs_reset`:
+//!                                                  changes after `after` were pruned, or the space has a different
+//!                                                  change at `after` or none): the whole state at seq n;
 //!                                                  `applied` = which of `pending` are already in it
 //!         {"type":"ready","seq":n}                 replay finished
 //!         {"type":"ack","op_id":..,"seq":n}        op applied (its change arrives as a `change` message, unless
@@ -31,6 +35,9 @@ pub const MAX_FRAME: usize = 128 * 1024;
 pub enum ClientMsg {
     Hello {
         after: u64,
+        /// The op of the client's change at `after` (absent from older clients: then only a missing change counts).
+        #[serde(default)]
+        last_op: Option<String>,
         #[serde(default)]
         pending: Vec<String>,
     },
@@ -44,7 +51,7 @@ pub enum ClientMsg {
 pub enum ServerMsg<'a> {
     Change { change: &'a Change },
     Ready { seq: u64 },
-    Reset { seq: u64, rows: &'a [Row], changes: &'a [Change], applied: &'a [String] },
+    Reset { seq: u64, last_op: Option<&'a str>, rows: &'a [Row], changes: &'a [Change], applied: &'a [String] },
     Ack { op_id: &'a str, seq: u64 },
     Reject { op_id: &'a str, code: &'a str, message: String },
     Error { message: &'a str },
@@ -58,9 +65,9 @@ impl ServerMsg<'_> {
 }
 
 impl<'a> ServerMsg<'a> {
-    /// The `reset` message for a [`space::Reset`] (no changes: they were pruned).
+    /// The `reset` message for a [`space::Reset`] (no changes: they may be pruned).
     #[must_use]
     pub fn reset(r: &'a space::Reset) -> Self {
-        ServerMsg::Reset { seq: r.seq, rows: &r.rows, changes: &[], applied: &r.applied }
+        ServerMsg::Reset { seq: r.seq, last_op: r.last_op.as_deref(), rows: &r.rows, changes: &[], applied: &r.applied }
     }
 }

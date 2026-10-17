@@ -165,11 +165,18 @@ async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64
     }
 }
 
-/// Too far behind to replay (changes after `*last` were pruned): send the whole state instead, advancing `*last`.
-/// False if the socket should close.
-async fn reset_if_pruned(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64, pending: &[String]) -> bool {
+/// If the client at `*last` can't be replayed to (`space::needs_reset`), send the whole state instead, advancing
+/// `*last`. False if the socket should close.
+async fn reset_if_needed(
+    st: &Arc<AppState>,
+    space: &str,
+    tx: &mut Tx,
+    last: &mut u64,
+    last_op: Option<String>,
+    pending: &[String],
+) -> bool {
     let (store, s, after, pending) = (st.store.clone(), space.to_string(), *last, pending.to_vec());
-    match blocking(move || store.catch_up(&s, after, &pending)).await {
+    match blocking(move || store.catch_up(&s, after, last_op.as_deref(), &pending)).await {
         Ok(Ok(None)) => true,
         Ok(Ok(Some(reset))) => {
             *last = reset.seq;
@@ -199,11 +206,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     };
-    let (mut last, mut pending) = loop {
+    let (mut last, last_op, mut pending) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => {
-                if let Ok(ClientMsg::Hello { after, pending }) = serde_json::from_str::<ClientMsg>(&t) {
-                    break (after, pending);
+                if let Ok(ClientMsg::Hello { after, last_op, pending }) = serde_json::from_str::<ClientMsg>(&t) {
+                    break (after, last_op, pending);
                 }
                 let _ = send(&mut tx, &ServerMsg::Error { message: "expected hello" }).await;
                 return;
@@ -213,14 +220,15 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
         }
     };
     pending.truncate(MAX_HELLO_PENDING);
-    if !reset_if_pruned(&st, &space, &mut tx, &mut last, &pending).await {
+    if !reset_if_needed(&st, &space, &mut tx, &mut last, last_op, &pending).await {
         return;
     }
     if !send_since(&st, &space, &mut tx, &mut last, None).await {
         // The replay reads page by page while other sockets' ops keep pruning: if its next changes were pruned
         // meanwhile, a reset carries on from there (rather than closing, for a reset on reconnecting).
         let before = last;
-        if !reset_if_pruned(&st, &space, &mut tx, &mut last, &pending).await
+        // (No `last_op`: the changes up to `last` came from here just now.)
+        if !reset_if_needed(&st, &space, &mut tx, &mut last, None, &pending).await
             || last == before
             || !send_since(&st, &space, &mut tx, &mut last, None).await
         {

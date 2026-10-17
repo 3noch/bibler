@@ -1,5 +1,6 @@
 // Retention under wrangler dev with RETENTION_MS=0 (each op prunes every older change): a client too far behind
-// gets a reset, a re-sent pruned op is still a duplicate, and replay from the pruning point still works.
+// gets a reset, a re-sent pruned op is still a duplicate, and replay from the pruning point still works. Also a
+// client ahead of its space (restored from a backup) gets a reset.
 import assert from "node:assert/strict";
 const B = process.argv[2];
 const G = 18 * 2 ** 24 + 8 * 2 ** 16 + 9 * 2 ** 8; // Esther 8:9, word 0
@@ -53,5 +54,18 @@ const recent = connect({ after: 1 });
 await recent.ready;
 assert.deepEqual(recent.msgs.filter((m) => m.type === "change").map((m) => m.change.seq), [2]);
 
-for (const c of [a, late, recent]) c.ws.close();
+assert.equal(reset.last_op, "o2");
+
+// A space restored from an older backup: a client ahead of it, or with a different change at its seq, gets a reset.
+const ahead = connect({ after: 4, last_op: "o4" });
+const other = connect({ after: 2, last_op: "lost" });
+for (const c of [ahead, other]) {
+  await c.ready;
+  assert.deepEqual(c.msgs.map((m) => [m.type, m.seq]), [["reset", 2], ["ready", 2]]);
+}
+const same = connect({ after: 2, last_op: "o2" });
+await same.ready;
+assert.deepEqual(same.msgs.map((m) => m.type), ["ready"], "the same change: nothing to send");
+
+for (const c of [a, late, recent, ahead, other, same]) c.ws.close();
 console.log("cloudflare retention: ok");

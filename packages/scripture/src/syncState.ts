@@ -13,23 +13,27 @@
  */
 import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row } from "./ops.ts";
 
-/** `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are already applied. */
-export type ClientMsg = { type: "hello"; after: number; pending?: string[] } | { type: "op"; op: Op };
+/** `hello.last_op`: the op of the client's change at `after`, so a server whose space went back (restored from an
+ *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
+ *  already applied. */
+export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op };
 export type ServerMsg =
   | { type: "change"; change: Change }
   | { type: "ready"; seq: number }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }
-  /** Replace the confirmed state wholesale (the client is behind and the log can't be replayed: the server pruned
-   *  it, or the browser-local store in offline-only builds). `applied` = which of the hello's `pending` ops are
+  /** Replace the confirmed state wholesale (the log can't be replayed: the server pruned it, or its space is behind
+   *  this client or has a different change at `after`, or the browser-local store in offline-only builds). `applied` = which of the hello's `pending` ops are
    *  already in `rows` (dropped silently); the rest are rebased onto it. Undo steps whose changes aren't in
    *  `changes` (or pending) are dropped, since they can no longer be reverted. */
-  | { type: "reset"; seq: number; rows: Row[]; changes: Change[]; applied?: string[] };
+  | { type: "reset"; seq: number; last_op?: string | null; rows: Row[]; changes: Change[]; applied?: string[] };
 
 export interface Snapshot {
   owner: string;
   seq: number;
+  /** The op of the change at `seq`, if known. */
+  lastOp?: string | null;
   rows: Row[];
   /** Recent changes (revert targets for undo/redo). */
   changes: Change[];
@@ -49,6 +53,10 @@ const KEEP_CONFIRMED = 2000;
 export class SyncState {
   owner: string;
   seq = 0;
+  /** The op of the change at `seq`, if known (see `hello.last_op`). */
+  lastOp: string | null = null;
+  /** A reset took this client to a lower seq (its space went back): its base may replace a cache at a higher seq. */
+  wentBack = false;
   base: MemRows;
   view: MemRows;
   pending: Op[] = [];
@@ -79,6 +87,7 @@ export class SyncState {
     this.base = new MemRows();
     if (snap && snap.owner === owner) {
       this.seq = snap.seq;
+      this.lastOp = snap.lastOp ?? null;
       this.base = new MemRows(snap.rows, snap.changes);
       this.pending = snap.pending;
       this.undo = snap.undo;
@@ -175,7 +184,7 @@ export class SyncState {
     this.send = send;
     this.status = "syncing";
     this.helloPending = new Set(this.pending.map((o) => o.op_id));
-    send({ type: "hello", after: this.seq, pending: [...this.helloPending] });
+    send({ type: "hello", after: this.seq, last_op: this.lastOp, pending: [...this.helloPending] });
     this.changed();
   }
 
@@ -194,6 +203,7 @@ export class SyncState {
         if (c.seq !== this.seq + 1) return false; // gap: reconnect and replay from our seq
         this.base.applyChange(c);
         this.seq = c.seq;
+        this.lastOp = c.op_id;
         this.confirm(c.op_id);
         this.pending = this.pending.filter((op) => op.op_id !== c.op_id);
         this.rebuild();
@@ -222,7 +232,9 @@ export class SyncState {
         return false;
       case "reset": {
         this.base = new MemRows(msg.rows, msg.changes);
+        if (msg.seq < this.seq) this.wentBack = true;
         this.seq = msg.seq;
+        this.lastOp = msg.last_op ?? null;
         for (const c of msg.changes) this.confirm(c.op_id);
         for (const id of msg.applied ?? []) this.confirm(id);
         for (const o of this.pending) if (!this.helloPending.has(o.op_id) && !this.confirmedSet.has(o.op_id)) this.unsure.add(o.op_id);
@@ -312,6 +324,7 @@ export class SyncState {
     return {
       owner: this.owner,
       seq: this.seq,
+      lastOp: this.lastOp,
       rows: this.base.allRows(),
       changes: recent.filter((c, i) => i < KEEP_CHANGES || needed.has(c.op_id)),
       pending: this.pending,

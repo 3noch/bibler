@@ -142,10 +142,10 @@ impl DurableObject for Space {
             return close(&ws, "message too large");
         }
         match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
-            (false, Ok(ClientMsg::Hello { after, mut pending })) => {
+            (false, Ok(ClientMsg::Hello { after, last_op, mut pending })) => {
                 let mut after = after;
-                // Too far behind to replay (changes after `after` were pruned): send the whole state instead.
-                if after < space::pruned_through(&self.db).map_err(worker::Error::RustError)? {
+                // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead.
+                if space::needs_reset(&self.db, after, last_op.as_deref()).map_err(worker::Error::RustError)? {
                     pending.truncate(MAX_HELLO_PENDING);
                     let reset = space::reset(&self.db, &socket.space, &pending).map_err(worker::Error::RustError)?;
                     ws.send_with_str(ServerMsg::reset(&reset).json())?;
