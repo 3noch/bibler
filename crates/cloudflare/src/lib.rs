@@ -283,6 +283,27 @@ async fn merge(env: &Env, from: &str, into: &str) -> Result<usize> {
     res.json().await
 }
 
+/// The anonymous owner `from`, merged into account `into`, may have joined (or created) groups: its comments there
+/// become `into`'s (so they stay editable), its sockets there are closed, then its memberships move to `into`.
+async fn carry_groups(env: &Env, from: &str, into: &str, now: i64) -> Result<()> {
+    let accounts = D1Accounts(accounts(env).await?);
+    for space in groups::spaces_of(&accounts, from).await.map_err(worker::Error::RustError)? {
+        let body = serde_json::json!({ "space": space, "from": from, "to": into });
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post).with_body(Some(js(&body.to_string())));
+        let stub = space_stub(env, &space)?;
+        let res = stub.fetch_with_request(Request::new_with_init("https://space/reassign", &init)?).await?;
+        if res.status_code() != 200 {
+            return Err(worker::Error::RustError(format!("reassign in {space}: HTTP {}", res.status_code())));
+        }
+        let mut kick = RequestInit::new();
+        kick.with_method(Method::Post);
+        stub.fetch_with_request(Request::new_with_init(&format!("https://space/kick?owner={from}"), &kick)?).await?;
+    }
+    groups::move_memberships(&accounts, from, into, now).await.map_err(worker::Error::RustError)?;
+    Ok(())
+}
+
 // ---- Sign in with Google ----
 
 /// From the `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets (both or neither). `GOOGLE_AUTH_URL` /
@@ -388,6 +409,7 @@ async fn sign_in(req: &Request, env: &Env, identity: &Identity) -> Result<String
             if let Some(a) = merge_from {
                 let n = merge(env, &a, &owner).await?;
                 worker::console_log!("merged {n} changes from anonymous owner {a} into {owner}");
+                carry_groups(env, &a, &owner, now).await?;
             }
             owner
         }

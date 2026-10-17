@@ -31,15 +31,16 @@ async function session(cookie) {
   const sc = r.headers.get("set-cookie");
   return { ...(await r.json()), cookie: sc ? sc.split(";")[0] : cookie };
 }
-function sync(cookie) {
-  const ws = new WebSocket(B.replace("http", "ws") + "/api/sync", { headers: { Cookie: cookie, Origin: B } });
+function sync(cookie, space) {
+  const q = space ? `?space=${space}` : "";
+  const ws = new WebSocket(B.replace("http", "ws") + "/api/sync" + q, { headers: { Cookie: cookie, Origin: B } });
   const msgs = [];
   ws.onmessage = (e) => msgs.push(JSON.parse(e.data));
   const until = async (pred) => { for (let i = 0; i < 100; i++) { const m = msgs.find(pred); if (m) return m; await new Promise((r) => setTimeout(r, 50)); } throw new Error(JSON.stringify(msgs)); };
   return new Promise((r) => (ws.onopen = () => { ws.send(JSON.stringify({ type: "hello", after: 0 })); r({ ws, msgs, until }); }));
 }
-async function ops(cookie, list) {
-  const s = await sync(cookie);
+async function ops(cookie, list, space) {
+  const s = await sync(cookie, space);
   await s.until((m) => m.type === "ready");
   for (const o of list) s.ws.send(JSON.stringify({ type: "op", op: o }));
   for (const o of list) assert.equal((await s.until((m) => m.op_id === o.op_id && m.type !== "change")).type, "ack", o.op_id);
@@ -101,6 +102,31 @@ const spans = [...rows.values()].filter((r) => r.table === "tagging" && r.delete
 const tags = new Map([...rows.values()].filter((r) => r.table === "tag").map((r) => [r.id, r.name]));
 assert.deepEqual(spans.map(([t, s, e]) => [tags.get(t), s, e]), [["Grace", 10, 30], ["Love", 50, 60]]);
 all.ws.close();
+
+// 2b. A group joined (and commented in) while anonymous comes along when signing in to an existing account.
+const api = async (cookie, method, path, body) => {
+  const r = await fetch(B + "/api" + path, { method, headers: { Origin: B, Cookie: cookie, "content-type": "application/json" }, body: body && JSON.stringify(body) });
+  assert.equal(r.status, 200, `${method} ${path}`);
+  return r.json();
+};
+const owner = await session(); // someone else's group
+const group = await api(owner.cookie, "POST", "/groups", { name: "Study" });
+const token = (await api(owner.cookie, "POST", `/groups/${group.id}/invites`, { role: "edit" })).invites.edit;
+const c = await session();
+await api(c.cookie, "POST", "/join", { token });
+await ops(c.cookie, [
+  { op_id: "c1", kind: "tag_create", id: "TC", name: "Grace", color: "#ff0000", now: 7 },
+  { op_id: "c2", kind: "paint", tag: "TC", text_id: "kjv-1769-v2", start: G, end: G + 3, new_id: "pc", now: 7 },
+  { op_id: "c3", kind: "comment_create", id: "cc", tagging: "pc", body: "Note", now: 7 },
+], group.id);
+const s3 = await signIn(c.cookie, { sub: "s1", name: "Ann", email: "ann@example.com" });
+assert.deepEqual((await api(s3.cookie, "GET", "/groups")).groups, [{ id: group.id, name: "Study", role: "edit" }], "the membership came along");
+const g = await sync(s3.cookie, group.id);
+await g.until((m) => m.type === "ready");
+const reassign = g.msgs.find((m) => m.type === "change" && m.change.kind === "reassign");
+assert.equal(reassign?.change.rows[0].after.author, a.owner, "the comment is the account's now");
+g.ws.close();
+await ops(s3.cookie, [{ op_id: "c4", kind: "comment_update", id: "cc", body: "Edited", now: 8 }], group.id); // not not_author
 
 // 3. Forged state and a cancelled consent fail safely.
 const r = await fetch(`${B}/api/auth/google?return=%23x`, { redirect: "manual" });

@@ -358,6 +358,41 @@ pub fn import(db: &impl Db, owner: &str, rows: &[Row], changes: &[Change]) -> Re
     changes.iter().try_for_each(|c| insert_change(db, owner, c, 0))
 }
 
+/// Make `to` the author of every comment `from` wrote in `owner`'s data (signing in merges an anonymous owner into
+/// an existing account; in a group the comments stay where they are but must stay editable by their writer). Recorded
+/// as an ordinary change (kind `reassign`, op id `reassign-<from>-<seq>`), so open clients receive it like any
+/// other. Returns `None` if `from` wrote nothing here.
+///
+/// # Errors
+/// On storage failure.
+pub fn reassign_author(db: &impl Db, owner: &str, from: &str, to: &str, now: i64) -> Result<Option<Change>, String> {
+    let src = Rows { db, owner, err: RefCell::new(None) };
+    let sql = format!("SELECT {COMMENT_COLS} FROM comments WHERE owner_id = ? AND author_id = ? ORDER BY id");
+    let comments = src.list(&sql, &[owner.into(), from.into()], comment_row);
+    if let Some(e) = src.err.into_inner() {
+        return Err(e);
+    }
+    if comments.is_empty() {
+        return Ok(None);
+    }
+    let seq = db.query("SELECT COALESCE(MAX(seq), 0) + 1 FROM changes", &[])?;
+    let seq = u64::try_from(int(&seq[0][0])?).map_err(|e| e.to_string())?;
+    let rows = comments
+        .into_iter()
+        .map(|before| {
+            let after = CommentRow { author: Some(to.to_string()), ..before.clone() };
+            ops::RowChange { before: Some(Row::Comment(before)), after: Row::Comment(after) }
+        })
+        .collect();
+    let change = Change { seq, op_id: format!("reassign-{from}-{seq}"), kind: "reassign".into(), rows };
+    db.exec(
+        "UPDATE comments SET author_id = ? WHERE owner_id = ? AND author_id = ?",
+        &[to.into(), owner.into(), from.into()],
+    )?;
+    insert_change(db, owner, &change, now)?;
+    Ok(Some(change))
+}
+
 /// The owners whose rows are in this space.
 ///
 /// # Errors

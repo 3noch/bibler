@@ -13,6 +13,7 @@
 //! POST /kick?owner=                           close that owner's sockets (their role changed or they left)
 //! GET  /export?owner=   -> [Row]              an owner's live data (space::export)
 //! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
+//! POST /reassign {space, from, to}            `from`'s comments here become `to`'s (space::reassign_author)
 //! ```
 
 use api::check::Texts;
@@ -99,6 +100,15 @@ impl DurableObject for Space {
                 }
                 Response::ok("")
             }
+            "/reassign" => {
+                let r: Reassign = req.json().await?;
+                let change = space::reassign_author(&self.db, &r.space, &r.from, &r.to, now_ms())
+                    .map_err(worker::Error::RustError)?;
+                if let Some(c) = &change {
+                    self.broadcast(&ServerMsg::Change { change: c }.json());
+                }
+                Response::ok("")
+            }
             "/merge" => {
                 let m: Merge = req.json().await?;
                 let now = now_ms();
@@ -150,6 +160,13 @@ impl DurableObject for Space {
     async fn websocket_error(&self, _ws: WebSocket, _error: worker::Error) -> Result<()> {
         Ok(())
     }
+}
+
+#[derive(Deserialize)]
+struct Reassign {
+    space: String,
+    from: String,
+    to: String,
 }
 
 #[derive(Deserialize)]

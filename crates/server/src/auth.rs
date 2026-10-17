@@ -99,12 +99,9 @@ pub async fn google_callback(State(st): State<Arc<AppState>>, headers: HeaderMap
     };
     let current = owner_of(&st, &headers).await;
     let old_session = session_token(&headers).map(|t| token_hash(&t));
-    let store = st.store.clone();
-    let signed_in =
-        blocking(move || sign_in(store.as_ref(), current.as_deref(), &identity, old_session.as_deref())).await;
-    let token = match signed_in {
-        Ok(Ok(t)) => t,
-        Ok(Err(e)) | Err(e) => {
+    let token = match sign_in(&st, current, identity, old_session).await {
+        Ok(t) => t,
+        Err(e) => {
             tracing::error!("sign-in: {e}");
             return fail("internal");
         }
@@ -117,41 +114,80 @@ pub async fn google_callback(State(st): State<Arc<AppState>>, headers: HeaderMap
     res
 }
 
-/// Decide the account for `identity` given the session's current owner, and open a new session for it.
+/// Decide the account for `identity` given the session's current owner (merging an anonymous owner into an
+/// existing account: its personal data, its groups and its comments in them), and open a new session for it.
 /// Returns the new session token.
-fn sign_in(store: &dyn Store, current: Option<&str>, identity: &Identity, old: Option<&str>) -> Result<String, String> {
+async fn sign_in(
+    st: &Arc<AppState>,
+    current: Option<String>,
+    identity: Identity,
+    old: Option<String>,
+) -> Result<String, String> {
+    let store = st.store.clone();
+    let (owner, merged) = blocking(move || account_for(store.as_ref(), current.as_deref(), &identity)).await??;
+    if let Some(from) = merged {
+        carry_groups(st, &from, &owner).await?;
+    }
+    let store = st.store.clone();
+    blocking(move || {
+        let now = now_ms();
+        if let Some(h) = old {
+            store.delete_session(&h)?;
+        }
+        let token = random_hex(32)?;
+        store.create_session(&token_hash(&token), &owner, now)?;
+        Ok(token)
+    })
+    .await?
+}
+
+/// The account `identity` signs in to; also the anonymous owner merged into it, if any (its personal data is
+/// copied here; `carry_groups` does the rest).
+fn account_for(
+    store: &dyn Store,
+    current: Option<&str>,
+    identity: &Identity,
+) -> Result<(String, Option<String>), String> {
     let now = now_ms();
     let existing = store.identity_owner(&identity.provider, &identity.subject)?;
     let anonymous = match current {
         Some(c) => store.owner_identity(c)?.is_none(),
         None => false,
     };
-    let owner = match api::accounts::sign_in(current, anonymous, existing.as_deref()) {
+    Ok(match api::accounts::sign_in(current, anonymous, existing.as_deref()) {
         SignIn::Existing { owner, merge_from } => {
-            if let Some(a) = merge_from {
+            if let Some(a) = &merge_from {
                 // Personal spaces: the space id is the owner id.
-                let n = store.merge(&a, &a, &owner, &owner, now)?;
+                let n = store.merge(a, a, &owner, &owner, now)?;
                 tracing::info!("merged {n} changes from anonymous owner {a} into {owner}");
             }
-            owner
+            (owner, merge_from)
         }
         SignIn::Link(a) => {
             store.add_identity(identity, &a, now)?;
-            a
+            (a, None)
         }
         SignIn::New => {
             let o = random_hex(16)?;
             store.create_owner(&o, now)?;
             store.add_identity(identity, &o, now)?;
-            o
+            (o, None)
         }
-    };
-    if let Some(h) = old {
-        store.delete_session(h)?;
+    })
+}
+
+/// The anonymous owner `from`, merged into account `to`, may have joined (or created) groups: its comments there
+/// become `to`'s (so they stay editable), its sockets there are closed, then its memberships move to `to`.
+async fn carry_groups(st: &Arc<AppState>, from: &str, to: &str) -> Result<(), String> {
+    let db = crate::groups::Accounts(st.store.clone());
+    let now = now_ms();
+    for space in api::groups::spaces_of(&db, from).await? {
+        let (store, s, f, t) = (st.store.clone(), space.clone(), from.to_string(), to.to_string());
+        blocking(move || store.reassign_author(&s, &f, &t, now)).await??;
+        st.hub.kick(&space, from);
     }
-    let token = random_hex(32)?;
-    store.create_session(&token_hash(&token), &owner, now)?;
-    Ok(token)
+    api::groups::move_memberships(&db, from, to, now).await?;
+    Ok(())
 }
 
 /// `POST /api/logout`.

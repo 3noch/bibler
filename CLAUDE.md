@@ -197,7 +197,9 @@ Rust: `crates/normalize/src/lib.rs`).
   `groups_share_rows_with_roles`, Cloudflare `test/groups.mjs`, browser (create group, invite links, a scripted
   second member's paint + comment arriving live with author, view-only join via `?join=` with live updates and no
   edit controls, switching spaces). Not yet: group-level comment moderation (admins can't delete others' comments),
-  transferring/deleting a group, showing who painted what, rate limits on joins.
+  transferring/deleting a group, showing who painted what, rate limits on joins. Removing a member does NOT revoke
+  the invite link they joined with, so they can rejoin with it (found in review 2026-10-17); the user chose not to
+  rotate links on removal since others may rely on them: see the TODO in Next steps.
 - **Retention** (done 2026-10-17): changes stay replayable/revertible for 30 days (`space::RETENTION_MS`; server
   `--retention-days`, Worker var `RETENTION_MS` for tests). Pruning runs online, never as a job: after each applied
   (non-duplicate) op the space prunes at most `PRUNE_BATCH` (64) of its oldest changes (user's choice: no long work in
@@ -225,7 +227,10 @@ Rust: `crates/normalize/src/lib.rs`).
   owner becomes the account; anonymous + existing account -> `space::merge` copies the anonymous owner's live data
   into the account (same-named tags combined case-insensitively, taggings painted so overlaps merge, comments
   follow, palette appended while room; original timestamps; idempotent op ids `merge-<from>-<row id>`; the
-  anonymous space is left as it was) and the session switches; signed in + other identity -> switch (new account if
+  anonymous space is left as it was) and the session switches; its groups come along (2026-10-17, from a review:
+  they used to be lost): in each, `space::reassign_author` makes the account the author of its comments as an
+  ordinary change (kind `reassign`, so open clients get it and the comments stay editable), its sockets there are
+  kicked, then `groups::move_memberships` moves memberships (higher role wins) and `created_by`; signed in + other identity -> switch (new account if
   unknown). Every sign-in rotates the session token. `POST /api/logout` deletes the session; the client then clears
   its base/outbox/undo and reloads. Config: env `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (not flags), optional
   `--public-url`; redirect URI = `<origin>/api/auth/google/callback`. Client (`Account.tsx`): top-bar person button
@@ -277,6 +282,9 @@ Shared JSON fixtures are the behavioral spec for anything duplicated across TS a
 implementation and confirm tests fail. Don't claim something is verified unless it was actually run.
 
 ## Next steps
+- TODO (user, 2026-10-17): think through removal + anonymous members + write-enabled invite links. A removed member
+  can rejoin with the same link, and anonymous joins are free to repeat. Options: require sign-in for write-enabled
+  (edit/admin) links, a per-group ban list keyed by account, or per-person invites. Decide before groups go public.
 - Groups follow-ups (user will review first): see the Groups bullet's "Not yet".
 - Deploy to Cloudflare, QA first (user: `wrangler login`, two `wrangler d1 create`, a domain, secrets; README) and try sign-in with a real
   Google OAuth client. Then: rate limits.

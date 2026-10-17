@@ -110,6 +110,47 @@ pub async fn role_of(db: &impl AccountsDb, space: &str, owner: &str) -> Result<O
     Ok(rows.first().and_then(|r| Role::parse(text(&r[0]))))
 }
 
+/// The groups `owner` belongs to.
+///
+/// # Errors
+/// On storage failure.
+pub async fn spaces_of(db: &impl AccountsDb, owner: &str) -> Result<Vec<String>, String> {
+    let rows =
+        db.query("SELECT space_id FROM memberships WHERE owner_id = ? ORDER BY space_id", vec![owner.into()]).await?;
+    Ok(rows.iter().map(|r| text(&r[0]).to_string()).collect())
+}
+
+/// Signing in merged anonymous owner `from` into account `to`: give `to` `from`'s memberships (keeping the higher
+/// role where both are members) and the groups `from` created. Call it after reassigning `from`'s comments in those
+/// groups (`space::reassign_author`), so a failure in between can be retried. Returns the groups.
+///
+/// # Errors
+/// On storage failure.
+pub async fn move_memberships(db: &impl AccountsDb, from: &str, to: &str, now: i64) -> Result<Vec<String>, String> {
+    let rows = db
+        .query("SELECT space_id, role FROM memberships WHERE owner_id = ? ORDER BY space_id", vec![from.into()])
+        .await?;
+    let mut spaces = vec![];
+    for r in &rows {
+        let (space, role) = (text(&r[0]).to_string(), Role::parse(text(&r[1])).unwrap_or(Role::Read));
+        match role_of(db, &space, to).await? {
+            None => {
+                let sql = "INSERT INTO memberships (space_id, owner_id, role, created_at) VALUES (?, ?, ?, ?)";
+                db.exec(sql, vec![space.as_str().into(), to.into(), role.as_str().into(), now.into()]).await?;
+            }
+            Some(theirs) if role > theirs => {
+                let sql = "UPDATE memberships SET role = ? WHERE space_id = ? AND owner_id = ?";
+                db.exec(sql, vec![role.as_str().into(), space.as_str().into(), to.into()]).await?;
+            }
+            Some(_) => {}
+        }
+        spaces.push(space);
+    }
+    db.exec("DELETE FROM memberships WHERE owner_id = ?", vec![from.into()]).await?;
+    db.exec("UPDATE groups SET created_by = ? WHERE created_by = ?", vec![to.into(), from.into()]).await?;
+    Ok(spaces)
+}
+
 /// What to answer, and whom to disconnect.
 #[derive(Debug)]
 pub struct Reply {

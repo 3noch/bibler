@@ -160,7 +160,12 @@ fn url_query(url: &str) -> HashMap<String, String> {
 
 /// Apply ops over the sync socket and wait for their acks; returns the replayed change rows' `after`s.
 async fn sync(srv: &Srv, cookie: &str, ops: &[Value]) -> Vec<Value> {
-    let mut req = format!("ws://{}/api/sync", srv.addr).into_client_request().unwrap();
+    sync_in(srv, cookie, "", ops).await
+}
+
+/// `sync` in a space (`query` = `?space=<id>`, or "" for the personal space).
+async fn sync_in(srv: &Srv, cookie: &str, query: &str, ops: &[Value]) -> Vec<Value> {
+    let mut req = format!("ws://{}/api/sync{query}", srv.addr).into_client_request().unwrap();
     req.headers_mut().insert(header::COOKIE, cookie.parse().unwrap());
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     ws.send(Message::text(json!({"type": "hello", "after": 0}).to_string())).await.unwrap();
@@ -280,4 +285,48 @@ async fn a_forged_or_stale_callback_is_refused() {
     let req = Request::get("/api/auth/google/callback?error=access_denied").body(Body::empty()).unwrap();
     let (_, headers, _) = call(&srv, req).await;
     assert_eq!(headers[header::LOCATION], "/?auth_error=cancelled");
+}
+
+async fn api(srv: &Srv, cookie: &str, method: &str, path: &str, body: Value) -> Value {
+    let req = Request::builder()
+        .method(method)
+        .uri(format!("/api{path}"))
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, _, body) = call(srv, req).await;
+    assert_eq!(status, StatusCode::OK, "{method} {path}: {body}");
+    serde_json::from_str(&body).unwrap_or(Value::Null)
+}
+
+#[tokio::test]
+async fn signing_in_keeps_the_groups_joined_while_anonymous() {
+    let srv = start("auth-groups").await;
+    // An account that runs a group, and a new device that joins it anonymously and comments.
+    let (_, ann) = session(&srv, None).await;
+    let (ann_signed, phone) =
+        (sign_in(&srv, ann.as_deref(), "ann").await.1.unwrap(), session(&srv, None).await.1.unwrap());
+    let g = api(&srv, &ann_signed, "POST", "/groups", json!({"name": "Study"})).await;
+    let id = g["id"].as_str().unwrap().to_string();
+    let edit = api(&srv, &ann_signed, "POST", &format!("/groups/{id}/invites"), json!({"role": "edit"})).await
+        ["invites"]["edit"]
+        .clone();
+    api(&srv, &phone, "POST", "/join", json!({"token": edit})).await;
+    let q = format!("?space={id}");
+    let comment =
+        json!({"op_id": "c", "kind": "comment_create", "id": "c1", "tagging": "g1", "body": "Note", "now": 3});
+    sync_in(&srv, &phone, &q, &[tag("t", "T", "Grace"), paint("p", "T", T1, T1 + 3, "g1"), comment]).await;
+    // Bob already has an account (on another device); the phone signs in to it.
+    let (_, bob) = session(&srv, None).await;
+    let bob_signed = sign_in(&srv, bob.as_deref(), "bob").await.1.unwrap();
+    let phone_signed = sign_in(&srv, Some(&phone), "bob").await.1.unwrap();
+
+    let groups = api(&srv, &bob_signed, "GET", "/groups", Value::Null).await;
+    assert_eq!(groups["groups"], json!([{"id": id, "name": "Study", "role": "edit"}]), "the membership came along");
+    let rows = sync_in(&srv, &phone_signed, &q, &[]).await;
+    let bob_id = session(&srv, Some(&bob_signed)).await.0["owner"].as_str().unwrap().to_string();
+    let authors: Vec<_> = rows.iter().filter(|r| r["table"] == "comment").map(|r| r["author"].clone()).collect();
+    assert_eq!(authors.last(), Some(&json!(bob_id)), "the comment is bob's now (the replay ends with the reassign)");
+    let update = json!({"op_id": "u", "kind": "comment_update", "id": "c1", "body": "Edited", "now": 4});
+    sync_in(&srv, &bob_signed, &q, &[update]).await; // panics on a reject (not_author)
 }

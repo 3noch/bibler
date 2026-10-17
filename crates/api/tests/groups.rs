@@ -103,3 +103,34 @@ fn create_invite_join_roles_and_leave() {
     assert_eq!(call(&db, "ann", "DELETE", &ann, &none).status, 200, "alone: may leave");
     assert_eq!(call(&db, "cat", "POST", "/join", &json!({"token": read})).body["error"], "bad_invite");
 }
+
+#[test]
+fn signing_in_moves_an_anonymous_owners_memberships_to_the_account() {
+    let db = db();
+    let create = |owner: &str, name: &str| {
+        call(&db, owner, "POST", "/groups", &json!({"name": name})).body["id"].as_str().unwrap().to_string()
+    };
+    let invite = |g: &str, role: &str| {
+        call(&db, "ann", "POST", &format!("/groups/{g}/invites"), &json!({"role": role})).body["invites"][role]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (both, only_cat, cats) = (create("ann", "Both"), create("ann", "Cat only"), create("cat", "Cat's own"));
+    // bob (the account) can view "Both"; cat (anonymous) can edit it, and edits "Cat only", and created "Cat's own".
+    call(&db, "bob", "POST", "/join", &json!({"token": invite(&both, "read")}));
+    call(&db, "cat", "POST", "/join", &json!({"token": invite(&both, "edit")}));
+    call(&db, "cat", "POST", "/join", &json!({"token": invite(&only_cat, "edit")}));
+
+    let mut moved = run(api::groups::move_memberships(&db, "cat", "bob", 2)).unwrap();
+    moved.sort();
+    let mut want = vec![both.clone(), only_cat.clone(), cats.clone()];
+    want.sort();
+    assert_eq!(moved, want);
+    let role = |g: &str, o: &str| run(role_of(&db, g, o)).unwrap();
+    assert_eq!(role(&both, "bob"), Some(Role::Edit), "the higher role wins");
+    assert_eq!(role(&only_cat, "bob"), Some(Role::Edit));
+    assert_eq!(role(&cats, "bob"), Some(Role::Admin), "the group cat made is bob's to run");
+    assert_eq!([role(&both, "cat"), role(&only_cat, "cat"), role(&cats, "cat")], [None, None, None]);
+    assert!(run(api::groups::spaces_of(&db, "cat")).unwrap().is_empty());
+}

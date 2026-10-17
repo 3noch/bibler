@@ -72,6 +72,11 @@ pub trait Store: Send + Sync {
     /// # Errors
     /// On storage failure.
     fn owner_identity(&self, owner: &str) -> Result<Option<Identity>, String>;
+    /// Make `to` the author of `from`'s comments in group `space` (`space::reassign_author`), publishing the change.
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn reassign_author(&self, space: &str, from: &str, to: &str, now: i64) -> Result<(), String>;
     /// Copy `from`'s live data (in space `from_space`) into `into`'s (in `into_space`), see `space::merge`.
     /// Returns the number of new changes.
     ///
@@ -364,6 +369,21 @@ impl Store for SqliteStore {
             .optional()
             .map_err(|e| e.to_string())
         })
+    }
+
+    fn reassign_author(&self, space: &str, from: &str, to: &str, now: i64) -> Result<(), String> {
+        let (dir, space, from, to, listener) =
+            (self.dir.clone(), space.to_string(), from.to_string(), to.to_string(), self.listener.clone());
+        self.write(move |w| {
+            let conn = w.space(&dir, &space)?;
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let change = space::reassign_author(&*tx, &space, &from, &to, now)?;
+            tx.commit().map_err(|e| e.to_string())?;
+            if let Some(c) = &change {
+                listener(&space, c);
+            }
+            Ok(())
+        })?
     }
 
     fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String> {
