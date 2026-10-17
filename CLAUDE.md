@@ -213,7 +213,9 @@ Rust: `crates/normalize/src/lib.rs`).
   `hello{after, pending}` with `after < pruned_through` gets `reset{seq, rows (every row incl. tombstones: comments
   follow merge chains), changes: [], applied (which of `pending` are already applied)}` instead of a replay; the
   client confirms `applied` silently, rebases the rest, drops undo steps it can't revert, and treats an `ack` at or
-  below its seq as confirmation. Tested: `crates/space/tests/retention.rs` (mutation-checked, 6/6), server
+  below its seq as confirmation. Ops it holds but didn't list (adopted after the hello, or past the 1000 cap) that
+  no longer apply are kept, unshown, until the server acks (a duplicate) or rejects them, instead of being dropped
+  with a false notice. Tested: `crates/space/tests/retention.rs` (mutation-checked, 6/6), server
   `a_client_behind_the_retention_window_gets_a_reset`, Cloudflare `test/retention.mjs` (second wrangler run with
   `RETENTION_MS:0`), TS sync tests (mutation-checked, 4/4).
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,

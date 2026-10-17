@@ -430,3 +430,24 @@ test("sync: an ack at or below our seq confirms a pending op (applied long ago; 
   assert.deepEqual(notices, []);
   converged(server, b);
 });
+
+test("sync: after a reset, an op missing from the hello isn't dropped; the server says whether it was applied", () => {
+  const server = new FakeServer();
+  const a = client();
+  server.connect(a).flush();
+  a.submit([createTag("T", "Grace")]);
+  a.submit([paint("T", 10, 20, "g1")]);
+  const [tagOp, paintOp] = a.pending;
+  server.connect(a).flush(); // both applied
+  server.prunedThrough = server.log.length;
+  const b = client();
+  const notices: string[] = [];
+  b.onNotice((m) => notices.push(m));
+  const conn = server.connect(b);
+  conn.stepUp(); // hello lists nothing
+  b.adopt([tagOp!, paintOp!]); // say, from another tab's outbox
+  conn.flush(); // reset (applied: []): neither applies to it (id_exists); after ready both are sent and acked
+  assert.deepEqual(notices, [], "they were applied, not refused");
+  assert.ok(b.isConfirmed(tagOp!.op_id) && b.isConfirmed(paintOp!.op_id));
+  converged(server, b);
+});

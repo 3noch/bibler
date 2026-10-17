@@ -60,6 +60,11 @@ export class SyncState {
   /** Op ids this instance dropped (rejected or no longer applicable): never re-send them. */
   readonly dropped = new Set<string>();
   private confirmedSet = new Set<string>();
+  /** The op ids the last hello listed (a reset says which of those are applied). */
+  private helloPending = new Set<string>();
+  /** Pending ops a reset couldn't vouch for (not in the hello): if one no longer applies, it was probably applied
+   *  already, so it waits for the server's ack (or reject) instead of being dropped. */
+  private unsure = new Set<string>();
   private send: ((m: ClientMsg) => void) | null = null;
   private listeners = new Set<() => void>();
   private noticeListeners = new Set<(msg: string) => void>();
@@ -169,7 +174,8 @@ export class SyncState {
   connected(send: (m: ClientMsg) => void) {
     this.send = send;
     this.status = "syncing";
-    send({ type: "hello", after: this.seq, pending: this.pending.map((o) => o.op_id) });
+    this.helloPending = new Set(this.pending.map((o) => o.op_id));
+    send({ type: "hello", after: this.seq, pending: [...this.helloPending] });
     this.changed();
   }
 
@@ -219,6 +225,7 @@ export class SyncState {
         this.seq = msg.seq;
         for (const c of msg.changes) this.confirm(c.op_id);
         for (const id of msg.applied ?? []) this.confirm(id);
+        for (const o of this.pending) if (!this.helloPending.has(o.op_id) && !this.confirmedSet.has(o.op_id)) this.unsure.add(o.op_id);
         // Undo can only revert changes we hold (or ops still pending, whose changes we'll see).
         const revertible = new Set([...msg.changes.map((c) => c.op_id), ...this.pending.filter((o) => !this.confirmedSet.has(o.op_id)).map((o) => o.op_id)]);
         const keep = (steps: string[][]) => steps.filter((s) => s.every((id) => revertible.has(id)));
@@ -249,6 +256,7 @@ export class SyncState {
   // ------------------------------------------------------------------ internals
 
   private confirm(opId: string) {
+    this.unsure.delete(opId);
     if (this.confirmedSet.has(opId)) return;
     this.confirmed.push(opId);
     this.confirmedSet.add(opId);
@@ -266,6 +274,10 @@ export class SyncState {
         kept.push(op);
       } catch (e) {
         if (!(e instanceof OpError)) throw e;
+        if (this.unsure.has(op.op_id)) {
+          kept.push(op); // sent after `ready`; out of the view meanwhile
+          continue;
+        }
         this.dropped.add(op.op_id);
         this.forget(op.op_id);
         this.notice(`An edit could not be applied after syncing (${e.code}) and was dropped`);
@@ -277,6 +289,7 @@ export class SyncState {
 
   private drop(opId: string, msg: string) {
     if (!this.pending.some((op) => op.op_id === opId)) return;
+    this.unsure.delete(opId);
     this.pending = this.pending.filter((op) => op.op_id !== opId);
     this.dropped.add(opId);
     this.forget(opId);
