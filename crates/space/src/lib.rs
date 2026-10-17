@@ -291,11 +291,13 @@ pub fn prune(db: &impl Db, before: i64, limit: usize) -> Result<usize, String> {
         last = Some(int(&r[0])?);
     }
     let Some(last) = last else { return Ok(0) };
-    db.exec("UPDATE changes SET payload = ? WHERE seq > ? AND seq <= ?", &[PRUNED.into(), from.into(), last.into()])?;
+    // Record first: if blanking then fails (Durable Objects have no rollback), clients near the boundary just get a
+    // reset they didn't need, instead of a replay that can never succeed.
     db.exec(
         "INSERT INTO meta (key, value) VALUES ('pruned_through', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
         &[last.to_string().into()],
     )?;
+    db.exec("UPDATE changes SET payload = ? WHERE seq > ? AND seq <= ?", &[PRUNED.into(), from.into(), last.into()])?;
     Ok(rows.iter().take_while(|r| int(&r[0]).is_ok_and(|s| s <= last)).count())
 }
 
