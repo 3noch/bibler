@@ -87,7 +87,8 @@
   hand, PNGs rasterized from it with `rsvg-convert`; the maskable/Apple ones are full-bleed with the art at 80%).
   `src/sw.js` is a template: the `serviceWorker()` plugin in `vite.config.ts` fills in this build's file list,
   a version hash and `TEXT_ID` (`src/textId.ts`) and emits `sw.js`; `main.tsx` registers it in production only.
-  Shell precached per version (old versions deleted); text precached after activation into `text-<TEXT_ID>`;
+  Shell precached per version (old versions deleted); text precached when the page asks (`postMessage("precache-text")` once the worker is ready; not in `activate`,
+  where it stalled the page's requests on a first visit), four files at a time, into `text-<TEXT_ID>`;
   hashed files cache-first; navigations and other files network-first with cache fallback; `/api/` untouched.
   Browser-tested under `/pages/`: 9 shell + 68 text files cached, and with the server stopped an unvisited book
   (Obadiah) opened. iOS gives an installed app storage separate from Safari (matters for local-only tags).
