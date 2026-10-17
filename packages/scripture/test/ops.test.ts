@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { effect, MemRows, OpError, resolveTagging, rowKey, type Change, type Op, type Row, type RowChange, type TaggingRow } from "../src/ops.ts";
+import { effect, MemRows, OpError, resolveTagging, rowEquals, rowKey, type Change, type Op, type Row, type RowChange, type TaggingRow } from "../src/ops.ts";
 
 interface Case {
   name: string;
@@ -134,4 +134,15 @@ test("ops: random sequences keep invariants and undo-all restores the start", ()
   }
   for (const k of ["paint", "erase", "tag_create", "tag_update", "tag_delete", "palette_set", "revert", "comment_create", "comment_update", "comment_delete"])
     assert.ok((kinds.get(k) ?? 0) >= 50, `${k} applied only ${kinds.get(k)} times`);
+});
+
+test("rowEquals compares every key of both rows, like Rust's ==", () => {
+  const c: Row = { table: "comment", id: "c", tagging: "t", body: "x", created_at: 1, edited_at: null, deleted_at: null };
+  const authored: Row = { ...c, author: "a" };
+  assert.equal(rowEquals(c, authored), false);
+  assert.equal(rowEquals(authored, c), false);
+  assert.equal(rowEquals(c, { ...c, author: undefined }), true, "absent == undefined, as Rust's None is omitted");
+  assert.equal(rowEquals({ ...authored, body: "x", id: "c" }, authored), true, "key order doesn't matter");
+  assert.equal(rowEquals(null, undefined), true);
+  assert.equal(rowEquals(c, null), false);
 });
