@@ -68,10 +68,10 @@ export function NearbyPanel(props: Props) {
                         <button class="chip-btn" onClick={() => props.onUnhighlight(h.tag.id, h.iv)} title={`Remove ${h.tag.name} from ${formatInterval(props.text.index, h.iv, "short")} (undo brings it back)`}>
                           <EraserIcon /> Remove
                         </button>
+                        <button class="icon small" onClick={() => props.onEdit(h.tag.id)} title={`Edit ${h.tag.name}`} aria-label={`Edit ${h.tag.name}`}>
+                          <PencilIcon />
+                        </button>
                       </Show>
-                      <button class="icon small" onClick={() => props.onEdit(h.tag.id)} title={`Edit ${h.tag.name}`} aria-label={`Edit ${h.tag.name}`}>
-                        <PencilIcon />
-                      </button>
                     </span>
                   </div>
                   <Snippet text={props.text} iv={h.iv} tags={[h.tag]} current={false} onClick={() => props.onGo(h.iv)} />
@@ -119,7 +119,7 @@ function Section(props: {
         <button class="more search-all" onClick={() => props.onSearch(props.members.map((t) => t.id))} title="Show every place">
           Search all
         </button>
-        <Show when={props.editable}>
+        <Show when={props.editable && !props.store.readOnly()}>
           <button class="icon small" onClick={() => props.onEdit(props.editable!)} aria-label={`Edit ${props.title}`}>
             <PencilIcon />
           </button>

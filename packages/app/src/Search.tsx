@@ -229,7 +229,7 @@ export function SearchPanel(props: {
             tags={tags()}
             results={results()}
             onGo={props.onGo}
-            onUnhighlight={tags().length === 1 ? (iv) => props.onUnhighlight(tags()[0]!.id, iv) : undefined}
+            onUnhighlight={tags().length === 1 && !props.store.readOnly() ? (iv) => props.onUnhighlight(tags()[0]!.id, iv) : undefined}
             empty={`No places where ${tags().length > 1 ? "all of these overlap" : "this tag is used"}${scopeLabel() ? ` in ${scopeLabel()}` : ""}.`}
           />
         </Show>

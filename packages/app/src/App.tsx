@@ -114,6 +114,10 @@ function Main(props: { text: Text; store: TagStore }) {
       { defer: true },
     ),
   );
+  // The tag sheet edits: view-only members never get it (no pencils), and lose it if made view-only while it's open.
+  createEffect(() => {
+    if (store.readOnly()) setSheetTag(null);
+  });
   // A selected tag that no longer exists (deleted here or on another device, or its creation undone) is deselected.
   createEffect(() => {
     const id = activeTag();
@@ -498,7 +502,7 @@ function Dock(props: {
       if (next.join() !== props.store.paletteIds().join()) props.store.setPalette(next);
       suppressNextClick();
     } else if (press.touch && press.armed) {
-      props.onEdit(press.id); // long-press without moving
+      if (!props.store.readOnly()) props.onEdit(press.id); // long-press without moving
       suppressNextClick();
     }
     endPress();
@@ -536,10 +540,10 @@ function Dock(props: {
       onTap={(e) => {
         if (!suppressClick) props.onChoose(tag, e.altKey);
       }}
-      onEdit={() => props.onEdit(tag.id)}
+      onEdit={props.store.readOnly() ? undefined : () => props.onEdit(tag.id)}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!press?.touch) props.onEdit(tag.id); // touch long-press is handled above
+        if (!press?.touch && !props.store.readOnly()) props.onEdit(tag.id); // touch long-press is handled above
       }}
       onMouseDown={keepSelection}
     />
@@ -613,7 +617,8 @@ function Well(props: {
   /** Hidden from the text (shown dimmed). */
   hidden: boolean;
   onTap: (e: MouseEvent) => void;
-  onEdit: () => void;
+  /** Absent for view-only members. */
+  onEdit?: () => void;
   onContextMenu: (e: MouseEvent) => void;
   onMouseDown: JSX.EventHandler<HTMLElement, MouseEvent>;
 }) {
@@ -641,7 +646,7 @@ function Well(props: {
         </span>
         <span class="well-name">{props.tag.name}</span>
       </button>
-      <Show when={props.active}>
+      <Show when={props.active && props.onEdit}>
         <button class="well-edit" onClick={props.onEdit} title={`Edit ${props.tag.name}`} aria-label={`Edit ${props.tag.name}`}>
           <PencilIcon />
         </button>
