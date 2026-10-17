@@ -43,6 +43,12 @@ pub trait Store: Send + Sync {
     /// # Errors
     /// On SQL failure.
     fn accounts_query(&self, sql: &str, params: Vec<Value>) -> Result<Vec<Vec<Value>>, String>;
+    /// For a client whose last seq is `after`: `None` if the changes after it can be replayed, else the space's
+    /// whole state (`space::reset`; `pending` = the client's unconfirmed op ids).
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn catch_up(&self, space: &str, after: u64, pending: &[String]) -> Result<Option<space::Reset>, String>;
     /// The space's changes with `seq > after`, oldest first, at most `limit`.
     ///
     /// # Errors
@@ -136,6 +142,7 @@ pub struct SqliteStore {
     readers: Mutex<HashMap<String, Vec<Connection>>>,
     dir: PathBuf,
     listener: Arc<CommitListener>,
+    retention_ms: i64,
 }
 
 impl SqliteStore {
@@ -165,7 +172,15 @@ impl SqliteStore {
             readers: Mutex::new(HashMap::new()),
             dir: dir.to_path_buf(),
             listener: Arc::new(listener),
+            retention_ms: space::RETENTION_MS,
         })
+    }
+
+    /// Keep changes replayable for `ms` (default `space::RETENTION_MS`).
+    #[must_use]
+    pub fn retention(mut self, ms: i64) -> Self {
+        self.retention_ms = ms;
+        self
     }
 
     /// Close every connection and stop the writer thread (later calls fail).
@@ -281,10 +296,14 @@ impl Store for SqliteStore {
     fn apply(&self, space: &str, author: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
         let (dir, space, author, op, listener) =
             (self.dir.clone(), space.to_string(), author.to_string(), op.clone(), self.listener.clone());
+        let prune_before = now.saturating_sub(self.retention_ms);
         self.write(move |w| {
             let conn = w.space(&dir, &space)?;
             let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
             let applied = space::apply_by(&*tx, &space, &author, &op, now)?;
+            if !applied.duplicate {
+                space::prune(&*tx, prune_before, space::PRUNE_BATCH)?; // a little per op keeps up
+            }
             tx.commit().map_err(|e| e.to_string())?;
             if !applied.duplicate {
                 listener(&space, &applied.change);
@@ -301,6 +320,16 @@ impl Store for SqliteStore {
 
     fn accounts_query(&self, sql: &str, params: Vec<Value>) -> Result<Vec<Vec<Value>>, String> {
         self.read("", |c| c.query(sql, &params))
+    }
+
+    fn catch_up(&self, space: &str, after: u64, pending: &[String]) -> Result<Option<space::Reset>, String> {
+        self.read(space, |c| {
+            let tx = c.unchecked_transaction().map_err(|e| e.to_string())?; // one snapshot for every read
+            if after >= space::pruned_through(&*tx)? {
+                return Ok(None);
+            }
+            space::reset(&*tx, space, pending).map(Some)
+        })
     }
 
     fn changes_since(&self, space: &str, after: u64, limit: usize) -> Result<Vec<Change>, String> {

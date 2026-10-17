@@ -39,6 +39,7 @@ fn config(name: &str) -> Config {
         secure_cookies: false,
         google: None,
         public_url: None,
+        retention_ms: space::RETENTION_MS,
     }
 }
 
@@ -453,4 +454,39 @@ async fn groups_share_rows_with_roles() {
         .await;
     assert_eq!(b.recv().await["type"], "error");
     assert_eq!(connect_to(&srv, Some(&bob), None, &q).await.err(), Some(StatusCode::FORBIDDEN));
+}
+
+#[tokio::test]
+async fn a_client_behind_the_retention_window_gets_a_reset() {
+    let mut cfg = config("retention");
+    cfg.retention_ms = 0; // every change before the newest is pruned by the next op
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    for (i, op) in [tag_create("op1", "T", "Grace"), paint("op2", "T", T1, T1 + 5, "g1")].into_iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await; // so op1 is strictly older
+        }
+        a.op(op).await;
+        a.recv().await;
+        a.recv().await; // ack + change
+    }
+    // From seq 0, op1's change can't be replayed: the whole state instead, then live as usual.
+    let mut late = connect(&srv, Some(&cookie), None).await.unwrap();
+    late.send(json!({"type": "hello", "after": 0, "pending": ["op1", "never-sent"]})).await;
+    let reset = late.recv().await;
+    assert_eq!((reset["type"].as_str(), reset["seq"].as_u64()), (Some("reset"), Some(2)));
+    let ids: Vec<_> = reset["rows"].as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["T", "g1"]);
+    assert_eq!(reset["applied"], json!(["op1"]), "which of the client's ops are already in it");
+    assert_eq!(reset["changes"], json!([]));
+    assert_eq!(late.recv().await, json!({"type": "ready", "seq": 2}));
+    // A re-sent pruned op is still a duplicate: acked with its old seq, never reapplied.
+    late.op(tag_create("op1", "T", "Grace")).await;
+    assert_eq!(late.recv().await, json!({"type": "ack", "op_id": "op1", "seq": 1}));
+    late.quiet().await;
+    // From seq 1 (the pruning point) the rest still replays normally.
+    let mut recent = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(recent.hello(1).await.iter().map(|c| c["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [2]);
 }

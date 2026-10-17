@@ -7,6 +7,12 @@
 //! The SQL runs over the small [`Db`] trait so the same statements serve rusqlite and Durable Object storage.
 //! Callers wrap [`apply`] in a transaction (on Durable Objects, one synchronous call is atomic). `apply` does all its
 //! checks before its first write, so a failed op writes nothing even without a rollback.
+//!
+//! **Retention**: [`prune`] blanks the payload of changes older than the retention period, oldest first, a bounded
+//! batch per call (servers call it after each applied op, so pruning keeps up without long-running work). A pruned
+//! change keeps its row (seq, author, op id), so a re-sent op is still recognized as a duplicate forever; it just
+//! can no longer be replayed or reverted. `meta.pruned_through` is the last pruned seq: a client whose last seq is
+//! older gets a [`reset`] (every row) instead of a replay.
 
 use ops::{effect, Change, CommentRow, Intent, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
 use std::cell::RefCell;
@@ -180,10 +186,19 @@ pub fn apply(db: &impl Db, owner: &str, op: &Op, now: i64) -> Result<Applied, Ap
 /// # Errors
 /// As [`apply`], plus `ApplyError::Refused("not_author")`.
 pub fn apply_by(db: &impl Db, owner: &str, author: &str, op: &Op, now: i64) -> Result<Applied, ApplyError> {
-    let existing =
-        db.query("SELECT payload FROM changes WHERE owner_id = ? AND op_id = ?", &[owner.into(), (&op.op_id).into()])?;
+    let existing = db.query(
+        "SELECT payload, seq, kind FROM changes WHERE owner_id = ? AND op_id = ?",
+        &[owner.into(), (&op.op_id).into()],
+    )?;
     if let Some(row) = existing.first() {
-        return Ok(Applied { change: parse_change(text(&row[0])?)?, duplicate: true });
+        let change = if text(&row[0])? == PRUNED {
+            // Applied long ago: only its seq is left (enough to confirm it).
+            let seq = u64::try_from(int(&row[1])?).map_err(|e| e.to_string())?;
+            Change { seq, op_id: op.op_id.clone(), kind: text(&row[2])?.to_string(), rows: vec![] }
+        } else {
+            parse_change(text(&row[0])?)?
+        };
+        return Ok(Applied { change, duplicate: true });
     }
     let mut change = {
         let src = Rows { db, owner, err: RefCell::new(None) };
@@ -221,16 +236,107 @@ pub fn apply_by(db: &impl Db, owner: &str, author: &str, op: &Op, now: i64) -> R
     Ok(Applied { change, duplicate: false })
 }
 
-/// Changes with `seq > after`, oldest first, at most `limit`.
+/// Changes with `seq > after`, oldest first, at most `limit`. Check [`pruned_through`] first: replaying from before
+/// it is an error (send a [`reset`] instead).
 ///
 /// # Errors
-/// On storage failure.
+/// On storage failure, or if a requested change was pruned.
 pub fn changes_since(db: &impl Db, after: u64, limit: usize) -> Result<Vec<Change>, String> {
     let rows = db.query(
         "SELECT payload FROM changes WHERE seq > ? ORDER BY seq LIMIT ?",
         &[after.into(), (limit as u64).into()],
     )?;
-    rows.iter().map(|r| parse_change(text(&r[0])?)).collect()
+    rows.iter()
+        .map(|r| match text(&r[0])? {
+            PRUNED => Err(format!("changes after {after} were pruned")),
+            payload => parse_change(payload),
+        })
+        .collect()
+}
+
+/// A pruned change's payload.
+const PRUNED: &str = "";
+
+/// How long changes stay replayable (and revertible): 30 days.
+pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// Changes pruned per [`prune`] call at most (each call does a little, so no request runs long).
+pub const PRUNE_BATCH: usize = 64;
+
+/// The last pruned seq (0: nothing pruned). Changes up to it can't be replayed.
+///
+/// # Errors
+/// On storage failure.
+pub fn pruned_through(db: &impl Db) -> Result<u64, String> {
+    let r = db.query("SELECT value FROM meta WHERE key = 'pruned_through'", &[])?;
+    r.first().map_or(Ok(0), |r| text(&r[0])?.parse().map_err(|e| format!("pruned_through: {e}")))
+}
+
+/// Blank the payload of up to `limit` of the oldest changes created before `before` (ms), continuing where the last
+/// call stopped. Pruning stops at the first change that is too new, so everything up to [`pruned_through`] is pruned
+/// and everything after it is intact. Returns how many were pruned.
+///
+/// # Errors
+/// On storage failure.
+pub fn prune(db: &impl Db, before: i64, limit: usize) -> Result<usize, String> {
+    let from = pruned_through(db)?;
+    let rows = db.query(
+        "SELECT seq, created_at FROM changes WHERE seq > ? ORDER BY seq LIMIT ?",
+        &[from.into(), (limit as u64).into()],
+    )?;
+    let mut last = None;
+    for r in &rows {
+        if int(&r[1])? >= before {
+            break;
+        }
+        last = Some(int(&r[0])?);
+    }
+    let Some(last) = last else { return Ok(0) };
+    db.exec("UPDATE changes SET payload = ? WHERE seq > ? AND seq <= ?", &[PRUNED.into(), from.into(), last.into()])?;
+    db.exec(
+        "INSERT INTO meta (key, value) VALUES ('pruned_through', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        &[last.to_string().into()],
+    )?;
+    Ok(rows.iter().take_while(|r| int(&r[0]).is_ok_and(|s| s <= last)).count())
+}
+
+/// What a client that is too far behind to replay gets instead: the space's current state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reset {
+    /// The space's last seq.
+    pub seq: u64,
+    /// Every row of the data owner, deleted ones included (comments on merged taggings follow tombstones).
+    pub rows: Vec<Row>,
+    /// Which of the op ids the client still holds (its `hello.pending`) are already applied, so it can drop them
+    /// silently instead of replaying them onto `rows`.
+    pub applied: Vec<String>,
+}
+
+/// The data owner's whole state, for a client holding unconfirmed ops `pending`. Read it in one transaction.
+///
+/// # Errors
+/// On storage failure.
+pub fn reset(db: &impl Db, owner: &str, pending: &[String]) -> Result<Reset, String> {
+    let seq = db.query("SELECT COALESCE(MAX(seq), 0) FROM changes", &[])?;
+    let seq = u64::try_from(int(&seq[0][0])?).map_err(|e| e.to_string())?;
+    let src = Rows { db, owner, err: RefCell::new(None) };
+    let mut rows: Vec<Row> = vec![];
+    let tags = format!("SELECT {TAG_COLS} FROM tags WHERE owner_id = ? ORDER BY id");
+    rows.extend(src.list(&tags, &[owner.into()], tag_row).into_iter().map(Row::Tag));
+    let taggings = format!("SELECT {TAGGING_COLS} FROM taggings WHERE owner_id = ? ORDER BY id");
+    rows.extend(src.list(&taggings, &[owner.into()], tagging_row).into_iter().map(Row::Tagging));
+    let comments = format!("SELECT {COMMENT_COLS} FROM comments WHERE owner_id = ? ORDER BY id");
+    rows.extend(src.list(&comments, &[owner.into()], comment_row).into_iter().map(Row::Comment));
+    rows.extend(src.palette().map(Row::Palette));
+    if let Some(e) = src.err.into_inner() {
+        return Err(e);
+    }
+    let mut applied = vec![];
+    for id in pending {
+        if !db.query("SELECT 1 FROM changes WHERE owner_id = ? AND op_id = ?", &[owner.into(), id.into()])?.is_empty() {
+            applied.push(id.clone());
+        }
+    }
+    Ok(Reset { seq, rows, applied })
 }
 
 /// Load `owner`'s rows and recorded changes as-is (no `effect`, seqs kept): fixtures, migrations, imports.
@@ -492,7 +598,8 @@ impl<D: Db> RowSource for Rows<'_, D> {
     }
 
     fn change(&self, op_id: &str) -> Option<Change> {
-        let sql = "SELECT payload FROM changes WHERE owner_id = ? AND op_id = ?";
+        // A pruned change can't be reverted (the op fails with `unknown_op`).
+        let sql = "SELECT payload FROM changes WHERE owner_id = ? AND op_id = ? AND payload <> ''";
         self.one(sql, &[self.owner.into(), op_id.into()], |r| parse_change(text(&r[0])?))
     }
 }

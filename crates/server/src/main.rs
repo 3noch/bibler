@@ -1,6 +1,7 @@
 //! Usage:
 //!   bible-tags-server --text DIR --data DIR [--migrate-from OLD.db] [--static DIR] [--addr HOST:PORT]
 //!                     [--tls-cert PEM --tls-key PEM [--http-redirect HOST:PORT]] [--public-url URL]
+//!                     [--retention-days N]   (default 30: changes older than that can't be replayed or undone)
 //! Sign in with Google is on when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (environment, not flags,
 //! so the secret stays out of `ps`); its redirect URI is <public url>/api/auth/google/callback.
 //! Without TLS flags it serves plain HTTP (dev). With them it terminates TLS itself (rustls); SIGHUP reloads the
@@ -25,6 +26,7 @@ fn parse_args() -> Result<Args, String> {
     let mut addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let (mut static_dir, mut text_dir, mut cert, mut key, mut redirect) = (None, None, None, None, None);
     let (mut data, mut migrate_from, mut public_url) = (None, None, None);
+    let mut retention_ms = space::RETENTION_MS;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -35,10 +37,17 @@ fn parse_args() -> Result<Args, String> {
             "--data" => data = Some(PathBuf::from(val()?)),
             "--migrate-from" => migrate_from = Some(PathBuf::from(val()?)),
             "--public-url" => public_url = Some(val()?),
+            "--retention-days" => {
+                let days: i64 = val()?.parse().map_err(|e| format!("--retention-days: {e}"))?;
+                retention_ms = days
+                    .checked_mul(24 * 60 * 60 * 1000)
+                    .filter(|d| *d >= 0)
+                    .ok_or("--retention-days: out of range")?;
+            }
             "--tls-cert" => cert = Some(PathBuf::from(val()?)),
             "--tls-key" => key = Some(PathBuf::from(val()?)),
             "--http-redirect" => redirect = Some(val()?.parse().map_err(|e| format!("--http-redirect: {e}"))?),
-            "-h" | "--help" => return Err(include_str!("main.rs").lines().take(7).collect::<Vec<_>>().join("\n")),
+            "-h" | "--help" => return Err(include_str!("main.rs").lines().take(8).collect::<Vec<_>>().join("\n")),
             _ => return Err(format!("unknown argument {a}")),
         }
     }
@@ -55,7 +64,16 @@ fn parse_args() -> Result<Args, String> {
     let secure_cookies = tls.is_some();
     Ok(Args {
         addr,
-        cfg: Config { static_dir, text_dir, data, migrate_from, secure_cookies, google: google()?, public_url },
+        cfg: Config {
+            static_dir,
+            text_dir,
+            data,
+            migrate_from,
+            secure_cookies,
+            google: google()?,
+            public_url,
+            retention_ms,
+        },
         tls,
         http_redirect: redirect,
     })

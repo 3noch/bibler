@@ -36,6 +36,9 @@ pub struct Config {
     pub google: Option<auth::Google>,
     /// Public origin for OAuth redirects (default: the request's `Host`, with https under TLS).
     pub public_url: Option<String>,
+    /// How long changes stay replayable and undoable (`space::RETENTION_MS`); older ones are pruned a little after
+    /// each op.
+    pub retention_ms: i64,
 }
 
 /// Build the app: open the store, load the texts, wire the routes.
@@ -52,7 +55,7 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         migrate(old, &cfg.data)?;
     }
     let state = Arc::new(sync::AppState {
-        store: Arc::new(store::SqliteStore::open(&cfg.data, listener)?),
+        store: Arc::new(store::SqliteStore::open(&cfg.data, listener)?.retention(cfg.retention_ms)),
         hub,
         texts: texts::load(&cfg.text_dir)?,
         secure_cookies: cfg.secure_cookies,

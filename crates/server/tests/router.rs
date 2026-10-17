@@ -27,6 +27,7 @@ fn app() -> axum::Router {
         secure_cookies: false,
         google: None,
         public_url: None,
+        retention_ms: space::RETENTION_MS,
     })
     .unwrap()
 }
@@ -89,6 +90,7 @@ async fn dev_mode_without_static_dir() {
         secure_cookies: false,
         google: None,
         public_url: None,
+        retention_ms: space::RETENTION_MS,
     })
     .unwrap();
     let (status, _, body) = get(&app, "/", false).await;

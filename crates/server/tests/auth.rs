@@ -67,6 +67,7 @@ async fn start(name: &str) -> Srv {
         secure_cookies: false,
         google: Some(google),
         public_url: None,
+        retention_ms: space::RETENTION_MS,
     };
     let app = router(&cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

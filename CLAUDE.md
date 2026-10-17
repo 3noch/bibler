@@ -137,7 +137,7 @@ Rust: `crates/normalize/src/lib.rs`).
   Redo = revert of the revert. A property test (Rust 300x120, TS 150x100) checks invariants after every random op
   and that undoing everything restores the start; it found the palette rule.
 - **Spaces** (decided 2026-10-11, for Cloudflare Durable Objects): a **space** = one SQLite database = one sync
-  stream with ONE `seq` (`changes.seq INTEGER PRIMARY KEY`; `changes.owner_id` = author). Today every owner has a
+  stream with ONE `seq` (`changes.seq INTEGER PRIMARY KEY`; `changes.owner_id` = the data owner, i.e. the space id in a group, so op ids are per space). Today every owner has a
   personal space whose id is the owner id. The schema stays multi-owner (every row keeps `owner_id`; ops only see
   their owner's rows; op ids and tag names are per owner; ids are unique per space, a collision with another
   member's row -> `id_exists`) so groups can later share a space. Schema + `apply`/`changes_since`/`import` live in
@@ -187,10 +187,22 @@ Rust: `crates/normalize/src/lib.rs`).
   second member's paint + comment arriving live with author, view-only join via `?join=` with live updates and no
   edit controls, switching spaces). Not yet: group-level comment moderation (admins can't delete others' comments),
   transferring/deleting a group, showing who painted what, rate limits on joins.
+- **Retention** (done 2026-10-17): changes stay replayable/revertible for 30 days (`space::RETENTION_MS`; server
+  `--retention-days`, Worker var `RETENTION_MS` for tests). Pruning runs online, never as a job: after each applied
+  (non-duplicate) op the space prunes at most `PRUNE_BATCH` (64) of its oldest changes (user's choice: no long work in
+  one request; since each op adds one change, pruning keeps up; idle spaces don't prune and don't need to). A pruned
+  change keeps its row (seq, owner, op id, kind) with an empty payload, so a re-sent op is a duplicate forever (acked
+  with its old seq) but can't be replayed or reverted (`unknown_op`). Pruning is a prefix: `meta.pruned_through`.
+  `hello{after, pending}` with `after < pruned_through` gets `reset{seq, rows (every row incl. tombstones: comments
+  follow merge chains), changes: [], applied (which of `pending` are already applied)}` instead of a replay; the
+  client confirms `applied` silently, rebases the rest, drops undo steps it can't revert, and treats an `ack` at or
+  below its seq as confirmation. Tested: `crates/space/tests/retention.rs` (mutation-checked, 6/6), server
+  `a_client_behind_the_retention_window_gets_a_reset`, Cloudflare `test/retention.mjs` (second wrangler run with
+  `RETENTION_MS:0`), TS sync tests (mutation-checked, 4/4).
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
-: `hello{after}` -> replayed changes -> `ready` ->
+: `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready` ->
   live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
@@ -221,7 +233,7 @@ Rust: `crates/normalize/src/lib.rs`).
   restart); a client convergence property test (3 clients, random edits/delivery/disconnects, 120 seeds);
   browser-tested with two tabs incl. offline -> reconnect. Comments are in the fixtures, both property tests (with
   "every op kind applied" assertions) and the 3-client convergence test; mutation-checked 2026-10-11 (8 mutations,
-  caught in both languages). Not yet: rate limits, retention of the changes log.
+  caught in both languages). Not yet: rate limits.
 
 ## Sync engine choice
 - Decided 2026-10-10: our own per-owner event log (requirement: free OSS, self-hostable, no paid tier). The
@@ -256,7 +268,7 @@ implementation and confirm tests fail. Don't claim something is verified unless 
 ## Next steps
 - Groups follow-ups (user will review first): see the Groups bullet's "Not yet".
 - Deploy to Cloudflare, QA first (user: `wrangler login`, two `wrangler d1 create`, a domain, secrets; README) and try sign-in with a real
-  Google OAuth client. Then: retention of the changes log, rate limits.
+  Google OAuth client. Then: rate limits.
 - Install-as-app affordance (deferred 2026-10-11): Install button via `beforeinstallprompt`, iOS "Add to Home
   Screen" hint, `navigator.storage.persist()`.
 - Reader: pairs within 3+ tag combinations in the Nearby panel, overlap style rules, a book/chapter picker.

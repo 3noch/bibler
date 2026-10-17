@@ -4,7 +4,7 @@ use crate::hub::{Event, Hub};
 use crate::store::{Identity, Store};
 use crate::texts::Texts;
 use api::groups::Role;
-use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, REPLAY_PAGE};
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, REPLAY_PAGE};
 use api::session::{random_hex, token_hash};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -168,11 +168,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     let (mut tx, mut rx) = socket.split();
     // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
     let mut live = st.hub.subscribe(&space);
-    let mut last = loop {
+    let (mut last, mut pending) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => {
-                if let Ok(ClientMsg::Hello { after }) = serde_json::from_str::<ClientMsg>(&t) {
-                    break after;
+                if let Ok(ClientMsg::Hello { after, pending }) = serde_json::from_str::<ClientMsg>(&t) {
+                    break (after, pending);
                 }
                 let _ = send(&mut tx, &ServerMsg::Error { message: "expected hello" }).await;
                 return;
@@ -181,6 +181,22 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             _ => return,
         }
     };
+    // Too far behind to replay (changes after `last` were pruned): send the whole state instead.
+    pending.truncate(MAX_HELLO_PENDING);
+    let (store, s, after) = (st.store.clone(), space.clone(), last);
+    match blocking(move || store.catch_up(&s, after, &pending)).await {
+        Ok(Ok(None)) => {}
+        Ok(Ok(Some(reset))) => {
+            if !send(&mut tx, &ServerMsg::reset(&reset)).await {
+                return;
+            }
+            last = reset.seq;
+        }
+        Ok(Err(e)) | Err(e) => {
+            tracing::error!("catch up: {e}");
+            return;
+        }
+    }
     if !send_since(&st, &space, &mut tx, &mut last, None).await || !send(&mut tx, &ServerMsg::Ready { seq: last }).await
     {
         return;

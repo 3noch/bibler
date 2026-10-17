@@ -16,7 +16,7 @@
 //! ```
 
 use api::check::Texts;
-use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, REPLAY_PAGE};
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, REPLAY_PAGE};
 use ops::Row;
 use serde::{Deserialize, Serialize};
 use space::{ApplyError, Db, Value};
@@ -32,6 +32,8 @@ pub struct Space {
     state: State,
     db: Sql,
     texts: Rc<RefCell<Texts>>,
+    /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
+    retention_ms: i64,
 }
 
 /// Per-socket state, kept across hibernation.
@@ -52,6 +54,8 @@ struct Socket {
 impl DurableObject for Space {
     fn new(state: State, env: Env) -> Self {
         let db = Sql(state.storage().sql());
+        let retention_ms =
+            env.var("RETENTION_MS").ok().and_then(|v| v.to_string().parse().ok()).unwrap_or(space::RETENTION_MS);
         if let Err(e) = space::init(&db) {
             worker::console_error!("space schema: {e}");
         }
@@ -65,7 +69,7 @@ impl DurableObject for Space {
             }
             Ok(())
         }));
-        Space { state, db, texts }
+        Space { state, db, texts, retention_ms }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -116,7 +120,15 @@ impl DurableObject for Space {
             return close(&ws, "message too large");
         }
         match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
-            (false, Ok(ClientMsg::Hello { after })) => {
+            (false, Ok(ClientMsg::Hello { after, mut pending })) => {
+                let mut after = after;
+                // Too far behind to replay (changes after `after` were pruned): send the whole state instead.
+                if after < space::pruned_through(&self.db).map_err(worker::Error::RustError)? {
+                    pending.truncate(MAX_HELLO_PENDING);
+                    let reset = space::reset(&self.db, &socket.space, &pending).map_err(worker::Error::RustError)?;
+                    ws.send_with_str(ServerMsg::reset(&reset).json())?;
+                    after = reset.seq;
+                }
                 let seq = self.replay(&ws, after)?;
                 ws.send_with_str(ServerMsg::Ready { seq }.json())?;
                 socket.ready = true;
@@ -172,10 +184,15 @@ impl Space {
         if let Err((code, message)) = api::check::check_op(&self.texts.borrow(), op) {
             return reject(code, message);
         }
-        match space::apply_by(&self.db, &socket.space, &socket.owner, op, now_ms()) {
+        let now = now_ms();
+        match space::apply_by(&self.db, &socket.space, &socket.owner, op, now) {
             Ok(applied) => {
                 if !applied.duplicate {
                     self.broadcast(&ServerMsg::Change { change: &applied.change }.json());
+                    // A little pruning per op keeps up without long-running work.
+                    if let Err(e) = space::prune(&self.db, now.saturating_sub(self.retention_ms), space::PRUNE_BATCH) {
+                        worker::console_error!("prune: {e}");
+                    }
                 }
                 ws.send_with_str(ServerMsg::Ack { op_id: &op.op_id, seq: applied.change.seq }.json())
             }

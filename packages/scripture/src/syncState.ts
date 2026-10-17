@@ -13,16 +13,19 @@
  */
 import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row } from "./ops.ts";
 
-export type ClientMsg = { type: "hello"; after: number } | { type: "op"; op: Op };
+/** `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are already applied. */
+export type ClientMsg = { type: "hello"; after: number; pending?: string[] } | { type: "op"; op: Op };
 export type ServerMsg =
   | { type: "change"; change: Change }
   | { type: "ready"; seq: number }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }
-  /** Replace the confirmed state wholesale (the client is behind and the log can't be replayed, e.g. the
-   *  browser-local store in offline-only builds). Pending ops are rebased onto it. */
-  | { type: "reset"; seq: number; rows: Row[]; changes: Change[] };
+  /** Replace the confirmed state wholesale (the client is behind and the log can't be replayed: the server pruned
+   *  it, or the browser-local store in offline-only builds). `applied` = which of the hello's `pending` ops are
+   *  already in `rows` (dropped silently); the rest are rebased onto it. Undo steps whose changes aren't in
+   *  `changes` (or pending) are dropped, since they can no longer be reverted. */
+  | { type: "reset"; seq: number; rows: Row[]; changes: Change[]; applied?: string[] };
 
 export interface Snapshot {
   owner: string;
@@ -166,7 +169,7 @@ export class SyncState {
   connected(send: (m: ClientMsg) => void) {
     this.send = send;
     this.status = "syncing";
-    send({ type: "hello", after: this.seq });
+    send({ type: "hello", after: this.seq, pending: this.pending.map((o) => o.op_id) });
     this.changed();
   }
 
@@ -197,7 +200,15 @@ export class SyncState {
         this.changed();
         return true;
       case "ack":
-        return true; // the change itself confirms the op
+        // Normally the change itself confirms the op. An ack at or below our seq is an op applied long ago whose
+        // change we never saw (it was pruned and we got a reset): it is already in the base.
+        if (msg.seq <= this.seq && this.pending.some((o) => o.op_id === msg.op_id)) {
+          this.confirm(msg.op_id);
+          this.pending = this.pending.filter((o) => o.op_id !== msg.op_id);
+          this.rebuild();
+          this.changed();
+        }
+        return true;
       case "reject":
         this.drop(msg.op_id, `Not saved: ${msg.message || msg.code}`);
         return true;
@@ -207,6 +218,12 @@ export class SyncState {
         this.base = new MemRows(msg.rows, msg.changes);
         this.seq = msg.seq;
         for (const c of msg.changes) this.confirm(c.op_id);
+        for (const id of msg.applied ?? []) this.confirm(id);
+        // Undo can only revert changes we hold (or ops still pending, whose changes we'll see).
+        const revertible = new Set([...msg.changes.map((c) => c.op_id), ...this.pending.filter((o) => !this.confirmedSet.has(o.op_id)).map((o) => o.op_id)]);
+        const keep = (steps: string[][]) => steps.filter((s) => s.every((id) => revertible.has(id)));
+        this.undo = keep(this.undo);
+        this.redo = keep(this.redo);
         this.rebuild();
         this.changed();
         return true;

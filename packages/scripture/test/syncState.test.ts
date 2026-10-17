@@ -10,6 +10,8 @@ class FakeServer {
   rows = new MemRows();
   log: Change[] = [];
   conns = new Set<Conn>();
+  /** Changes up to this seq can't be replayed (retention). */
+  prunedThrough = 0;
 
   connect(client: SyncState): Conn {
     const conn = new Conn(this, client);
@@ -20,7 +22,11 @@ class FakeServer {
 
   handle(conn: Conn, m: ClientMsg) {
     if (m.type === "hello") {
-      for (const c of this.log) if (c.seq > m.after) conn.down.push({ type: "change", change: c });
+      if (m.after < this.prunedThrough) {
+        // Too far behind to replay: the whole state, and which of the client's pending ops are already in it.
+        const applied = (m.pending ?? []).filter((id) => this.log.some((c) => c.op_id === id));
+        conn.down.push({ type: "reset", seq: this.log.length, rows: this.rows.allRows(), changes: [], applied });
+      } else for (const c of this.log) if (c.seq > m.after) conn.down.push({ type: "change", change: c });
       conn.down.push({ type: "ready", seq: this.log.length });
       conn.live = true;
       return;
@@ -374,4 +380,53 @@ test("sync: confirmed comments survive a snapshot (the persisted base includes e
   const snap = JSON.parse(JSON.stringify(a.snapshot()));
   const reloaded = new SyncState("owner", newId, now, snap);
   assert.equal(reloaded.view.comments.get("c1")?.body, "Note");
+});
+
+test("sync: a client behind the retention window gets a reset; its already-applied ops drop silently", () => {
+  const server = new FakeServer();
+  const [a, b] = [client(), client()];
+  const notices: string[] = [];
+  a.onNotice((m) => notices.push(m));
+  const [ca, cb] = [server.connect(a), server.connect(b)];
+  ca.flush();
+  cb.flush();
+  a.submit([createTag("T", "Grace")]);
+  ca.flush();
+  a.submit([createTag("U", "Hope")]); // reaches the server, but `a` goes away before hearing back
+  ca.stepUp();
+  ca.close();
+  cb.flush();
+  b.submit([paint("T", 20, 30, "g2")]);
+  cb.flush();
+  server.prunedThrough = server.log.length; // a month passes
+  assert.equal(a.pending.length, 1);
+  assert.equal(a.undo.length, 2);
+  const again = server.connect(a);
+  assert.deepEqual(again.up[0], { type: "hello", after: 1, pending: [a.pending[0]!.op_id] });
+  again.flush();
+  converged(server, a);
+  assert.deepEqual(notices, [], "the tag already exists because the op was applied, not because of a conflict");
+  assert.equal(a.undo.length, 0, "undo can't reach pruned changes");
+});
+
+test("sync: an ack at or below our seq confirms a pending op (applied long ago; its change was pruned)", () => {
+  const server = new FakeServer();
+  const a = client();
+  server.connect(a).flush();
+  a.submit([createTag("T", "Grace")]);
+  const op = a.pending[0]!;
+  server.connect(a).flush(); // applied at seq 1
+  server.prunedThrough = 1;
+  const b = client();
+  const notices: string[] = [];
+  b.onNotice((m) => notices.push(m));
+  const conn = server.connect(b);
+  conn.flush(); // a reset to seq 1
+  b.pending.push(op); // an op b held but didn't list in its hello (say, adopted from another tab since)
+  conn.up.push({ type: "op", op });
+  conn.flush(); // the server sees a duplicate and acks it with its old seq
+  assert.deepEqual(b.pending, [], "confirmed by the old ack");
+  assert.ok(b.isConfirmed(op.op_id));
+  assert.deepEqual(notices, []);
+  converged(server, b);
 });
