@@ -104,7 +104,8 @@
   remove), invite links per role (create / copy / new link) and Leave. Caches (base, outbox, undo) are keyed
   `<key>:<group id>` (the personal space keeps the old keys, so nothing migrates). `?join=<token>` joins before the
   store opens. View-only: `submit` refuses with a notice, and the dock's New tag/eraser, the tag list's
-  create/pin/edit and the comment box are hidden. In a group, comments show the author's name (member name, email or
+  create/pin/edit, the comment box and every way into the tag edit sheet (well pencil, right-click, long-press,
+  Nearby pencils) are hidden, as are Remove/erasers on places; a sheet open when the role drops closes. In a group, comments show the author's name (member name, email or
   "Anonymous"; "You" for yours) and only your own have edit/delete. The role is refreshed on every socket open; a
   refused group socket re-checks membership and falls back to My tags. Not in the offline-only build.
 - Touch screens don't autofocus the All-tags box (the keyboard covered the list): `matchMedia("(pointer: fine)")`.
