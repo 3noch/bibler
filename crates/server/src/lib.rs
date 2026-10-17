@@ -78,7 +78,10 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
     let app = Router::new().nest("/api", api).nest_service("/text", ServeDir::new(&cfg.text_dir));
     let app = match &cfg.static_dir {
         // Unknown paths get index.html so client-side routes survive a reload.
-        Some(dir) => app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")))),
+        // Except under /assets: an index.html answer to a missing (old) bundle would be marked immutable.
+        Some(dir) => app
+            .nest_service("/assets", ServeDir::new(dir.join("assets")))
+            .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")))),
         None => app.fallback(|| async {
             (StatusCode::NOT_FOUND, "no client bundle configured (in dev, open the Vite server: make dev)")
         }),

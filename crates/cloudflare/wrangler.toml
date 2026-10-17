@@ -19,11 +19,12 @@ preview_urls = false
 command = "worker-build --release"
 
 # The client bundle and the text artifacts. Everything but /api/* is served from here without running the Worker
-# (free and uncounted); unknown paths get index.html.
+# (free and uncounted). Unknown paths are 404s, not index.html: the app lives at / and routes in the URL hash, and
+# an index.html answer to a missing /assets/*.js would be cached for a year (_headers marks /assets/* immutable).
 [assets]
 directory = "../../build/cloudflare/assets"
 binding = "ASSETS"
-not_found_handling = "single-page-application"
+not_found_handling = "none"
 run_worker_first = ["/api/*"]
 
 # Accounts: owners, sessions, identities (schema: api::accounts::SCHEMA, created on first use).

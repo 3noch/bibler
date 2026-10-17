@@ -33,7 +33,7 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   If Rust rebuilds get slow, move to crane. Uses `<nixpkgs>` (26.11, rustc 1.98); pin it before real deploys.
   Verified 2026-10-10 on macOS only; Linux (deploy target) not yet built.
 - Server (`crates/server`, binary `bible-tags-server`): axum; `/api/*` (health only so far), `/text/*`
-  (text-build output), SPA fallback to `index.html`; compression (br/gzip); `Cache-Control` immutable for
+  (text-build output), SPA fallback to `index.html` (not under `/assets`, where it would be cached as immutable); compression (br/gzip); `Cache-Control` immutable for
   content-hashed files (`/assets/*`, `name.<16hex>.ext`), `no-cache` otherwise. TLS is in-process rustls (ring
   provider, so no cmake/aws-lc) via `--tls-cert/--tls-key`; SIGHUP reloads the cert; `--http-redirect ADDR` adds a
   plain-HTTP 308-to-HTTPS listener. No ACME client yet (renew externally + SIGHUP).
@@ -168,7 +168,9 @@ Rust: `crates/normalize/src/lib.rs`).
   space; mutation-checked 2026-10-11: owner check, per-space seq, write-before-checks, duplicate scope).
 - **Cloudflare** (`crates/cloudflare`, done 2026-10-11; workers-rs 0.8.7, built for wasm32 by worker-build 0.8.7
   installed into `build/tools`; wrangler from nix): same API and protocol as the self-hosted server. Worker routes
-  `/api/*` (everything else is Workers Static Assets: client + text, SPA fallback, `_headers` for caching); accounts
+  `/api/*` (everything else is Workers Static Assets: client + text, no SPA fallback (`not_found_handling =
+  "none"`: the app lives at `/` with hash routes, and an `index.html` answer to a missing `/assets/*` was cached as
+  immutable), `_headers` for caching); accounts
   in D1 (binding `ACCOUNTS`, schema created once per isolate from `api::accounts::SCHEMA`); one SQLite-backed Durable
   Object `Space` per space (`id_from_name(space)`), running `crates/space` over `SqlStorage` with the WebSocket
   hibernation API. The Worker authenticates and forwards the upgrade with `x-owner`. The DO has no hub: no awaits

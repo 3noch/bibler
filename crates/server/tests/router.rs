@@ -77,6 +77,9 @@ async fn spa_fallback_and_assets() {
     let (status, headers, _) = get(&app, "/assets/app-AbC123.js", false).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=31536000, immutable");
+    let (status, headers, _) = get(&app, "/assets/app-OLDHASH.js", false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a missing bundle is not index.html (which would be cached for a year)");
+    assert!(headers.get(header::CACHE_CONTROL).is_none_or(|v| !v.to_str().unwrap().contains("immutable")));
 }
 
 #[tokio::test]
