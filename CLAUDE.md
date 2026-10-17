@@ -87,17 +87,25 @@ Planned for licensed translations (user, 2026-10-12): build their index ahead of
 treat it as static data (the index holds no text); if it can't be published as a file, store it in the shared
 database and let clients cache it forever. Text itself is fetched at runtime within the license's caching terms.
 
+Each space's SQLite database (`space::SCHEMA`; the same SQL on the server and in Durable Objects) holds the current
+state in normalized tables plus the change log. The tables are the source of truth (`apply` checks ops against them
+and writes rows + one change in one transaction); the log is only for sync replay, undo and op dedupe.
 ```sql
-tags(id ULID PK, owner_id, name, description, color, created_at, updated_at, deleted_at, UNIQUE(owner_id, id))
-  -- name unique per owner, case-insensitive, among non-deleted
-taggings(id ULID PK, owner_id, tag_id, text_id, start_ord, end_ord, created_at, deleted_at, merged_into,
-         FOREIGN KEY (owner_id, tag_id) REFERENCES tags(owner_id, id))
-  -- index (owner_id, tag_id, start_ord)
-comments(id, owner_id, tagging_id, body, created_at, edited_at, deleted_at)
-palette(owner_id, slot, tag_id)                 -- user's top-N quick-select
-overlap_styles(owner_id, combo_key, style_json) -- combo_key = sorted tag ids joined
-changes(owner_id, seq, op_id, kind, payload, created_at, PRIMARY KEY(owner_id, seq), UNIQUE(owner_id, op_id))
+meta(key PK, value)                       -- 'schema' version, 'pruned_through' (retention)
+members(owner_id PK, created_at)          -- owners with rows in this space
+tags(id PK, owner_id -> members, name, color, description (unused), created_at, updated_at, deleted_at,
+     UNIQUE(owner_id, id))
+  -- unique index (owner_id, lower(name)) among live tags: an ASCII backstop; ops::effect enforces the Unicode rule
+taggings(id PK, owner_id, tag_id, text_id, start_ord, end_ord, created_at, deleted_at, merged_into,
+         FOREIGN KEY (owner_id, tag_id) REFERENCES tags(owner_id, id), CHECK (start_ord < end_ord))
+  -- index (owner_id, tag_id, text_id, start_ord) among live taggings
+comments(id PK, owner_id -> members, tagging_id -> taggings, body, created_at, edited_at, deleted_at, author_id)
+  -- index (owner_id, tagging_id); author_id (schema v2) = the member who wrote it
+palettes(owner_id PK -> members, tags JSON array of tag ids (<= 9, read/written whole), updated_at)
+changes(seq INTEGER PK (one per space), owner_id (data owner), op_id, kind, payload JSON {before, after rows}
+        ('' once pruned), created_at, UNIQUE(owner_id, op_id))
 ```
+Not built: per-combination overlap styles (an `overlap_styles` table was sketched early; see Next steps).
 - Tag identity is an opaque ULID + owner_id; name/color/description are mutable attributes. The composite FK is the
   namespacing guarantee (two users' "life" tags never collide). Owner always comes from the session, never the payload.
 - Soft deletes everywhere (sync + undo). Undo/redo (Ctrl-Z) is a day-one requirement.
