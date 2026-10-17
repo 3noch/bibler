@@ -218,6 +218,22 @@ export class TextIndex {
     return [this.verseStart[this.bookFirstSlot(book)]!, this.bookEnd[book]!];
   }
 
+  /**
+   * An interval cut at book boundaries: one piece per book it has words in. Taggings never span books (the server
+   * rejects an end outside the start's book): erasing part of a cross-book tagging would leave pieces that start
+   * or end between books, on no word.
+   */
+  byBook(iv: Interval): Interval[] {
+    const out: Interval[] = [];
+    for (let b = 0; b < this.books; b++) {
+      const [bs, be] = this.bookInterval(b);
+      const s = Math.max(iv[0], bs);
+      const e = Math.min(iv[1], be);
+      if (this.pos(e) > this.pos(s)) out.push([s, e]);
+    }
+    return out;
+  }
+
   /** Words in an interval. */
   wordCount(iv: Interval): number {
     const [s, e] = iv;

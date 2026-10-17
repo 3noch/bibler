@@ -303,8 +303,12 @@ export function parseRef(index: TextIndex, input: string, ctx: ParseContext = {}
 
   const startOrd = (p: Point) =>
     p.verse === null ? index.chapterInterval(p.book, p.chapter)[0] : index.verseInterval(p.book, p.chapter, p.verse)[0];
-  const endOrd = (p: Point) =>
-    p.verse === null ? index.chapterInterval(p.book, p.chapter)[1] : index.verseInterval(p.book, p.chapter, p.verse)[1];
+  const endOrd = (p: Point) => {
+    const e = p.verse === null ? index.chapterInterval(p.book, p.chapter)[1] : index.verseInterval(p.book, p.chapter, p.verse)[1];
+    // A range ending at an empty title ends where its book's first word starts: if that is the book's first word,
+    // the range has nothing in that book, so it ends at the previous book's end (not at a word of this one).
+    return p.book > 0 && e === index.bookInterval(p.book)[0] ? index.bookEnd[p.book - 1]! : e;
+  };
 
   const item = () => {
     const e1 = endpoint(true);
@@ -384,9 +388,12 @@ const verseLabel = (v: number) => (v === 0 ? "title" : String(v));
  */
 export function formatInterval(index: TextIndex, iv: Interval, style: FormatStyle = "full"): string {
   const [s, e] = iv;
-  if (!(e > s)) throw new RangeError("empty interval");
-  const a = index.locate(s);
-  const b = index.locate(e - 1);
+  // The first and last words (an end may be a book's end, or the next book's first word).
+  const first = index.pos(s);
+  const last = index.pos(e) - 1;
+  if (!(e > s) || last < first) throw new RangeError("empty interval");
+  const a = index.locate(index.ordAt(first));
+  const b = index.locate(index.ordAt(last));
   const single = (bk: number) => index.chapterCount(bk) === 1;
 
   if (s === index.bookInterval(a.book)[0] && e === index.bookInterval(b.book)[1]) {

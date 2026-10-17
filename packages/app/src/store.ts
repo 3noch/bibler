@@ -453,15 +453,21 @@ export async function openTagStore() {
     canUndo: () => (version(), sync().canUndo()),
     canRedo: () => (version(), sync().canRedo()),
 
-    paint: (tag: string, start: number, end: number) =>
-      submit([{ kind: "paint", tag, text_id: TEXT_ID, start, end, new_id: ulid(), now: Date.now() }]),
-    erase: (tag: string, start: number, end: number) =>
-      submit([{ kind: "erase", tag, text_id: TEXT_ID, start, end, split_id: ulid(), now: Date.now() }]),
-    /** Erase every tag over [start, end) as one undo step. */
-    eraseAll(start: number, end: number) {
-      const hit = new Set(visibleTaggings().filter((t) => t.start < end && t.end > start).map((t) => t.tag));
+    /** Paint intervals (each within one book: `TextIndex.byBook`) as one undo step. */
+    paint: (tag: string, ivs: readonly Interval[]) =>
+      submit(ivs.map(([start, end]) => ({ kind: "paint" as const, tag, text_id: TEXT_ID, start, end, new_id: ulid(), now: Date.now() }))),
+    /** Erase one tag from intervals (each within one book) as one undo step. */
+    erase: (tag: string, ivs: readonly Interval[]) =>
+      submit(ivs.map(([start, end]) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now: Date.now() }))),
+    /** Erase every tag over intervals (each within one book) as one undo step. */
+    eraseAll(ivs: readonly Interval[]) {
       const now = Date.now();
-      return submit([...hit].map((tag) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now })));
+      return submit(
+        ivs.flatMap(([start, end]) => {
+          const hit = new Set(visibleTaggings().filter((t) => t.start < end && t.end > start).map((t) => t.tag));
+          return [...hit].map((tag) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now }));
+        }),
+      );
     },
     /** Create a tag (and add it to the palette if there is room) as one undo step. */
     createTag(name: string): Tag | undefined {

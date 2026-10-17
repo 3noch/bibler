@@ -7,7 +7,8 @@
   either edge within 1500px, manual scroll anchoring so edge changes never move the visible text; books are loaded
   BEFORE a chapter is inserted so nothing renders empty). The URL hash follows the chapter under the top bar
   (`history.replaceState`); typing a ref or `hashchange` navigates. Painting/selection work across chapter and book
-  boundaries (one hit-testing container).
+  boundaries (one hit-testing container); across books they become one tagging per book (`index.byBook`), as one undo
+  step (`store.paint/erase/eraseAll` take a list of intervals).
 - Top bar (must fit a 320px phone): menu button, location field (shows "Psalm 23"; click/`/` to type a ref; at rest
   it is styled as a field with a magnifier, outline and `/` hint because a bare label didn't read as editable), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent

@@ -79,7 +79,10 @@ as printed (verse 0 = title); word = position in the verse. So the same verse ha
 with the same versification (cross-translation tags project by verse), and a text can be indexed without shipping
 its words. Ordinals are sparse: never subtract them to count words or walk them one by one (`TextIndex.pos`).
 All intervals are **half-open `[start, end)`** and **tile**: an end is the next word's ordinal (`TextIndex.after`)
-or the book's end, never `last + 1` inside a book, so neighbouring verses still abut. JS must use
+or the book's end, never `last + 1` inside a book, so neighbouring verses still abut. **Taggings never span books**
+(2026-10-17, from a review: erasing part of one that did left pieces starting or ending between books, on no word):
+the server requires the end to be a word of the start's book or that book's end, and the client cuts strokes and
+selections with `TextIndex.byBook` (one tagging per book, one undo step). JS must use
 `bookIdOf`/`makeOrd`, never `>>` (ids >= 128 exceed int32). ~791k words in KJV; **hyphens split words**
 (`Beth-` + `el`, the first part flagged `joined`).
 Anchors are keyed by `text_id` (versioned, now `kjv-1769-v2`); the client ignores taggings of other texts.

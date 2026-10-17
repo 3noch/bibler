@@ -95,7 +95,7 @@ function Main(props: { text: Text; store: TagStore }) {
     if (on) setActiveTag(null);
   };
   /** Remove one tag from one place (a whole tagging), leaving overlapping tags alone. Undoable like any edit. */
-  const unhighlight = (tagId: string, iv: Interval) => store.erase(tagId, iv[0], iv[1]);
+  const unhighlight = (tagId: string, iv: Interval) => store.erase(tagId, [iv]);
   const selectTag = (id: string) => {
     setActiveTag(id);
     setEraser(false);
@@ -122,8 +122,9 @@ function Main(props: { text: Text; store: TagStore }) {
   const chooseTag = (tag: Tag, erase = false) => {
     const range = selectionRange();
     if (range) {
-      if (erase) store.erase(tag.id, ...range);
-      else store.paint(tag.id, ...range);
+      const ivs = index.byBook(range); // one piece per book
+      if (erase) store.erase(tag.id, ivs);
+      else store.paint(tag.id, ivs);
       window.getSelection()?.removeAllRanges();
       return;
     }

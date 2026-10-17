@@ -233,13 +233,13 @@ export function Bible(props: Props) {
   };
 
   const commit = (a: number, b: number, erase: boolean) => {
-    const start = Math.min(a, b);
-    const end = index.after(Math.max(a, b));
+    // A stroke across books becomes one piece per book (taggings never span books).
+    const ivs = index.byBook([Math.min(a, b), index.after(Math.max(a, b))]);
     if (erase) {
-      if (props.activeTag) props.store.erase(props.activeTag, start, end);
-      else props.store.eraseAll(start, end);
+      if (props.activeTag) props.store.erase(props.activeTag, ivs);
+      else props.store.eraseAll(ivs);
     } else if (props.activeTag) {
-      props.store.paint(props.activeTag, start, end);
+      props.store.paint(props.activeTag, ivs);
     }
   };
 

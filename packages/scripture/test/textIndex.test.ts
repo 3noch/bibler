@@ -107,3 +107,17 @@ test("landmarks", () => {
   assert.throws(() => index.locate(makeOrd(2, 1, 0, 0)), "Genesis has no title: before its first word");
   assert.throws(() => index.locate(-1));
 });
+
+test("byBook cuts an interval at book boundaries (one piece per book with words)", () => {
+  const gen = BOOKS.findIndex((b) => b.code === "GEN");
+  const exo = gen + 1;
+  const [gs, ge] = index.bookInterval(gen);
+  const [es] = index.bookInterval(exo);
+  const lastGen = index.ordAt(index.pos(ge) - 1);
+  const iv = [lastGen, index.after(es)] as const; // Gen 50:26's last word + Exodus' first word
+  assert.deepEqual(index.byBook(iv), [[lastGen, ge], [es, index.after(es)]]);
+  assert.deepEqual(index.byBook([gs, index.after(gs)]), [[gs, index.after(gs)]], "within a book: unchanged");
+  assert.deepEqual(index.byBook([ge, es]), [], "between books there are no words");
+  assert.equal(index.byBook(index.bookInterval(gen)).length, 1);
+  assert.equal(index.byBook([gs, index.bookEnd[index.books - 1]!]).length, index.books, "the whole Bible: every book");
+});

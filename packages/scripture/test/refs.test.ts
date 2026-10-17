@@ -97,15 +97,10 @@ test("randomized verse-aligned intervals round-trip through format and parse", (
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  // Random word = random dense position mapped to its (sparse) ordinal.
-  const ordAt = (n: number) => {
-    for (let b = 0; b < index.books; b++) {
-      const [s, e] = index.bookInterval(b);
-      if (n < e - s) return s + n;
-      n -= e - s;
-    }
-    return index.bookEnd[index.books - 1]! - 1;
-  };
+  // Random word = random dense position mapped to its (sparse) ordinal. (This once subtracted ordinals, which only
+  // ever reached Genesis 1-14.)
+  const ordAt = (n: number) => index.ordAt(n);
+  const books = new Set<number>();
   for (let k = 0; k < 3000; k++) {
     const n = Math.floor(rand() * index.tokens);
     // Mostly short spans, sometimes long ones (cross-chapter and cross-book).
@@ -113,9 +108,11 @@ test("randomized verse-aligned intervals round-trip through format and parse", (
     const a = ordAt(n);
     const b = ordAt(Math.min(index.tokens - 1, n + len));
     const iv: Interval = [index.slotInterval(index.slotOf(a))[0], index.slotInterval(index.slotOf(b))[1]];
+    books.add(index.locate(a).book);
     assertRoundTrip(iv, "full", `case ${k}`);
     assertRoundTrip(iv, "short", `case ${k}`);
   }
+  assert.ok(books.size > 60, `samples reach nearly every book (${books.size})`);
   // Whole chapters and books, including across book boundaries.
   for (let k = 0; k < 500; k++) {
     const c1 = Math.floor(rand() * index.chapters);
@@ -132,4 +129,22 @@ test("formatting a word-level interval widens to whole verses", () => {
   const [, e2] = index.verseInterval(bookByCode("JHN"), 3, 17);
   assert.equal(formatInterval(index, [s + 5, e2 - 1]), "John 3:16–17");
   assert.throws(() => formatInterval(index, [s, s]));
+});
+
+test("a range ending at the next book's empty title stays in its own book", () => {
+  const r = parseRef(index, "Gen 50:26–Exod 1:0");
+  assert.deepEqual(r.warnings, []);
+  const gen = bookByCode("GEN");
+  assert.deepEqual(r.intervals, [[index.verseInterval(gen, 50, 26)[0], index.bookEnd[gen]!]]);
+  assert.equal(formatInterval(index, r.intervals[0]!), "Genesis 50:26");
+  assert.deepEqual(parseRef(index, "Mal 4:6–Matt 1:0").intervals.map((iv) => formatInterval(index, iv)), ["Malachi 4:6"]);
+});
+
+test("formatting copes with ends between books (a book's end, or the next book's first word)", () => {
+  const gen = bookByCode("GEN");
+  const [es] = index.bookInterval(gen + 1);
+  const v = index.verseInterval(gen, 50, 26)[0];
+  assert.equal(formatInterval(index, [v, es]), "Genesis 50:26", "ends at Exodus' first word");
+  assert.equal(formatInterval(index, [index.bookEnd[gen]!, index.after(es)]), "Exodus 1:1", "starts at Genesis' end");
+  assert.throws(() => formatInterval(index, [index.bookEnd[gen]!, es]), RangeError, "no words in between");
 });

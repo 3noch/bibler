@@ -40,7 +40,8 @@ Consequences:
 **Intervals tile the line.** All intervals are half-open, and a word owns the ordinals from itself up to the next
 word of its book (a book's last word owns only itself). So an interval **ends at the ordinal of the word after its
 last word**, or at the book's end (last word + 1), never at `last + 1` inside a book: `TextIndex.after(ord)` gives
-the end. That keeps "abutting" meaningful across verses (painting the end of one verse and then the start of the
+the end. A tagging stays within one book (the server rejects an end in another book). That keeps "abutting"
+meaningful across verses (painting the end of one verse and then the start of the
 next merges, exactly as before), and the server rejects any end that is neither a word nor a book end
 (`api::check`, `bad_text`). A verse's interval is `[its first word, the next verse's first word)`; an empty title
 slot starts where the next slot with words starts. Taggings at the end of one book and the start of the next never

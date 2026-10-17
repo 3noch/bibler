@@ -32,15 +32,18 @@ impl Texts {
         Ok(())
     }
 
-    /// Check a tagging interval: a known text, `start < end`, `start` is a word, and `end` is a word or a book's
-    /// end. (Intervals tile the ordinal line: an interval ends at the word after its last word, so the gaps
-    /// between verses belong to the word before them; see docs/text-format.md.)
+    /// Check a tagging interval: a known text, `start < end`, `start` is a word, and `end` is a word of the same
+    /// book or that book's end. (Intervals tile the ordinal line: an interval ends at the word after its last word,
+    /// so the gaps between verses belong to the word before them; see docs/text-format.md. Taggings never span
+    /// books: erasing part of one that did would leave pieces starting or ending between books, on no word.)
     ///
     /// # Errors
     /// A human-readable reason.
     pub fn check(&self, text_id: &str, start: u32, end: u32) -> Result<(), String> {
         let index = self.texts.get(text_id).ok_or_else(|| format!("unknown text {text_id}"))?;
-        if start < end && index.is_word(start) && (index.is_word(end) || index.books.iter().any(|b| b.3 == end)) {
+        let same_book = |o: u32| o >> BOOK_SHIFT == start >> BOOK_SHIFT;
+        let book_end = index.books.iter().find(|b| b.0 == start >> BOOK_SHIFT).map(|b| b.3);
+        if start < end && index.is_word(start) && ((index.is_word(end) && same_book(end)) || book_end == Some(end)) {
             Ok(())
         } else {
             Err(format!("[{start}, {end}) is not a range of words in {text_id}"))
@@ -125,19 +128,21 @@ pub fn check_op(texts: &Texts, op: &Op) -> Result<(), (&'static str, String)> {
 mod tests {
     use super::Texts;
 
-    /// Book 2, chapter 1: an empty title slot, 1:1 with 3 words, 1:2 with 2 words.
+    /// Book 2, chapter 1: an empty title slot, 1:1 with 3 words, 1:2 with 2 words. Book 3, chapter 1: an empty
+    /// title slot, 1:1 with 2 words.
     fn texts() -> Texts {
-        let at = |v: u32, w: u32| 2u32 << 24 | 1 << 16 | v << 8 | w;
+        let at = |b: u32, v: u32, w: u32| b << 24 | 1 << 16 | v << 8 | w;
         let mut b = b"BTIX".to_vec();
         let u32s = |b: &mut Vec<u8>, xs: &[u32]| xs.iter().for_each(|x| b.extend_from_slice(&x.to_le_bytes()));
-        u32s(&mut b, &[3, 1, 1, 3, 5]);
-        u32s(&mut b, &[at(1, 0), at(1, 0), at(2, 0), at(2, 2)]); // verseStart + sentinel
-        u32s(&mut b, &[at(2, 2)]); // bookEnd
-        u32s(&mut b, &[0, 3]); // chapterFirstVerse
-        b.extend_from_slice(&[0; 6]); // chapterOfVerse
-        b.extend_from_slice(&[0, 0, 1, 0]); // bookFirstChapter
-        b.extend_from_slice(&[0, 2]); // bookOfChapter, bookId
-        b.extend_from_slice(&[0, 3, 2]); // slotWords
+        let u16s = |b: &mut Vec<u8>, xs: &[u16]| xs.iter().for_each(|x| b.extend_from_slice(&x.to_le_bytes()));
+        u32s(&mut b, &[3, 2, 2, 5, 7]); // version, books, chapters, slots, tokens
+        u32s(&mut b, &[at(2, 1, 0), at(2, 1, 0), at(2, 2, 0), at(3, 1, 0), at(3, 1, 0), at(3, 1, 2)]); // verseStart
+        u32s(&mut b, &[at(2, 2, 2), at(3, 1, 2)]); // bookEnd
+        u32s(&mut b, &[0, 3, 5]); // chapterFirstVerse
+        u16s(&mut b, &[0, 0, 0, 1, 1]); // chapterOfVerse
+        u16s(&mut b, &[0, 1, 2]); // bookFirstChapter
+        b.extend_from_slice(&[0, 1, 2, 3]); // bookOfChapter, bookId
+        b.extend_from_slice(&[0, 3, 2, 0, 2]); // slotWords
         let mut t = Texts::default();
         t.add_index("t", &b).unwrap();
         t
@@ -147,6 +152,7 @@ mod tests {
     fn intervals_end_at_the_next_word_or_the_book_end() {
         let t = texts();
         let at = |v: u32, w: u32| 2u32 << 24 | 1 << 16 | v << 8 | w;
+        let next = |w: u32| 3u32 << 24 | 1 << 16 | 1 << 8 | w; // book 3, 1:1
         let ok = |s, e| t.check("t", s, e).is_ok();
         assert!(ok(at(1, 0), at(1, 1)));
         assert!(ok(at(1, 1), at(2, 0)), "the end of 1:1 is the first word of 1:2");
@@ -156,6 +162,10 @@ mod tests {
         assert!(!ok(at(0, 0), at(1, 1)), "the empty title has no words");
         assert!(!ok(at(2, 0), at(2, 3)), "past the book's end");
         assert!(!ok(at(1, 1), at(1, 1)), "empty");
+        assert!(ok(next(0), next(2)), "the second book on its own");
+        assert!(!ok(at(1, 0), next(0)), "an end in the next book, even its first word");
+        assert!(!ok(at(1, 0), next(1)), "a range across books");
+        assert!(!ok(at(1, 0), next(2)), "or up to the next book's end");
         assert!(t.check("other", at(1, 0), at(1, 1)).is_err());
         assert!(super::parse(&[]).is_none());
     }
