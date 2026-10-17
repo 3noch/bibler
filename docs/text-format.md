@@ -133,7 +133,9 @@ each book its code, id, first word's ordinal, names, chapter count, token count 
 
 `fixtures/text/kjv-1769-v2.golden.json` is **per book** (so adding a book only appends entries): code, id, chapters,
 slots, tokens, sha256 of the book's tokens joined by `\n`, sha256 of its words as displayed (hyphen-joined parts put
-back together; this equals v1's token hash, so the text itself did not change), and sha256 of its verse starts
-without the book id bits. `cargo test -p text-build` rebuilds from
+back together; this equals v1's token hash, so the text itself did not change), sha256 of its verse starts
+without the book id bits (with address ordinals this only pins which slots are empty), and sha256 of its words per
+slot (one byte each; this pins where verses split the word stream, hence every word's ordinal: added 2026-10-17
+after a review showed a word moving into the next verse passed every other check). `cargo test -p text-build` rebuilds from
 the vendored source and fails on any difference. `text-build --write-golden` regenerates it (only legitimate before
 any user has taggings).

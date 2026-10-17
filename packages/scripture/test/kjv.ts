@@ -24,14 +24,16 @@ function load() {
   const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const index = new TextIndex(buf);
   const golden = JSON.parse(readFileSync(new URL("fixtures/text/kjv-1769-v2.golden.json", root), "utf8")) as {
-    books: { code: string; id: number; verse_starts_sha256: string }[];
+    books: { code: string; id: number; verse_starts_sha256: string; slot_words_sha256: string }[];
   };
   golden.books.forEach((g, b) => {
     const first = index.bookFirstSlot(b);
     const base = g.id * 2 ** 24;
     const local = Uint32Array.from(index.verseStart.subarray(first, index.bookFirstSlot(b + 1)), (v) => v - base);
     const hash = createHash("sha256").update(Buffer.from(local.buffer)).digest("hex");
-    if (index.bookId[b] !== g.id || hash !== g.verse_starts_sha256) {
+    const words = index.slotWords.subarray(first, index.bookFirstSlot(b + 1));
+    const wordsHash = createHash("sha256").update(words).digest("hex");
+    if (index.bookId[b] !== g.id || hash !== g.verse_starts_sha256 || wordsHash !== g.slot_words_sha256) {
       throw new Error(`built index does not match the golden file for ${g.code}; rebuild with text-build`);
     }
   });

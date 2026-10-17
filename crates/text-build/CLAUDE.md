@@ -8,7 +8,8 @@ Source: eBible.org `eng-kjv2006` USFM (1769 text, public domain), vendored verba
 later, a separate `text_id`). `text-build` (`cargo run -p text-build --release`) writes content-hashed artifacts to
 `build/text/kjv-1769-v2/` (gitignored): `index.<hash>.bin` (v3, ~230 KB), one JSON per book, `manifest.json`. It
 verifies `fixtures/text/kjv-1769-v2.golden.json` (tokens 791,484; slots 32,291; per-book counts; token-stream,
-displayed-text and verseStart sha256); `--write-golden` regenerates it, which is legitimate only before any user has
+displayed-text, verseStart and words-per-slot sha256; the TS test loader checks the last two against the built
+index); `--write-golden` regenerates it, which is legitimate only before any user has
 taggings. The v1 token stream was cross-checked byte-identical against an independent Python tokenizer, and v2's
 displayed text equals v1's token stream book by book.
 - **Ordinals are addresses** (2026-10-12): `book << 24 | chapter << 16 | verse << 8 | word` (`make_ord`); intervals

@@ -735,8 +735,12 @@ pub struct GoldenBook {
     /// sha256 of the book's words as displayed (hyphen-joined parts put back together) joined by `\n`: pins the
     /// text itself apart from how it is split into words.
     pub display_sha256: String,
-    /// sha256 of the book's verse starts without the book id bits (u32 LE).
+    /// sha256 of the book's verse starts without the book id bits (u32 LE). With address ordinals this only pins
+    /// which slots are empty, so:
     pub verse_starts_sha256: String,
+    /// sha256 of the book's words per slot (one byte each): pins where verses split the word stream, i.e. every
+    /// word's ordinal (moving a word into the next verse changes no other hash).
+    pub slot_words_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -755,6 +759,7 @@ pub fn golden(t: &Text) -> Golden {
             let words = &t.words[b.first_word as usize..(b.first_word + b.tokens) as usize];
             let slots = &t.verse_start[b.first_slot as usize..(b.first_slot + b.slots) as usize];
             let vs: Vec<u8> = slots.iter().flat_map(|v| (v & ((1 << BOOK_SHIFT) - 1)).to_le_bytes()).collect();
+            let sw = &t.slot_words[b.first_slot as usize..(b.first_slot + b.slots) as usize];
             GoldenBook {
                 code: b.code.clone(),
                 id: b.id,
@@ -764,6 +769,7 @@ pub fn golden(t: &Text) -> Golden {
                 tokens_sha256: sha256_hex(words.join("\n").as_bytes()),
                 display_sha256: sha256_hex(t.display_words(b).join("\n").as_bytes()),
                 verse_starts_sha256: sha256_hex(&vs),
+                slot_words_sha256: sha256_hex(sw),
             }
         })
         .collect();
