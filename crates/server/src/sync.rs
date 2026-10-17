@@ -165,6 +165,23 @@ async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64
     }
 }
 
+/// Too far behind to replay (changes after `*last` were pruned): send the whole state instead, advancing `*last`.
+/// False if the socket should close.
+async fn reset_if_pruned(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64, pending: &[String]) -> bool {
+    let (store, s, after, pending) = (st.store.clone(), space.to_string(), *last, pending.to_vec());
+    match blocking(move || store.catch_up(&s, after, &pending)).await {
+        Ok(Ok(None)) => true,
+        Ok(Ok(Some(reset))) => {
+            *last = reset.seq;
+            send(tx, &ServerMsg::reset(&reset)).await
+        }
+        Ok(Err(e)) | Err(e) => {
+            tracing::error!("catch up: {e}");
+            false
+        }
+    }
+}
+
 async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: String) {
     let (mut tx, mut rx) = socket.split();
     // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
@@ -195,24 +212,22 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             _ => return,
         }
     };
-    // Too far behind to replay (changes after `last` were pruned): send the whole state instead.
     pending.truncate(MAX_HELLO_PENDING);
-    let (store, s, after) = (st.store.clone(), space.clone(), last);
-    match blocking(move || store.catch_up(&s, after, &pending)).await {
-        Ok(Ok(None)) => {}
-        Ok(Ok(Some(reset))) => {
-            if !send(&mut tx, &ServerMsg::reset(&reset)).await {
-                return;
-            }
-            last = reset.seq;
-        }
-        Ok(Err(e)) | Err(e) => {
-            tracing::error!("catch up: {e}");
+    if !reset_if_pruned(&st, &space, &mut tx, &mut last, &pending).await {
+        return;
+    }
+    if !send_since(&st, &space, &mut tx, &mut last, None).await {
+        // The replay reads page by page while other sockets' ops keep pruning: if its next changes were pruned
+        // meanwhile, a reset carries on from there (rather than closing, for a reset on reconnecting).
+        let before = last;
+        if !reset_if_pruned(&st, &space, &mut tx, &mut last, &pending).await
+            || last == before
+            || !send_since(&st, &space, &mut tx, &mut last, None).await
+        {
             return;
         }
     }
-    if !send_since(&st, &space, &mut tx, &mut last, None).await || !send(&mut tx, &ServerMsg::Ready { seq: last }).await
-    {
+    if !send(&mut tx, &ServerMsg::Ready { seq: last }).await {
         return;
     }
     loop {
