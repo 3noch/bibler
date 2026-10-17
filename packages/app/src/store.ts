@@ -205,29 +205,30 @@ export async function openTagStore() {
   let saveTimer: number | undefined;
   /** Set once signing out: nothing may be written back after the device's data is cleared. */
   let signedOut = false;
-  /** Write a space's state to this device (base cache, shared outbox, this tab's undo). */
-  const save = (o: Opened) =>
-    withStorageLock(() => {
-      if (signedOut) return;
-      const { sync, owner, keyOf } = o;
-      try {
-        const snap = sync.snapshot();
-        const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, keyOf(BASE_KEY));
-        if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq)) {
-          const { owner: o, seq, rows, changes, confirmed } = snap;
-          localStorage.setItem(keyOf(BASE_KEY), JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
-        }
-        const theirs = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
-        const ops = theirs?.owner === owner ? [...theirs.ops] : [];
-        const ids = new Set(ops.map((o) => o.op_id));
-        for (const op of snap.pending) if (!ids.has(op.op_id)) ops.push(op);
-        const live = ops.filter((o) => !sync.isConfirmed(o.op_id) && !sync.dropped.has(o.op_id));
-        localStorage.setItem(keyOf(OUTBOX_KEY), JSON.stringify({ owner, ops: live } satisfies Outbox));
-        sessionStorage.setItem(keyOf(UNDO_KEY), JSON.stringify({ owner, undo: snap.undo, redo: snap.redo } satisfies Undo));
-      } catch {
-        notify("Could not save locally (storage full or blocked); changes still sync while online.");
+  /** Write a space's state to this device (base cache, shared outbox, this tab's undo), under the storage lock. */
+  const save = (o: Opened) => withStorageLock(() => saveNow(o));
+  /** `save` without waiting for the lock: when the page is going away, an async lock callback may never run. */
+  const saveNow = (o: Opened) => {
+    if (signedOut) return;
+    const { sync, owner, keyOf } = o;
+    try {
+      const snap = sync.snapshot();
+      const stored = LOCAL_ONLY ? undefined : read<Base>(localStorage, keyOf(BASE_KEY));
+      if (!LOCAL_ONLY && (!stored || stored.owner !== owner || stored.seq <= snap.seq)) {
+        const { owner: o, seq, rows, changes, confirmed } = snap;
+        localStorage.setItem(keyOf(BASE_KEY), JSON.stringify({ owner: o, seq, rows, changes, confirmed } satisfies Base));
       }
-    });
+      const theirs = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
+      const ops = theirs?.owner === owner ? [...theirs.ops] : [];
+      const ids = new Set(ops.map((o) => o.op_id));
+      for (const op of snap.pending) if (!ids.has(op.op_id)) ops.push(op);
+      const live = ops.filter((o) => !sync.isConfirmed(o.op_id) && !sync.dropped.has(o.op_id));
+      localStorage.setItem(keyOf(OUTBOX_KEY), JSON.stringify({ owner, ops: live } satisfies Outbox));
+      sessionStorage.setItem(keyOf(UNDO_KEY), JSON.stringify({ owner, undo: snap.undo, redo: snap.redo } satisfies Undo));
+    } catch {
+      notify("Could not save locally (storage full or blocked); changes still sync while online.");
+    }
+  };
 
   /** Open a space from this device's caches and connect it. */
   const open = (space: string | null): Opened => {
@@ -353,6 +354,18 @@ export async function openTagStore() {
     }
     return names;
   };
+
+  // Edits are saved 200 ms after the last one; don't lose that window when the tab is closed or backgrounded (a
+  // phone may kill a hidden page without another event).
+  window.addEventListener("pagehide", () => {
+    clearTimeout(saveTimer);
+    saveNow(current());
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    clearTimeout(saveTimer);
+    save(current());
+  });
 
   const authError = takeAuthError();
   if (authError) notify(authError);
