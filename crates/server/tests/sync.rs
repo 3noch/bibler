@@ -522,6 +522,26 @@ async fn a_client_ahead_of_a_restored_space_gets_a_reset() {
 }
 
 #[tokio::test]
+async fn a_space_file_is_created_by_its_first_write_not_by_reading_it() {
+    let cfg = config("lazy-spaces");
+    let srv = start(&cfg).await;
+    let files = || {
+        std::fs::read_dir(cfg.data.join("spaces")).map_or(0, |d| {
+            d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sqlite")).count()
+        })
+    };
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(a.hello(0).await.len(), 0);
+    assert_eq!(files(), 0, "a visitor who only reads leaves nothing on disk");
+    a.op(tag_create("op1", "T", "Grace")).await;
+    assert_eq!(a.recv().await["type"], "ack");
+    assert_eq!(files(), 1);
+    let mut b = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(b.hello(0).await.len(), 1, "and it reads like any other");
+}
+
+#[tokio::test]
 async fn a_storage_failure_closes_the_socket_instead_of_rejecting_the_op() {
     let cfg = config("storage-failure");
     let srv = start(&cfg).await;

@@ -157,7 +157,8 @@ Rust: `crates/normalize/src/lib.rs`).
   reject them); schema version is in a `meta` table. `apply` does every check before its first write (DOs have no
   rollback); tested by asserting `total_changes()` is unchanged after each rejected fixture op.
 - **Server** (`crates/server`): `--data DIR` = `accounts.sqlite` (owners, sessions; D1 on Cloudflare) +
-  `spaces/<id>.sqlite`. One writer thread holds every write connection (<= 256 open, then reopened), per-space read
+  `spaces/<id>.sqlite` (created by a space's first write; reading a space with no file reads an empty in-memory one,
+  so visitors who only read leave nothing on disk). One writer thread holds every write connection (<= 256 open, then reopened), per-space read
   pools; each op is one transaction (idempotent by `(owner, op_id)`). Commit listener publishes to `Hub` (per-space
   broadcast) **on the writer thread**, so sockets see seq order. `--migrate-from OLD.db` imports the pre-spaces
   single database once (only if `--data` doesn't exist yet; into a temp dir, then renamed); personal spaces keep the

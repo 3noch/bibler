@@ -226,9 +226,11 @@ impl SqliteStore {
             None => {
                 let path = space_path(&self.dir, key)?;
                 if !path.exists() {
-                    // Let the writer create and initialize it, so a reader never sees a half-made schema.
-                    let (dir, id) = (self.dir.clone(), key.to_string());
-                    self.write(move |w| w.space(&dir, &id).map(|_| ()))??;
+                    // Nothing written yet: read an empty space without creating its file (every new visitor's
+                    // hello reads one; only the first write creates it, on the writer thread). Not pooled.
+                    let empty = Connection::open_in_memory().map_err(|e| e.to_string())?;
+                    space::init(&empty)?;
+                    return f(&empty);
                 }
                 connect(&path)?
             }
