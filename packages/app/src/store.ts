@@ -203,9 +203,12 @@ export async function openTagStore() {
   const loadHidden = (space: string | null) => new Set<string>(JSON.parse(storageGet(hiddenKeyOf(space)) ?? "[]") as string[]);
 
   let saveTimer: number | undefined;
+  /** Set once signing out: nothing may be written back after the device's data is cleared. */
+  let signedOut = false;
   /** Write a space's state to this device (base cache, shared outbox, this tab's undo). */
   const save = (o: Opened) =>
     withStorageLock(() => {
+      if (signedOut) return;
       const { sync, owner, keyOf } = o;
       try {
         const snap = sync.snapshot();
@@ -327,6 +330,21 @@ export async function openTagStore() {
     void refreshGroups();
   };
 
+  /** Names of the spaces other than the open one whose outbox (on this device) holds unsent ops. */
+  const unsentElsewhere = (): string[] => {
+    const open = current().keyOf(OUTBOX_KEY);
+    const names: string[] = [];
+    for (const k of Object.keys(localStorage)) {
+      if (k === open || !(k === OUTBOX_KEY || k.startsWith(`${OUTBOX_KEY}:`))) continue;
+      const id = k === OUTBOX_KEY ? null : k.slice(OUTBOX_KEY.length + 1);
+      const outbox = read<Outbox>(localStorage, k);
+      // A personal outbox left by an earlier owner can never be sent (only its owner's space adopts it).
+      if (!outbox?.ops.length || outbox.owner !== (id ?? session?.owner ?? outbox.owner)) continue;
+      names.push(id ? `“${groupList().find((g) => g.id === id)?.name ?? "a group"}”` : "My tags");
+    }
+    return names;
+  };
+
   const authError = takeAuthError();
   if (authError) notify(authError);
   if (joined) notify(joined);
@@ -394,6 +412,13 @@ export async function openTagStore() {
     /** Off to Google; back on this page (same location) once signed in. This device's tags go with it: they
      *  become the account's, or are added to an existing account's. Refused while edits are still unsent. */
     signIn() {
+      // Unsent edits would be lost: they belong to this device's anonymous owner, and only what reached the server
+      // moves to the account. That includes edits queued in spaces that aren't open (they sync when opened).
+      const elsewhere = unsentElsewhere();
+      if (elsewhere.length) {
+        notify(`Some edits in ${elsewhere.join(", ")} haven't been sent yet. Open it while online, then sign in.`);
+        return;
+      }
       if (sync().pending.length > 0 || sync().status !== "synced") {
         notify("Still syncing your changes. Try again in a moment.");
         return;
@@ -402,15 +427,19 @@ export async function openTagStore() {
     },
     /** End the session and forget this account's data on this device; the page restarts anonymous. */
     async signOut() {
-      if (sync().pending.length > 0 && !confirm("Some changes haven't synced yet and will be lost. Sign out anyway?")) return;
+      const unsent = sync().pending.length > 0 || unsentElsewhere().length > 0;
+      if (unsent && !confirm("Some changes haven't synced yet and will be lost. Sign out anyway?")) return;
       const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
       if (!res?.ok) {
         notify("Couldn't sign out (offline?). Try again when connected.");
         return;
       }
+      // Stop syncing first, so nothing writes this account's data back before the reload.
+      current().close();
+      signedOut = true;
       clearTimeout(saveTimer);
       withStorageLock(() => {
-        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY, SESSION_KEY, GROUPS_KEY];
+        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY, SESSION_KEY, GROUPS_KEY, HIDDEN_KEY];
         for (const k of Object.keys(localStorage)) if (ours.some((o) => k === o || k.startsWith(`${o}:`))) localStorage.removeItem(k);
         for (const k of Object.keys(sessionStorage)) if (k.startsWith(UNDO_KEY)) sessionStorage.removeItem(k);
         location.reload();
