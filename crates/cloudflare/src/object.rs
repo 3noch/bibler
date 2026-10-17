@@ -198,9 +198,11 @@ impl Space {
             }
             Err(ApplyError::Op(e)) => reject(e.code(), e.to_string()),
             Err(ApplyError::Refused(code)) => reject(code, "only its author can change a comment".into()),
+            // Not the op's fault (storage failed): a reject would make the client drop it for good, so close instead;
+            // the client reconnects and re-sends it (ops are idempotent).
             Err(ApplyError::Internal(e)) => {
                 worker::console_error!("apply {}: {e}", op.op_id);
-                reject("internal", "internal error".into())
+                close(ws, "storage error; reconnect")
             }
         }
     }

@@ -490,3 +490,28 @@ async fn a_client_behind_the_retention_window_gets_a_reset() {
     let mut recent = connect(&srv, Some(&cookie), None).await.unwrap();
     assert_eq!(recent.hello(1).await.iter().map(|c| c["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [2]);
 }
+
+#[tokio::test]
+async fn a_storage_failure_closes_the_socket_instead_of_rejecting_the_op() {
+    let cfg = config("storage-failure");
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    a.hello(0).await;
+    a.op(tag_create("op1", "T", "Grace")).await;
+    a.recv().await;
+    a.recv().await;
+    // Break the space's database behind the server's back.
+    let file = std::fs::read_dir(cfg.data.join("spaces"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "sqlite"))
+        .unwrap();
+    rusqlite::Connection::open(&file).unwrap().execute_batch("DROP TABLE changes").unwrap();
+    a.op(paint("op2", "T", T1, T1 + 5, "g1")).await;
+    // Not a reject (the client would drop the op for good): an error, then the server closes; the client reconnects
+    // and re-sends.
+    assert_eq!(a.recv().await, json!({"type": "error", "message": "storage error; reconnect"}));
+    let end = tokio::time::timeout(Duration::from_secs(3), a.0.next()).await.expect("timed out");
+    assert!(matches!(end, None | Some(Ok(Message::Close(_)) | Err(_))), "closed: {end:?}");
+}

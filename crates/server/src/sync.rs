@@ -268,9 +268,12 @@ async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, role: Role, tx:
             let message = "only its author can change a comment".into();
             send(tx, &ServerMsg::Reject { op_id: &op.op_id, code, message }).await
         }
+        // Not the op's fault (storage failed): a reject would make the client drop it for good, so close instead;
+        // the client reconnects and re-sends it (ops are idempotent).
         Ok(Err(ApplyError::Internal(e))) | Err(e) => {
             tracing::error!("apply {}: {e}", op.op_id);
-            send(tx, &ServerMsg::Reject { op_id: &op.op_id, code: "internal", message: "internal error".into() }).await
+            let _ = send(tx, &ServerMsg::Error { message: "storage error; reconnect" }).await;
+            false
         }
     }
 }

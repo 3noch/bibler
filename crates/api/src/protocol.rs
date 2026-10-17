@@ -10,7 +10,9 @@
 //!         {"type":"ready","seq":n}                 replay finished
 //!         {"type":"ack","op_id":..,"seq":n}        op applied (its change arrives as a `change` message, unless
 //!                                                  it was applied long ago: seq <= the client's, change pruned)
-//!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused; it had no effect
+//!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused for good (the client drops it); it had
+//!                                                  no effect. A storage failure is an `error` instead, so the op is
+//!                                                  re-sent after reconnecting
 //!         {"type":"error","message":..}            then the server closes; the client reconnects with hello
 //! ```
 
