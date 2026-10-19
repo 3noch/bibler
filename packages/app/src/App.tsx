@@ -539,7 +539,9 @@ function Dock(props: {
       dragging={dragId() === tag.id}
       hidden={props.store.hidden().has(tag.id)}
       onTap={(e) => {
-        if (!suppressClick) props.onChoose(tag, e.altKey);
+        if (suppressClick) return;
+        setAdding(false); // the box keeps focus (wells keep the selection), so its blur never closes it
+        props.onChoose(tag, e.altKey);
       }}
       onEdit={props.store.readOnly() ? undefined : () => props.onEdit(tag.id)}
       onContextMenu={(e) => {
@@ -599,7 +601,7 @@ function Dock(props: {
           </Show>
         </button>
         <Show when={!props.store.readOnly()}>
-        <button class="well tool" classList={{ active: props.eraser }} onMouseDown={keepSelection} onClick={props.onEraser} title={props.eraser ? "Eraser — tap to stop" : "Eraser (E)"} aria-label="Eraser" aria-pressed={props.eraser}>
+        <button class="well tool" classList={{ active: props.eraser }} onMouseDown={keepSelection} onClick={() => (setAdding(false), props.onEraser())} title={props.eraser ? "Eraser — tap to stop" : "Eraser (E)"} aria-label="Eraser" aria-pressed={props.eraser}>
           <EraserIcon />
         </button>
         </Show>
