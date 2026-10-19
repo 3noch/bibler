@@ -326,6 +326,7 @@ function Main(props: { text: Text; store: TagStore }) {
           setSheetTag(id);
         }}
         onCreated={(t) => selectTag(t.id)}
+        onAdding={stopPainting}
       />
 
       <Show when={store.tagById().get(sheetTag() ?? "")}>
@@ -419,6 +420,8 @@ function Dock(props: {
   onEraser: () => void;
   onEdit: (id: string) => void;
   onCreated: (t: Tag) => void;
+  /** The New tag box opened: nothing is painted while naming one. */
+  onAdding: () => void;
   onAllTags: () => void;
 }) {
   const [adding, setAdding] = createSignal(false);
@@ -569,7 +572,7 @@ function Dock(props: {
         <Show
           when={adding() || props.store.readOnly()}
           fallback={
-            <button class="well add" onClick={() => setAdding(true)} title="New tag" aria-label="New tag">
+            <button class="well add" onClick={() => (setAdding(true), props.onAdding())} title="New tag" aria-label="New tag">
               <PlusIcon />
               <Show when={props.store.palette().length === 0}>
                 <span class="well-name">New tag</span>
