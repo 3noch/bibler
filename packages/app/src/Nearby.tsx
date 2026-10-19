@@ -1,6 +1,7 @@
 // The tags at a clicked word. "Here" comes first: each tag's tagging at that word, with its comments and a button to
 // remove it, so acting on one place never means finding it in a list. Then nearby instances, for moving around: the
-// combination (all of them overlapping), then each tag on its own; opening one makes it "here". Each instance shows
+// combination (all of them overlapping), then each tag on its own (a list whose only instance is the one here is
+// left out: it would repeat Here); opening one makes it "here". Each instance shows
 // its text: short ones with some context around them, long ones fading out.
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { formatInterval, intersectRuns, nearby, type Interval } from "@bible-tags/scripture";
@@ -45,6 +46,8 @@ export function NearbyPanel(props: Props) {
       return iv ? [{ tag: t, iv }] : [];
     }),
   );
+  /** A list whose only instance is the one at the position adds nothing to Here (the user found it shown twice). */
+  const more = (ivs: Interval[]) => !(ivs.length === 1 && ivs[0]![0] <= props.pos && props.pos < ivs[0]![1]);
   return (
     <aside class="sheet nearby" role="dialog" aria-label="Nearby">
       <div class="sheet-head">
@@ -81,10 +84,10 @@ export function NearbyPanel(props: Props) {
             </For>
           </section>
         </Show>
-        <Show when={combo()}>
+        <Show when={combo() && more(combo()!) && combo()}>
           {(runs) => <Section title={tags().map((t) => t.name).join(" + ")} members={tags()} instances={runs()} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
         </Show>
-        <For each={tags()}>
+        <For each={tags().filter((t) => more(lists().get(t.id) ?? []))}>
           {(t) => <Section title={t.name} members={[t]} instances={lists().get(t.id) ?? []} editable={t.id} store={props.store} text={props.text} pos={props.pos} onGo={props.onGo} onEdit={props.onEdit} onSearch={props.onSearch} />}
         </For>
       </div>

@@ -52,7 +52,8 @@
   one card per tag with its tagging covering the position (the clicked word, or the instance opened since): Remove,
   edit, the snippet, and its comment thread always open. Then, for navigation only (no erase buttons or threads), the
   combination of all tags at that word first (`intersectRuns`), then each tag alone, each a window of nearby
-  instances (`nearby`, +-5, "N earlier/later" to expand) shown as text snippets: <= 40 words with up to 10 words of
+  instances (`nearby`, +-5, "N earlier/later" to expand; a list whose only instance is the one here is left out,
+  2026-10-19: the user found a tag used once shown twice) shown as text snippets: <= 40 words with up to 10 words of
   dimmed context clipped to the instance's verse(s); longer ones show 40 words and fade. Clicking one navigates
   (centered + flashed) and re-centers the panel on it. Pairs of a 3+ tag set are NOT shown yet.
 - **Search** (`Search.tsx`; designed 2026-10-11): the top box is "go to or search". Typing suggests "Go to <ref>"
