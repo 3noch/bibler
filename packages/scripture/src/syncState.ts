@@ -21,7 +21,7 @@ export type ClientMsg = { type: "hello"; after: number; last_op?: string | null;
 export type Build = { commit: string; committed_at: string };
 export type ServerMsg =
   | { type: "change"; change: Change }
-  | { type: "ready"; seq: number; build?: Build }
+  | { type: "ready"; seq: number; build?: Build; client?: string }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }

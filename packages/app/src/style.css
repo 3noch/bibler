@@ -195,6 +195,8 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   bottom: calc(76px + env(safe-area-inset-bottom, 0px)); width: min(30rem, calc(100% - 24px)); display: grid; gap: 6px;
 }
 .toast { margin: 0; padding: 10px 14px; border-radius: 12px; font-size: 0.9rem; }
+.toast.update { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toast.update button { padding: 4px 12px; border-radius: 8px; border: 1px solid currentColor; font-weight: 600; }
 
 /* ---------------------------------------------------------------- nearby panel */
 .nearby-title { margin: 0 0 0 4px; flex: 1; font: 600 1rem var(--sans); }

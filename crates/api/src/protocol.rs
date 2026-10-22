@@ -52,10 +52,13 @@ pub enum ServerMsg<'a> {
     Change {
         change: &'a Change,
     },
-    /// The replay is done; `build` is the server's (`crate::build`).
+    /// The replay is done; `build` is the server's (`crate::build`), `client` the client version it serves now
+    /// (`crate::client_version`; none in dev, where Vite serves the client).
     Ready {
         seq: u64,
         build: &'a crate::Build,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client: Option<&'a str>,
     },
     Reset {
         seq: u64,

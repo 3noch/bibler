@@ -26,6 +26,9 @@ pub struct AppState {
     pub google: Option<crate::auth::Google>,
     /// This server's public origin (`https://example.org`), for OAuth redirects; default: the request's `Host`.
     pub public_url: Option<String>,
+    /// The client's `index.html` (`--static`), read for its version at each `ready`, so replacing the client
+    /// without a restart is noticed too.
+    pub index_html: Option<std::path::PathBuf>,
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -235,7 +238,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     }
-    if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build() }).await {
+    let client = match &st.index_html {
+        Some(path) => tokio::fs::read_to_string(path).await.ok().and_then(|h| api::client_version(&h)),
+        None => None,
+    };
+    if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build(), client: client.as_deref() }).await {
         return;
     }
     loop {

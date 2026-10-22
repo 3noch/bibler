@@ -199,8 +199,10 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
   const [groupList, setGroupList] = createSignal(groups);
   const roleIn = (space: string | null): Role => (space ? (groupList().find((g) => g.id === space)?.role ?? "read") : "admin");
   const [role, setRole] = createSignal<Role>(roleIn(initialSpace));
-  /** The server's build, from the last sync `ready` (each connection says it: no request of its own). */
+  /** The server's build and the client version it serves, from the last sync `ready` (each connection says them:
+   *  no request of its own). */
   const [serverBuild, setServerBuild] = createSignal<Build | null>(null);
+  const [serverClient, setServerClient] = createSignal<string | null>(null);
   const [members, setMembers] = createSignal<Member[]>([]);
   const hiddenKeyOf = (space: string | null) => `${HIDDEN_KEY}:${space ?? "me"}`;
   const loadHidden = (space: string | null) => new Set<string>(JSON.parse(storageGet(hiddenKeyOf(space)) ?? "[]") as string[]);
@@ -275,7 +277,10 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
       if (theirs.owner === owner) sync.adopt(theirs.ops);
     };
     window.addEventListener("storage", onStorage);
-    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups(), setServerBuild);
+    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups(), (m) => {
+          if (m.build) setServerBuild(m.build);
+          if (m.client) setServerClient(m.client);
+        });
     opened.close = () => {
       disconnect();
       window.removeEventListener("storage", onStorage);
@@ -484,6 +489,8 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
     role,
     readOnly: () => role() === "read",
     serverBuild,
+    /** The client version the server serves now (`<meta name="build-client">`; none in dev). */
+    serverClient,
     /** The groups you belong to. */
     groups: groupList,
     /** The open group's members (empty in your own space). */
@@ -564,10 +571,10 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
 }
 
 /** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online.
- *  `onOpen` runs on each connection (a group refreshes the role, which may have changed); `onBuild` gets the
- *  server's build from each `ready`. Returns a function that
+ *  `onOpen` runs on each connection (a group refreshes the role, which may have changed); `onReady` gets each
+ *  `ready` (the server's build and client version). Returns a function that
  *  closes it for good (switching spaces). */
-function connectForever(sync: SyncState, space: string | null, onOpen: () => void, onBuild: (b: Build) => void): () => void {
+function connectForever(sync: SyncState, space: string | null, onOpen: () => void, onReady: (m: Extract<ServerMsg, { type: "ready" }>) => void): () => void {
   let delay = 1000;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
@@ -589,7 +596,7 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
       const msg = JSON.parse(e.data as string) as ServerMsg;
       if (msg.type === "ready") {
         delay = 1000;
-        if (msg.build) onBuild(msg.build);
+        onReady(msg);
       }
       if (!sync.receive(msg)) sock.close();
     };

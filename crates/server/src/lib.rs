@@ -61,6 +61,7 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         secure_cookies: cfg.secure_cookies,
         google: cfg.google.clone(),
         public_url: cfg.public_url.clone(),
+        index_html: cfg.static_dir.as_ref().map(|d| d.join("index.html")),
     });
     let api = Router::new()
         .route("/health", get(health))

@@ -8,6 +8,7 @@ import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
 import { Menu } from "./Menu.tsx";
 import { SpaceButton, SpacesCard } from "./Groups.tsx";
+import { UpdateNotice } from "./Update.tsx";
 import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, TagsIcon } from "./icons.tsx";
 
 export function App() {
@@ -348,6 +349,7 @@ function Main(props: { text: Text; store: TagStore }) {
 
       <div class="toasts" role="status">
         <For each={store.notices()}>{(n) => <p class="toast">{n.text}</p>}</For>
+        <UpdateNotice store={store} />
       </div>
     </>
   );

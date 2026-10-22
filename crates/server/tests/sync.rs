@@ -569,3 +569,23 @@ async fn a_storage_failure_closes_the_socket_instead_of_rejecting_the_op() {
     let end = tokio::time::timeout(Duration::from_secs(3), a.0.next()).await.expect("timed out");
     assert!(matches!(end, None | Some(Ok(Message::Close(_)) | Err(_))), "closed: {end:?}");
 }
+
+#[tokio::test]
+async fn ready_says_which_client_is_served_now() {
+    let mut cfg = config("client-version");
+    let (dist, _, _) = common::fixture("client-version-dist", 100);
+    let page = |v: &str| format!(r#"<html><head><meta name="build-client" content="{v}"></head></html>"#);
+    std::fs::write(dist.join("index.html"), page("aaaa")).unwrap();
+    cfg.static_dir = Some(dist.clone());
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    let ready = || async {
+        let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+        c.send(json!({"type": "hello", "after": 0})).await;
+        c.recv().await
+    };
+    assert_eq!(ready().await["client"], "aaaa");
+    // A new client is put in place without restarting the server: the next connection says so.
+    std::fs::write(dist.join("index.html"), page("bbbb")).unwrap();
+    assert_eq!(ready().await["client"], "bbbb");
+}

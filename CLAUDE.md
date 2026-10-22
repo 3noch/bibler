@@ -48,6 +48,16 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   them, and the `app` wrapper sets the server's at run time (read before the compiled-in value), so a commit doesn't
   rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
   the PATH's `git` is the Xcode stub that fails: add `git` (`nix-shell -p nodejs_22 git`).
+- **Client updates** (2026-10-22; an installed app resumed from the background never reloads): the build writes the
+  client's version into index.html (`<meta name="build-client">` = the service worker's version, a hash of the
+  client's content-hashed file names + source index.html, so it changes only when the client does, never for a
+  server-only commit). Each `ready` carries the version the server serves now (`api::client_version`; the self-hosted
+  server re-reads `--static`'s index.html per connection, so a client replaced without a restart is noticed; the
+  Durable Object reads its assets' once when it starts; none in dev). A deploy drops the sockets, so open apps hear it
+  on reconnecting. The client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
+  (unless a field is focused or a textarea has text), else shows "A new version is available" + Reload; it never
+  auto-reloads twice for the same version (sessionStorage guard). Browser-checked on a throwaway server (hidden
+  auto-reload, the notice while typing, Reload).
 
 ## Dev environment and checks
 - Rust: `rust-toolchain.toml` = `stable` (+ rustfmt, clippy); verified on 1.99.0. `rustfmt.toml` = 120 cols.
@@ -240,7 +250,7 @@ Rust: `crates/normalize/src/lib.rs`).
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
-: `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build}` ->
+: `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build, client}` ->
   live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on

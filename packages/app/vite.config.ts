@@ -6,11 +6,15 @@ import { defineConfig, type Plugin } from "vite";
 import solid from "vite-plugin-solid";
 import { TEXT_ID } from "./src/textId.ts";
 
-/** Emits sw.js (from src/sw.js) listing this build's files; its version changes whenever any file does. */
+/** Emits sw.js (from src/sw.js) listing this build's files; its version changes whenever any file does. That version
+ * is also the client's (`<meta name="build-client">` in index.html): it changes only when the client does (file
+ * names are content hashes), never for a commit that changes only the server. The servers send the one they serve
+ * in each sync `ready` (`api::client_version`), so an open app knows when a new client is out. */
 function serviceWorker(): Plugin {
   return {
     name: "service-worker",
     apply: "build",
+    enforce: "post", // after Vite emits index.html
     generateBundle(_, bundle) {
       const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
       const files = [...Object.keys(bundle).filter((f) => !f.endsWith(".map") && f !== "index.html"), ...readdirSync(here("public"))].sort();
@@ -20,6 +24,8 @@ function serviceWorker(): Plugin {
         .replace("__SHELL__", JSON.stringify(files))
         .replace("__TEXT_ID__", TEXT_ID);
       this.emitFile({ type: "asset", fileName: "sw.js", source });
+      const html = bundle["index.html"];
+      if (html?.type === "asset") html.source = String(html.source).replace("</head>", `<meta name="build-client" content="${version}">\n</head>`);
     },
   };
 }

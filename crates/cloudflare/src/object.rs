@@ -41,6 +41,8 @@ pub struct Space {
     /// The schema exists (something was written); see the module docs.
     created: Cell<bool>,
     texts: Rc<RefCell<Texts>>,
+    /// The deployed client's version (`api::client_version` of the assets' index.html), sent in `ready`.
+    client: Rc<RefCell<Option<String>>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
     retention_ms: i64,
 }
@@ -76,15 +78,21 @@ impl DurableObject for Space {
         }));
         // Events wait until the texts are loaded, so ops are checked (and applied) in arrival order.
         let texts = Rc::new(RefCell::new(Texts::default()));
-        let (slot, assets) = (texts.clone(), env.clone());
+        let client = Rc::new(RefCell::new(None));
+        let (slot, client_slot, assets) = (texts.clone(), client.clone(), env.clone());
         drop(state.block_concurrency_while(async move {
             match load_texts(&assets).await {
                 Ok(t) => *slot.borrow_mut() = t,
                 Err(e) => worker::console_error!("loading texts: {e}"),
             }
+            // (At "/": Workers Static Assets redirects /index.html there.)
+            match asset(&assets, "").await {
+                Ok(html) => *client_slot.borrow_mut() = api::client_version(&String::from_utf8_lossy(&html)),
+                Err(e) => worker::console_error!("loading index.html: {e}"),
+            }
             Ok(())
         }));
-        Space { state, env, db, created, texts, retention_ms }
+        Space { state, env, db, created, texts, client, retention_ms }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -183,7 +191,9 @@ impl DurableObject for Space {
                     after = reset.seq;
                 }
                 let seq = if created { self.replay(&ws, after)? } else { after };
-                ws.send_with_str(ServerMsg::Ready { seq, build: api::build() }.json())?;
+                ws.send_with_str(
+                    ServerMsg::Ready { seq, build: api::build(), client: self.client.borrow().as_deref() }.json(),
+                )?;
                 socket.ready = true;
                 ws.serialize_attachment(socket)
             }
@@ -296,19 +306,18 @@ pub(crate) fn now_ms() -> i64 {
     i64::try_from(worker::Date::now().as_millis()).unwrap_or(i64::MAX)
 }
 
+/// A static asset's bytes.
+async fn asset(env: &Env, path: &str) -> Result<Vec<u8>> {
+    let mut res = env.assets("ASSETS")?.fetch(format!("https://assets.local/{path}"), None).await?;
+    if res.status_code() != 200 {
+        return Err(worker::Error::RustError(format!("{path}: HTTP {}", res.status_code())));
+    }
+    res.bytes().await
+}
+
 /// The texts listed in `/text/texts.json` (written by `make cloudflare`), read from the static assets.
 async fn load_texts(env: &Env) -> Result<Texts> {
-    let assets = env.assets("ASSETS")?;
-    let get = |path: String| {
-        let assets = &assets;
-        async move {
-            let mut res = assets.fetch(format!("https://assets.local/text/{path}"), None).await?;
-            if res.status_code() != 200 {
-                return Err(worker::Error::RustError(format!("{path}: HTTP {}", res.status_code())));
-            }
-            res.bytes().await
-        }
-    };
+    let get = |path: String| async move { asset(env, &format!("text/{path}")).await };
     let ids: Vec<String> = serde_json::from_slice(&get("texts.json".into()).await?)?;
     let mut texts = Texts::default();
     for id in ids.iter().filter(|id| api::check::valid_id(id)) {

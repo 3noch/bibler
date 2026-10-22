@@ -40,6 +40,8 @@ const c1 = connect(a.cookie), c2 = connect(a.cookie);
 const first = await c1.ready;
 assert.deepEqual([first.seq, Object.keys(first.build)], [0, ["commit", "committed_at"]], "ready says the server's build");
 assert.match(first.build.commit, /^[0-9a-f]{40}$/);
+const served = (await (await fetch(B + "/")).text()).match(/<meta name="build-client" content="([0-9a-f]+)">/)?.[1];
+assert.ok(served && first.client === served, "ready says which client is deployed (so open apps can update)");
 await c2.ready;
 const op = (o) => c1.ws.send(JSON.stringify({ type: "op", op: o }));
 op({ op_id: "o1", kind: "tag_create", id: "T1", name: "Grace", color: "#ff0000", now: 1 });
