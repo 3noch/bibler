@@ -4,6 +4,7 @@ import { createSignal, For, Show } from "solid-js";
 import { BOOKS, type TextIndex } from "@bible-tags/scripture";
 import type { TagStore } from "./store.ts";
 import { AccountSection } from "./Account.tsx";
+import { Version } from "./Version.tsx";
 import { CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
 
 export function Menu(props: {
@@ -54,6 +55,7 @@ export function Menu(props: {
           </button>
         </section>
         <Contents index={props.index} here={props.here} onChapter={props.onChapter} />
+        <Version server={s.mode === "server"} />
       </aside>
     </>
   );

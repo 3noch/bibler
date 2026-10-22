@@ -83,7 +83,7 @@ fmt:
 	cargo fmt
 
 nix:
-	nix-build default.nix -A app
+	nix-build default.nix -A app --argstr commit "$$(git rev-parse HEAD)" --argstr committedAt "$$(git log -1 --format=%cI)"
 
 # Static, server-less build: the client in local mode (VITE_SYNC=local, relative paths) + the text artifacts.
 pages: $(TEXT) node_modules/.installed

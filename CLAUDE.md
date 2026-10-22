@@ -32,11 +32,21 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   `--static ${client} --text ${text}`. Per-derivation `lib.fileset` sources, so client changes never rebuild Rust.
   If Rust rebuilds get slow, move to crane. Uses `<nixpkgs>` (26.11, rustc 1.98); pin it before real deploys.
   Verified 2026-10-10 on macOS only; Linux (deploy target) not yet built.
-- Server (`crates/server`, binary `bible-tags-server`): axum; `/api/*` (health only so far), `/text/*`
+- Server (`crates/server`, binary `bible-tags-server`): axum; `/api/*`, `/text/*`
   (text-build output), SPA fallback to `index.html` (not under `/assets`, where it would be cached as immutable); compression (br/gzip); `Cache-Control` immutable for
   content-hashed files (`/assets/*`, `name.<16hex>.ext`), `no-cache` otherwise. TLS is in-process rustls (ring
   provider, so no cmake/aws-lc) via `--tls-cert/--tls-key`; SIGHUP reloads the cert; `--http-redirect ADDR` adds a
   plain-HTTP 308-to-HTTPS listener. No ACME client yet (renew externally + SIGHUP).
+
+- **Version stamp** (2026-10-22): the client and both servers record the git commit they were built from (and its
+  time); the menu shows one line when they agree, App and Server lines when they differ. Client: `vite.config.ts`
+  puts it in index.html (`<meta name="build-commit">`, `build-committed-at`), not the bundle, so a server-only commit
+  leaves every cached JS/CSS file valid. Servers: `crates/api/build.rs`, served by `GET /api/health` (`commit`,
+  `committed_at`). `BUILD_COMMIT`/`BUILD_COMMITTED_AT` override git; empty without either. Nix has no .git in the
+  sandbox: `default.nix` takes `commit`/`committedAt` (`make nix` passes them from git); the client is built with
+  them, and the `app` wrapper sets the server's at run time (read before the compiled-in value), so a commit doesn't
+  rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
+  the PATH's `git` is the Xcode stub that fails: add `git` (`nix-shell -p nodejs_22 git`).
 
 ## Dev environment and checks
 - Rust: `rust-toolchain.toml` = `stable` (+ rustfmt, clippy); verified on 1.99.0. `rustfmt.toml` = 120 cols.

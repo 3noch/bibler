@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -23,13 +24,44 @@ function serviceWorker(): Plugin {
   };
 }
 
+/** The commit this is built from (shown in the menu): BUILD_COMMIT/BUILD_COMMITTED_AT if set, else git; empty when
+ * neither is there. The servers do the same in crates/api/build.rs. */
+function commit(): { commit: string; committedAt: string } {
+  const git = (...args: string[]) => {
+    try {
+      return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return "";
+    }
+  };
+  return {
+    commit: process.env.BUILD_COMMIT ?? git("rev-parse", "HEAD"),
+    committedAt: process.env.BUILD_COMMITTED_AT ?? git("log", "-1", "--format=%cI"),
+  };
+}
+
+/** Puts the commit in index.html (`<meta name="build-commit">`, `build-committed-at`), not in the bundle: index.html
+ * is revalidated on every load anyway and names the bundle that runs, so the page's own stamp is always the right
+ * one, and a commit that changes only the server leaves every hashed file (and the service worker's version, which
+ * hashes the source index.html) as it was, so browsers keep their cached copies. */
+function buildStamp(): Plugin {
+  const { commit: c, committedAt } = commit();
+  return {
+    name: "build-stamp",
+    transformIndexHtml: () => [
+      { tag: "meta", attrs: { name: "build-commit", content: c }, injectTo: "head" },
+      { tag: "meta", attrs: { name: "build-committed-at", content: committedAt }, injectTo: "head" },
+    ],
+  };
+}
+
 // Dev: Vite serves the client with HMR and proxies the server's routes to the Rust dev server.
 const backend = process.env.BACKEND ?? "http://127.0.0.1:8080";
 
 export default defineConfig({
   // "./" for static hosting under any subpath (GitHub Pages); routing is in the URL hash, so no server fallback.
   base: process.env.VITE_BASE ?? "/",
-  plugins: [solid(), serviceWorker()],
+  plugins: [solid(), serviceWorker(), buildStamp()],
   server: {
     port: 5173,
     strictPort: true,

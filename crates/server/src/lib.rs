@@ -102,7 +102,7 @@ fn migrate(old: &std::path::Path, data: &std::path::Path) -> Result<(), String> 
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
+    Json(api::health(env!("CARGO_PKG_VERSION")))
 }
 
 /// Content-hashed files (`/assets/*` from Vite, `name.<16 hex>.ext` from text-build) are immutable; everything

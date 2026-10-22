@@ -394,6 +394,7 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .menu-row:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .menu-label { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-label .muted { font-size: 0.8rem; }
+.version { padding: 24px 10px 8px; font: 0.72rem var(--sans); color: var(--muted); opacity: 0.75; user-select: text; }
 .undo-row { display: flex; gap: 4px; }
 .undo-row .menu-row { flex: 1; }
 .contents h3 { margin: 10px 10px 4px; font: 600 0.75rem var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }

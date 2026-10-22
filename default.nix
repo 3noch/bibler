@@ -14,8 +14,15 @@
 #
 # Updating dependencies: after changing package-lock.json, set npmDepsHash to the output of
 #   nix-shell -p prefetch-npm-deps --run 'prefetch-npm-deps package-lock.json'
+#
+# Version stamp (shown in the app's menu): `commit` and `committedAt` (ISO 8601). The sandbox has no .git, so they
+# are passed in; `make nix` passes both from git. `commit` defaults to the checkout's HEAD (read at evaluation).
+# Only the client is built with them; the server gets them at run time from the `app` wrapper, so a new commit
+# rebuilds the client (fast) but not the Rust.
 {
   pkgs ? import <nixpkgs> { },
+  commit ? if builtins.pathExists ./.git then pkgs.lib.commitIdFromGitRepo ./.git else "",
+  committedAt ? "",
 }:
 let
   inherit (pkgs) lib;
@@ -88,6 +95,10 @@ let
     };
     npmDepsHash = "sha256-Vcqq0oBzOX0MuWMRwquVGkYeUBoB9wrjZNnwteTqhe0=";
     npmWorkspace = "packages/app";
+    env = {
+      BUILD_COMMIT = commit;
+      BUILD_COMMITTED_AT = committedAt;
+    };
     installPhase = ''
       runHook preInstall
       cp -r packages/app/dist $out
@@ -100,7 +111,8 @@ let
     meta.mainProgram = "bible-tags";
   } ''
     makeWrapper ${lib.getExe server} $out/bin/bible-tags \
-      --add-flags "--static ${client} --text ${text}"
+      --add-flags "--static ${client} --text ${text}" \
+      --set BUILD_COMMIT ${lib.escapeShellArg commit} --set BUILD_COMMITTED_AT ${lib.escapeShellArg committedAt}
   '';
 in
 {

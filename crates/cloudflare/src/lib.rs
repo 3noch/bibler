@@ -34,9 +34,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 async fn route(req: Request, env: &Env) -> Result<Response> {
     let path = req.path();
     match (req.method(), path.as_str()) {
-        (Method::Get, "/api/health") => {
-            Response::from_json(&serde_json::json!({ "ok": true, "version": "cloudflare" }))
-        }
+        (Method::Get, "/api/health") => Response::from_json(&api::health("cloudflare")),
         (Method::Post, "/api/session") => session_route(&req, env).await,
         (Method::Get, "/api/sync") => sync(req, env).await,
         (Method::Post, "/api/logout") => logout(&req, env).await,
