@@ -55,7 +55,7 @@ export function Menu(props: {
           </button>
         </section>
         <Contents index={props.index} here={props.here} onChapter={props.onChapter} />
-        <Version server={s.mode === "server"} />
+        <Version server={s.mode === "server" ? s.serverBuild() : undefined} />
       </aside>
     </>
   );

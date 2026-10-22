@@ -41,8 +41,9 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
 - **Version stamp** (2026-10-22): the client and both servers record the git commit they were built from (and its
   time); the menu shows one line when they agree, App and Server lines when they differ. Client: `vite.config.ts`
   puts it in index.html (`<meta name="build-commit">`, `build-committed-at`), not the bundle, so a server-only commit
-  leaves every cached JS/CSS file valid. Servers: `crates/api/build.rs`, served by `GET /api/health` (`commit`,
-  `committed_at`). `BUILD_COMMIT`/`BUILD_COMMITTED_AT` override git; empty without either. Nix has no .git in the
+  leaves every cached JS/CSS file valid. Servers: `crates/api/build.rs` (`api::build()`), sent in every sync `ready`
+  (`build: {commit, committed_at}`, so the menu shows the server's without a request of its own; a deploy drops the
+  sockets, so a reconnect brings the new one) and by `GET /api/health`. `BUILD_COMMIT`/`BUILD_COMMITTED_AT` override git; empty without either. Nix has no .git in the
   sandbox: `default.nix` takes `commit`/`committedAt` (`make nix` passes them from git); the client is built with
   them, and the `app` wrapper sets the server's at run time (read before the compiled-in value), so a commit doesn't
   rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
@@ -239,7 +240,7 @@ Rust: `crates/normalize/src/lib.rs`).
 - **Shared edge logic** (`crates/api`, no I/O): sync protocol messages, `check_op`/`Texts`, session cookies,
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
-: `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready` ->
+: `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build}` ->
   live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on

@@ -235,7 +235,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     }
-    if !send(&mut tx, &ServerMsg::Ready { seq: last }).await {
+    if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build() }).await {
         return;
     }
     loop {

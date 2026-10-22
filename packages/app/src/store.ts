@@ -16,7 +16,7 @@
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
-import { resolveTagging, SyncState, type CommentRow, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
+import { resolveTagging, SyncState, type Build, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
@@ -199,6 +199,8 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
   const [groupList, setGroupList] = createSignal(groups);
   const roleIn = (space: string | null): Role => (space ? (groupList().find((g) => g.id === space)?.role ?? "read") : "admin");
   const [role, setRole] = createSignal<Role>(roleIn(initialSpace));
+  /** The server's build, from the last sync `ready` (each connection says it: no request of its own). */
+  const [serverBuild, setServerBuild] = createSignal<Build | null>(null);
   const [members, setMembers] = createSignal<Member[]>([]);
   const hiddenKeyOf = (space: string | null) => `${HIDDEN_KEY}:${space ?? "me"}`;
   const loadHidden = (space: string | null) => new Set<string>(JSON.parse(storageGet(hiddenKeyOf(space)) ?? "[]") as string[]);
@@ -273,7 +275,7 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
       if (theirs.owner === owner) sync.adopt(theirs.ops);
     };
     window.addEventListener("storage", onStorage);
-    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups());
+    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups(), setServerBuild);
     opened.close = () => {
       disconnect();
       window.removeEventListener("storage", onStorage);
@@ -481,6 +483,7 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
     /** Your role here ("admin" in your own space). */
     role,
     readOnly: () => role() === "read",
+    serverBuild,
     /** The groups you belong to. */
     groups: groupList,
     /** The open group's members (empty in your own space). */
@@ -561,9 +564,10 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
 }
 
 /** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online.
- *  `onOpen` runs on each connection (a group refreshes the role, which may have changed). Returns a function that
+ *  `onOpen` runs on each connection (a group refreshes the role, which may have changed); `onBuild` gets the
+ *  server's build from each `ready`. Returns a function that
  *  closes it for good (switching spaces). */
-function connectForever(sync: SyncState, space: string | null, onOpen: () => void): () => void {
+function connectForever(sync: SyncState, space: string | null, onOpen: () => void, onBuild: (b: Build) => void): () => void {
   let delay = 1000;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
@@ -582,8 +586,11 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
     };
     sock.onmessage = (e) => {
       if (closed) return;
-      const msg = JSON.parse(e.data as string);
-      if (msg.type === "ready") delay = 1000;
+      const msg = JSON.parse(e.data as string) as ServerMsg;
+      if (msg.type === "ready") {
+        delay = 1000;
+        if (msg.build) onBuild(msg.build);
+      }
       if (!sync.receive(msg)) sock.close();
     };
     sock.onclose = (e) => {

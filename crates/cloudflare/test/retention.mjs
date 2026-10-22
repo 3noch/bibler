@@ -40,7 +40,7 @@ a.op({ op_id: "o2", kind: "paint", tag: "T", text_id: "kjv-1769-v2", start: G, e
 await a.until((m) => m.type === "change" && m.change.seq === 2);
 
 const late = connect({ after: 0, pending: ["o1", "never-sent"] });
-assert.deepEqual(await late.ready, { type: "ready", seq: 2 });
+assert.deepEqual([(await late.ready).type, (await late.ready).seq], ["ready", 2]);
 const [reset, ...rest] = late.msgs;
 assert.equal(reset.type, "reset");
 assert.equal(reset.seq, 2);

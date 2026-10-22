@@ -183,7 +183,7 @@ impl DurableObject for Space {
                     after = reset.seq;
                 }
                 let seq = if created { self.replay(&ws, after)? } else { after };
-                ws.send_with_str(ServerMsg::Ready { seq }.json())?;
+                ws.send_with_str(ServerMsg::Ready { seq, build: api::build() }.json())?;
                 socket.ready = true;
                 ws.serialize_attachment(socket)
             }

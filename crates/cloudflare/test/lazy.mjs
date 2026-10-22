@@ -39,9 +39,10 @@ async function visit(cookie, after, ops = []) {
 
 assert.equal(created(), 0);
 const reader = await session();
-assert.deepEqual(await visit(reader, 0), [{ type: "ready", seq: 0 }]);
+const ready = (msgs) => msgs.map(({ build, ...m }) => m); // (sync.mjs checks the build)
+assert.deepEqual(ready(await visit(reader, 0)), [{ type: "ready", seq: 0 }]);
 // A client that thinks it saw more (e.g. a wiped space) is told it's empty.
-const behind = await visit(reader, 7);
+const behind = ready(await visit(reader, 7));
 assert.deepEqual([behind[0].type, behind[0].seq, behind[0].rows, behind.at(-1)], ["reset", 0, [], { type: "ready", seq: 0 }]);
 assert.equal(created(), 0, "reading a space stores nothing");
 

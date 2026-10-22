@@ -12,17 +12,32 @@ pub mod session;
 
 pub use accounts::Identity;
 
-/// What `GET /api/health` returns: `{ok, version, commit, committed_at}`; the client's menu shows the server's commit
-/// next to its own (the two are built and deployed separately, so they can differ). `commit` and `committed_at`
-/// (ISO 8601) come from the environment at run time if set (the nix build's wrapper sets them, so a new commit
-/// doesn't rebuild the server), else from the build (`build.rs`); empty when neither knew them.
+/// The commit this server was built from and its time (ISO 8601), sent in every sync `ready` (the client's menu
+/// shows it next to its own: the two are built and deployed separately, so they can differ) and by `/api/health`.
+/// From the environment at run time if set (the nix build's wrapper sets them, so a new commit doesn't rebuild the
+/// server), else from the build (`build.rs`); empty when neither knew them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Build {
+    pub commit: String,
+    pub committed_at: String,
+}
+
+/// This server's [`Build`].
+#[must_use]
+pub fn build() -> &'static Build {
+    static BUILD: std::sync::LazyLock<Build> = std::sync::LazyLock::new(|| {
+        let var = |name: &str, built: &str| std::env::var(name).unwrap_or_else(|_| built.to_string());
+        Build {
+            commit: var("BUILD_COMMIT", env!("BUILD_COMMIT")),
+            committed_at: var("BUILD_COMMITTED_AT", env!("BUILD_COMMITTED_AT")),
+        }
+    });
+    &BUILD
+}
+
+/// What `GET /api/health` returns: `{ok, version, commit, committed_at}`.
 #[must_use]
 pub fn health(version: &str) -> serde_json::Value {
-    let var = |name: &str, built: &str| std::env::var(name).unwrap_or_else(|_| built.to_string());
-    serde_json::json!({
-        "ok": true,
-        "version": version,
-        "commit": var("BUILD_COMMIT", env!("BUILD_COMMIT")),
-        "committed_at": var("BUILD_COMMITTED_AT", env!("BUILD_COMMITTED_AT")),
-    })
+    let b = build();
+    serde_json::json!({ "ok": true, "version": version, "commit": b.commit, "committed_at": b.committed_at })
 }

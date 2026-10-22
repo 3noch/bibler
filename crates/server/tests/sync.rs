@@ -481,7 +481,7 @@ async fn a_client_behind_the_retention_window_gets_a_reset() {
     assert_eq!(ids, ["T", "g1"]);
     assert_eq!(reset["applied"], json!(["op1"]), "which of the client's ops are already in it");
     assert_eq!(reset["changes"], json!([]));
-    assert_eq!(late.recv().await, json!({"type": "ready", "seq": 2}));
+    assert_eq!(late.recv().await, ready(2));
     // A re-sent pruned op is still a duplicate: acked with its old seq, never reapplied.
     late.op(tag_create("op1", "T", "Grace")).await;
     assert_eq!(late.recv().await, json!({"type": "ack", "op_id": "op1", "seq": 1}));
@@ -489,6 +489,11 @@ async fn a_client_behind_the_retention_window_gets_a_reset() {
     // From seq 1 (the pruning point) the rest still replays normally.
     let mut recent = connect(&srv, Some(&cookie), None).await.unwrap();
     assert_eq!(recent.hello(1).await.iter().map(|c| c["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [2]);
+}
+
+/// A `ready`: it carries the server's build (shown in the client's menu).
+fn ready(seq: u64) -> Value {
+    json!({"type": "ready", "seq": seq, "build": api::build()})
 }
 
 #[tokio::test]
@@ -512,13 +517,13 @@ async fn a_client_ahead_of_a_restored_space_gets_a_reset() {
         assert_eq!((reset["type"].as_str(), reset["seq"].as_u64()), (Some("reset"), Some(2)), "after {after}");
         assert_eq!(reset["last_op"], "op2");
         assert_eq!(reset["rows"].as_array().unwrap().len(), 2);
-        assert_eq!(c.recv().await, json!({"type": "ready", "seq": 2}));
+        assert_eq!(c.recv().await, ready(2));
     }
     // The same change at its seq replays as usual.
     let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
     c.send(json!({"type": "hello", "after": 1, "last_op": "op1", "pending": []})).await;
     assert_eq!(c.recv().await["change"]["seq"], 2);
-    assert_eq!(c.recv().await, json!({"type": "ready", "seq": 2}));
+    assert_eq!(c.recv().await, ready(2));
 }
 
 #[tokio::test]

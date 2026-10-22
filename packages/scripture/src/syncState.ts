@@ -17,9 +17,11 @@ import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
 export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op };
+/** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
+export type Build = { commit: string; committed_at: string };
 export type ServerMsg =
   | { type: "change"; change: Change }
-  | { type: "ready"; seq: number }
+  | { type: "ready"; seq: number; build?: Build }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }

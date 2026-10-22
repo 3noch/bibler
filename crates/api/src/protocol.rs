@@ -49,12 +49,33 @@ pub enum ClientMsg {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg<'a> {
-    Change { change: &'a Change },
-    Ready { seq: u64 },
-    Reset { seq: u64, last_op: Option<&'a str>, rows: &'a [Row], changes: &'a [Change], applied: &'a [String] },
-    Ack { op_id: &'a str, seq: u64 },
-    Reject { op_id: &'a str, code: &'a str, message: String },
-    Error { message: &'a str },
+    Change {
+        change: &'a Change,
+    },
+    /// The replay is done; `build` is the server's (`crate::build`).
+    Ready {
+        seq: u64,
+        build: &'a crate::Build,
+    },
+    Reset {
+        seq: u64,
+        last_op: Option<&'a str>,
+        rows: &'a [Row],
+        changes: &'a [Change],
+        applied: &'a [String],
+    },
+    Ack {
+        op_id: &'a str,
+        seq: u64,
+    },
+    Reject {
+        op_id: &'a str,
+        code: &'a str,
+        message: String,
+    },
+    Error {
+        message: &'a str,
+    },
 }
 
 impl ServerMsg<'_> {
