@@ -574,8 +574,8 @@ async fn a_storage_failure_closes_the_socket_instead_of_rejecting_the_op() {
 async fn ready_says_which_client_is_served_now() {
     let mut cfg = config("client-version");
     let (dist, _, _) = common::fixture("client-version-dist", 100);
-    let page = |v: &str| format!(r#"<html><head><meta name="build-client" content="{v}"></head></html>"#);
-    std::fs::write(dist.join("index.html"), page("aaaa")).unwrap();
+    let version = dist.join(api::CLIENT_VERSION_FILE);
+    std::fs::write(&version, "aaaa\n").unwrap();
     cfg.static_dir = Some(dist.clone());
     let srv = start(&cfg).await;
     let cookie = session(&srv).await;
@@ -586,6 +586,6 @@ async fn ready_says_which_client_is_served_now() {
     };
     assert_eq!(ready().await["client"], "aaaa");
     // A new client is put in place without restarting the server: the next connection says so.
-    std::fs::write(dist.join("index.html"), page("bbbb")).unwrap();
+    std::fs::write(&version, "bbbb\n").unwrap();
     assert_eq!(ready().await["client"], "bbbb");
 }

@@ -51,8 +51,9 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
 - **Client updates** (2026-10-22; an installed app resumed from the background never reloads): the build writes the
   client's version into index.html (`<meta name="build-client">` = the service worker's version, a hash of the
   client's content-hashed file names + source index.html, so it changes only when the client does, never for a
-  server-only commit). Each `ready` carries the version the server serves now (`api::client_version`; the self-hosted
-  server re-reads `--static`'s index.html per connection, so a client replaced without a restart is noticed; the
+  server-only commit), and the same into `client-version.txt` beside it (`api::CLIENT_VERSION_FILE`) for the
+  servers, so they never look inside HTML. Each `ready` carries the version the server serves now (the self-hosted
+  server re-reads `--static`'s file per connection, so a client replaced without a restart is noticed; the
   Durable Object reads its assets' once when it starts; none in dev). A deploy drops the sockets, so open apps hear it
   on reconnecting. The client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
   (unless a field is focused or a textarea has text), else shows "A new version is available" + Reload; it never

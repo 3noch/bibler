@@ -41,7 +41,7 @@ pub struct Space {
     /// The schema exists (something was written); see the module docs.
     created: Cell<bool>,
     texts: Rc<RefCell<Texts>>,
-    /// The deployed client's version (`api::client_version` of the assets' index.html), sent in `ready`.
+    /// The deployed client's version (the assets' `api::CLIENT_VERSION_FILE`), sent in `ready`.
     client: Rc<RefCell<Option<String>>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
     retention_ms: i64,
@@ -85,10 +85,9 @@ impl DurableObject for Space {
                 Ok(t) => *slot.borrow_mut() = t,
                 Err(e) => worker::console_error!("loading texts: {e}"),
             }
-            // (At "/": Workers Static Assets redirects /index.html there.)
-            match asset(&assets, "").await {
-                Ok(html) => *client_slot.borrow_mut() = api::client_version(&String::from_utf8_lossy(&html)),
-                Err(e) => worker::console_error!("loading index.html: {e}"),
+            match asset(&assets, api::CLIENT_VERSION_FILE).await {
+                Ok(v) => *client_slot.borrow_mut() = api::client_version(&String::from_utf8_lossy(&v)),
+                Err(e) => worker::console_error!("loading {}: {e}", api::CLIENT_VERSION_FILE),
             }
             Ok(())
         }));
