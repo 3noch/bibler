@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end tests of the Cloudflare deployment: starts `wrangler dev` on 127.0.0.1 with throwaway state and a
-# fake Google, runs sync.mjs, auth.mjs and groups.mjs against it; then restarts it with no retention (every change
-# but the newest is pruned) for retention.mjs. Run via `make cloudflare-test` (assets built first).
+# fake Google, runs lazy.mjs (first: it counts the Durable Objects that stored anything), sync.mjs, auth.mjs and
+# groups.mjs against it; then restarts it with no retention (every change but the newest is pruned) for
+# retention.mjs. Run via `make cloudflare-test` (assets built first).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT=${PORT:-18787} FAKE=${FAKE:-18799}
@@ -30,6 +31,7 @@ stop() {
 }
 
 serve
+node test/lazy.mjs "http://127.0.0.1:$PORT" "$STATE"
 node test/sync.mjs "http://127.0.0.1:$PORT"
 node test/auth.mjs "http://127.0.0.1:$PORT" "$FAKE"
 node test/groups.mjs "http://127.0.0.1:$PORT"

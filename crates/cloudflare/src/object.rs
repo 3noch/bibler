@@ -16,13 +16,17 @@
 //! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
 //! POST /reassign {space, from, to}            `from`'s comments here become `to`'s (space::reassign_author)
 //! ```
+//!
+//! The schema is created by the first write, not when the object starts: every visitor's personal space is opened
+//! (its hello read), and an object that never stored anything costs nothing. Until then reads answer as an empty
+//! space.
 
 use api::check::Texts;
 use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, REPLAY_PAGE};
 use ops::Row;
 use serde::{Deserialize, Serialize};
 use space::{ApplyError, Db, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use worker::{
     durable_object, DurableObject, Env, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket,
@@ -34,6 +38,8 @@ pub struct Space {
     state: State,
     env: Env,
     db: Sql,
+    /// The schema exists (something was written); see the module docs.
+    created: Cell<bool>,
     texts: Rc<RefCell<Texts>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
     retention_ms: i64,
@@ -59,9 +65,15 @@ impl DurableObject for Space {
         let db = Sql(state.storage().sql());
         let retention_ms =
             env.var("RETENTION_MS").ok().and_then(|v| v.to_string().parse().ok()).unwrap_or(space::RETENTION_MS);
-        if let Err(e) = space::init(&db) {
+        let created = match has_schema(&db) {
+            // Run it anyway: it migrates an older schema.
+            Ok(true) => space::init(&db).map(|()| true),
+            other => other,
+        };
+        let created = Cell::new(created.unwrap_or_else(|e| {
             worker::console_error!("space schema: {e}");
-        }
+            false
+        }));
         // Events wait until the texts are loaded, so ops are checked (and applied) in arrival order.
         let texts = Rc::new(RefCell::new(Texts::default()));
         let (slot, assets) = (texts.clone(), env.clone());
@@ -72,7 +84,7 @@ impl DurableObject for Space {
             }
             Ok(())
         }));
-        Space { state, env, db, texts, retention_ms }
+        Space { state, env, db, created, texts, retention_ms }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -103,6 +115,9 @@ impl DurableObject for Space {
             "/export" => {
                 let owner = url.query_pairs().find(|(k, _)| k == "owner").map(|(_, v)| v.into_owned());
                 let Some(owner) = owner else { return Response::error("no owner", 400) };
+                if !self.created.get() {
+                    return Response::from_json(&Vec::<Row>::new());
+                }
                 Response::from_json(&space::export(&self.db, &owner).map_err(worker::Error::RustError)?)
             }
             "/kick" => {
@@ -114,6 +129,9 @@ impl DurableObject for Space {
             }
             "/reassign" => {
                 let r: Reassign = req.json().await?;
+                if !self.created.get() {
+                    return Response::ok(""); // no comments to reassign
+                }
                 let change = space::reassign_author(&self.db, &r.space, &r.from, &r.to, now_ms())
                     .map_err(worker::Error::RustError)?;
                 if let Some(c) = &change {
@@ -123,6 +141,7 @@ impl DurableObject for Space {
             }
             "/merge" => {
                 let m: Merge = req.json().await?;
+                self.create()?;
                 let now = now_ms();
                 let changes =
                     space::merge(&self.db, &m.owner, &m.from, &m.rows, now).map_err(worker::Error::RustError)?;
@@ -144,16 +163,26 @@ impl DurableObject for Space {
         match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
             (false, Ok(ClientMsg::Hello { after, last_op, mut pending })) => {
                 let mut after = after;
-                // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead.
-                if space::needs_reset(&self.db, after, last_op.as_deref(), space::REPLAY_LIMIT)
-                    .map_err(worker::Error::RustError)?
-                {
+                let created = self.created.get();
+                // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead. An empty
+                // space has nothing at any seq.
+                let needs_reset = if created {
+                    space::needs_reset(&self.db, after, last_op.as_deref(), space::REPLAY_LIMIT)
+                        .map_err(worker::Error::RustError)?
+                } else {
+                    after > 0
+                };
+                if needs_reset {
                     pending.truncate(MAX_HELLO_PENDING);
-                    let reset = space::reset(&self.db, &socket.space, &pending).map_err(worker::Error::RustError)?;
+                    let reset = if created {
+                        space::reset(&self.db, &socket.space, &pending).map_err(worker::Error::RustError)?
+                    } else {
+                        space::Reset { seq: 0, last_op: None, rows: vec![], applied: vec![] }
+                    };
                     ws.send_with_str(ServerMsg::reset(&reset).json())?;
                     after = reset.seq;
                 }
-                let seq = self.replay(&ws, after)?;
+                let seq = if created { self.replay(&ws, after)? } else { after };
                 ws.send_with_str(ServerMsg::Ready { seq }.json())?;
                 socket.ready = true;
                 ws.serialize_attachment(socket)
@@ -191,6 +220,15 @@ struct Merge {
 }
 
 impl Space {
+    /// Create the schema before the first write.
+    fn create(&self) -> Result<()> {
+        if !self.created.get() {
+            space::init(&self.db).map_err(worker::Error::RustError)?;
+            self.created.set(true);
+        }
+        Ok(())
+    }
+
     /// Send every change after `after`; returns the last seq sent (or `after`).
     fn replay(&self, ws: &WebSocket, mut after: u64) -> Result<u64> {
         loop {
@@ -215,6 +253,7 @@ impl Space {
         if let Err((code, message)) = api::check::check_op(&self.texts.borrow(), op) {
             return reject(code, message);
         }
+        self.create()?;
         let now = now_ms();
         match space::apply_by(&self.db, &socket.space, &socket.owner, op, now) {
             Ok(applied) => {
@@ -279,6 +318,11 @@ async fn load_texts(env: &Env) -> Result<Texts> {
         texts.add_index(id, &bytes).map_err(worker::Error::RustError)?;
     }
     Ok(texts)
+}
+
+/// Whether this object's storage has the space schema (anything was ever written).
+fn has_schema(db: &Sql) -> std::result::Result<bool, String> {
+    Ok(!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'", &[])?.is_empty())
 }
 
 /// `space::Db` over Durable Object SQL storage.

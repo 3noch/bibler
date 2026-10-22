@@ -174,7 +174,9 @@ Rust: `crates/normalize/src/lib.rs`).
   immutable), `_headers` for caching); accounts
   in D1 (binding `ACCOUNTS`, schema created once per isolate from `api::accounts::SCHEMA`); one SQLite-backed Durable
   Object `Space` per space (`id_from_name(space)`), running `crates/space` over `SqlStorage` with the WebSocket
-  hibernation API. The Worker authenticates and forwards the upgrade with `x-owner`. The DO has no hub: no awaits
+  hibernation API. Its schema is created by the first write (2026-10-22), not when it starts, so a visitor who only
+  reads (every visitor's hello reads their personal space) stores nothing; until then reads answer as an empty space
+  (`test/lazy.mjs` checks wrangler's Durable Object files). The Worker authenticates and forwards the upgrade with `x-owner`. The DO has no hub: no awaits
   between apply and broadcast, so each event is atomic and every ready socket gets changes in seq order (a socket is
   "ready" after its hello replay, kept in its attachment). Texts for `bad_text` are loaded from the assets
   (`/text/texts.json`, written by `make cloudflare-assets`) inside `block_concurrency_while` in the constructor, so
