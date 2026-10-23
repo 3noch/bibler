@@ -56,6 +56,7 @@ export function connectLocal(sync: SyncState, index: Promise<TextIndex>, onError
       return;
     }
     if (m.type === "ping") return reply({ type: "pong" });
+    if (m.type === "history") return; // kept by the page itself (store.ts), never sent here
     const op = m.op;
     withLock(async () => {
       const bad = checkOp(await index, TEXT_ID, op);

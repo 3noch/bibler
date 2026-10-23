@@ -187,6 +187,7 @@ async fn sync(req: Request, env: &Env) -> Result<Response> {
     if !api::check::valid_id(&space) {
         return Response::error("bad space", 400);
     }
+    let account = owner_identity(&db, &owner).await?.is_some();
     // An early refusal; the Durable Object checks again when it accepts the socket.
     if groups::role_of(&D1Accounts(db), &space, &owner).await.map_err(worker::Error::RustError)?.is_none() {
         return Response::error("not a member", 403);
@@ -199,6 +200,9 @@ async fn sync(req: Request, env: &Env) -> Result<Response> {
     }
     headers.set("x-owner", &owner)?;
     headers.set("x-space", &space)?;
+    if account {
+        headers.set("x-account", "1")?;
+    }
     let mut init = RequestInit::new();
     init.with_headers(headers);
     space_stub(env, &space)?.fetch_with_request(Request::new_with_init("https://space/sync", &init)?).await
@@ -255,7 +259,7 @@ async fn groups(mut req: Request, env: &Env) -> Result<Response> {
         .await
         .map_err(worker::Error::RustError)?;
     for (space, who) in &reply.kicks {
-        let url = format!("https://space/kick?owner={who}");
+        let url = format!("https://space/kick?owner={who}&space={space}");
         let mut init = RequestInit::new();
         init.with_method(Method::Post);
         space_stub(env, space)?.fetch_with_request(Request::new_with_init(&url, &init)?).await?;

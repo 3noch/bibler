@@ -610,3 +610,81 @@ async fn a_ping_gets_a_pong_before_and_after_hello() {
     assert_eq!(c.recv().await, json!({"type": "pong"}));
     c.quiet().await;
 }
+
+/// Make `cookie`'s owner an account (as signing in would); returns the owner.
+async fn make_account(srv: &Server, cfg: &Config, cookie: &str, subject: &str) -> String {
+    let (_, me) = api(srv, cookie, "POST", "/session", Value::Null).await;
+    let owner = me["owner"].as_str().unwrap().to_string();
+    let db = rusqlite::Connection::open(cfg.data.join("accounts.sqlite")).unwrap();
+    db.execute(
+        "INSERT INTO identities (provider, subject, owner_id, created_at) VALUES ('google', ?1, ?2, 0)",
+        (subject, &owner),
+    )
+    .unwrap();
+    owner
+}
+
+fn entry(id: &str, ord: u32, at: i64) -> Value {
+    json!({"id": id, "anchor": {"ord": ord, "at": at}, "last": {"ord": ord, "at": at}, "gone": false})
+}
+
+#[tokio::test]
+async fn reading_history_syncs_between_an_accounts_devices_only() {
+    let cfg = config("history");
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    // Anonymous: no history from the server, and what it sends is ignored (it stays on the device).
+    let mut anon = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(anon.hello(0).await.len(), 0);
+    anon.send(json!({"type": "history", "entries": [entry("x", T1, 1)]})).await;
+    anon.quiet().await;
+    drop(anon);
+
+    make_account(&srv, &cfg, &cookie, "alice").await;
+    let mut a = connect(&srv, Some(&cookie), None).await.unwrap();
+    let mut b = connect(&srv, Some(&cookie), None).await.unwrap();
+    for c in [&mut a, &mut b] {
+        assert_eq!(c.hello(0).await.len(), 0);
+        assert_eq!(c.recv().await, json!({"type": "history", "entries": []}), "the anonymous entry wasn't kept");
+    }
+    a.send(json!({"type": "history", "entries": [entry("h1", T1, 10)]})).await;
+    for c in [&mut a, &mut b] {
+        assert_eq!(
+            c.recv().await,
+            json!({"type": "history", "entries": [entry("h1", T1, 10)]}),
+            "every device hears it"
+        );
+    }
+    // An older copy changes nothing; a time far in the future is refused.
+    b.send(json!({"type": "history", "entries": [entry("h1", T1 + 5, 5), entry("later", T1, 4_000_000_000_000_000)]}))
+        .await;
+    a.quiet().await;
+    let mut again = connect(&srv, Some(&cookie), None).await.unwrap();
+    assert_eq!(again.hello(0).await.len(), 0, "history is not a change");
+    assert_eq!(again.recv().await, json!({"type": "history", "entries": [entry("h1", T1, 10)]}));
+}
+
+#[tokio::test]
+async fn a_member_who_leaves_a_group_leaves_no_history_there() {
+    let cfg = config("history-groups");
+    let srv = start(&cfg).await;
+    let (ann, bob) = (session(&srv).await, session(&srv).await);
+    let bob_owner = make_account(&srv, &cfg, &bob, "bob").await;
+    let (_, g) = api(&srv, &ann, "POST", "/groups", json!({"name": "Study"})).await;
+    let id = g["id"].as_str().unwrap().to_string();
+    let (_, g) = api(&srv, &ann, "POST", &format!("/groups/{id}/invites"), json!({"role": "read"})).await;
+    let read = g["invites"]["read"].clone();
+    api(&srv, &bob, "POST", "/join", json!({"token": read})).await;
+    let q = format!("?space={id}");
+    let mut b = connect_to(&srv, Some(&bob), None, &q).await.unwrap();
+    assert_eq!(b.hello(0).await.len(), 0);
+    assert_eq!(b.recv().await["type"], "history");
+    b.send(json!({"type": "history", "entries": [entry("h1", T1, 10)]})).await;
+    assert_eq!(b.recv().await["entries"][0]["id"], "h1", "a view-only member keeps history too");
+    api(&srv, &ann, "DELETE", &format!("/groups/{id}/members/{bob_owner}"), Value::Null).await;
+    assert_eq!(b.recv().await["type"], "error");
+    api(&srv, &bob, "POST", "/join", json!({"token": read})).await;
+    let mut b = connect_to(&srv, Some(&bob), None, &q).await.unwrap();
+    assert_eq!(b.hello(0).await.len(), 0);
+    assert_eq!(b.recv().await, json!({"type": "history", "entries": []}), "removed with the membership");
+}

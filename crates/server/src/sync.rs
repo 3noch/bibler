@@ -149,6 +149,38 @@ async fn client_version(st: &AppState) -> Option<String> {
     tokio::fs::read_to_string(path).await.ok().and_then(|v| api::client_version(&v))
 }
 
+/// Reading history is kept for accounts only (an anonymous owner's stays on its device): send an account its whole
+/// history here. Returns whether the owner is an account, or `None` if the socket should close.
+async fn send_history(st: &AppState, space: &str, owner: &str, tx: &mut Tx) -> Option<bool> {
+    let (store, o) = (st.store.clone(), owner.to_string());
+    if !matches!(blocking(move || store.owner_identity(&o)).await, Ok(Ok(Some(_)))) {
+        return Some(false);
+    }
+    let (store, s, o) = (st.store.clone(), space.to_string(), owner.to_string());
+    match blocking(move || store.history(&s, &o)).await {
+        Ok(Ok(entries)) => send(tx, &ServerMsg::History { entries: &entries }).await.then_some(true),
+        Ok(Err(e)) | Err(e) => {
+            tracing::error!("history: {e}");
+            Some(true)
+        }
+    }
+}
+
+/// Store a member's history entries (any role; accounts only, others are ignored) and pass what changed to their
+/// sockets, this one included (merging is idempotent).
+async fn put_history(st: &AppState, space: &str, owner: &str, account: bool, entries: Vec<space::HistoryEntry>) {
+    let entries = api::protocol::check_history(entries, now_ms());
+    if !account || entries.is_empty() {
+        return;
+    }
+    let (store, s, o) = (st.store.clone(), space.to_string(), owner.to_string());
+    match blocking(move || store.put_history(&s, &o, entries)).await {
+        Ok(Ok(changed)) if !changed.is_empty() => st.hub.history(space, owner, changed),
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) | Err(e) => tracing::error!("history: {e}"),
+    }
+}
+
 async fn pong(st: &AppState, tx: &mut Tx) -> bool {
     send(tx, &ServerMsg::Pong { client: client_version(st).await.as_deref() }).await
 }
@@ -258,11 +290,12 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build(), client: client.as_deref() }).await {
         return;
     }
+    let Some(account) = send_history(&st, &space, &owner, &mut tx).await else { return };
     loop {
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(t))) => {
-                    if !handle_op(&st, &space, &owner, role, &mut tx, &t).await {
+                    if !handle_op(&st, &space, &owner, role, account, &mut tx, &t).await {
                         return;
                     }
                 }
@@ -273,6 +306,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
                 Ok(Event::Kick(who)) => {
                     if who == owner {
                         let _ = send(&mut tx, &ServerMsg::Error { message: "membership changed; reconnect" }).await;
+                        return;
+                    }
+                }
+                Ok(Event::History(who, entries)) => {
+                    if who == owner && !send(&mut tx, &ServerMsg::History { entries: &entries }).await {
                         return;
                     }
                 }
@@ -299,11 +337,23 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     }
 }
 
-/// Apply one client message. Returns false if the socket should close.
-async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, role: Role, tx: &mut Tx, text: &str) -> bool {
+/// Handle one client message after `ready`. Returns false if the socket should close.
+async fn handle_op(
+    st: &Arc<AppState>,
+    space: &str,
+    owner: &str,
+    role: Role,
+    account: bool,
+    tx: &mut Tx,
+    text: &str,
+) -> bool {
     let op = match serde_json::from_str::<ClientMsg>(text) {
         Ok(ClientMsg::Op { op }) => op,
         Ok(ClientMsg::Ping) => return pong(st, tx).await,
+        Ok(ClientMsg::History { entries }) => {
+            put_history(st, space, owner, account, entries).await;
+            return true;
+        }
         Ok(ClientMsg::Hello { .. }) | Err(_) => {
             let _ = send(tx, &ServerMsg::Error { message: "expected an op" }).await;
             return false;

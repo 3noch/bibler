@@ -5,6 +5,8 @@
 //!                                                  older backup is noticed), and the ops it holds unconfirmed
 //!                                                  (only used for a reset)
 //!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
+//!         {"type":"history","entries":[..]}      reading history entries that changed (signed-in members; any
+//!                                                  role), merged into the sender's (`space::put_history`)
 //!         {"type":"ping"}                          at any time: answered with a pong (the client checks, after
 //!                                                  resuming, that its socket is alive and its own version current)
 //! server: {"type":"change","change":{seq,...}}     every change after `after`, then live, in seq order
@@ -19,6 +21,8 @@
 //!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused for good (the client drops it); it had
 //!                                                  no effect. A storage failure is an `error` instead, so the op is
 //!                                                  re-sent after reconnecting
+//!         {"type":"history","entries":[..]}      the member's whole history after `ready` (signed in only), then
+//!                                                  what their other devices change
 //!         {"type":"pong","client":..}             the client version served now (as in `ready`)
 //!         {"type":"error","message":..}            then the server closes; the client reconnects with hello
 //! ```
@@ -28,6 +32,22 @@ use serde::{Deserialize, Serialize};
 
 /// A ping as clients send it: the Durable Object's auto-response matches this exact text.
 pub const PING: &str = r#"{"type":"ping"}"#;
+
+/// History entries considered per message.
+pub const MAX_HISTORY_MSG: usize = 100;
+/// How far ahead of the server's clock a history time may be (a device whose clock runs fast would otherwise
+/// keep its entries on top for good).
+const HISTORY_FUTURE_MS: i64 = 60 * 60 * 1000;
+
+/// The well-formed entries of a history message (valid ids, times not in the future), at most
+/// [`MAX_HISTORY_MSG`].
+#[must_use]
+pub fn check_history(mut entries: Vec<space::HistoryEntry>, now: i64) -> Vec<space::HistoryEntry> {
+    entries.truncate(MAX_HISTORY_MSG);
+    let ok_at = |at: i64| (0..=now.saturating_add(HISTORY_FUTURE_MS)).contains(&at);
+    entries.retain(|e| crate::check::valid_id(&e.id) && ok_at(e.anchor.at) && ok_at(e.last.at));
+    entries
+}
 
 /// Changes per replay query.
 pub const REPLAY_PAGE: usize = 500;
@@ -51,6 +71,10 @@ pub enum ClientMsg {
         op: Op,
     },
     Ping,
+    /// The sender's reading history entries that changed (`space::put_history`); signed-in members only.
+    History {
+        entries: Vec<space::HistoryEntry>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -72,6 +96,10 @@ pub enum ServerMsg<'a> {
     Pong {
         #[serde(skip_serializing_if = "Option::is_none")]
         client: Option<&'a str>,
+    },
+    /// This member's reading history: all of it after `ready`, then entries changed by their other devices.
+    History {
+        entries: &'a [space::HistoryEntry],
     },
     Reset {
         seq: u64,

@@ -138,5 +138,27 @@ assert.equal(cancelled.headers.get("location"), "/?auth_error=cancelled#x");
 const evil = await signIn(undefined, { sub: "s2", name: "Bo" }, "https://evil.example");
 assert.equal(evil.location, "/", "only fragments are returned to");
 
+// 4. Reading history: an account's devices share it (not a change); an anonymous owner's isn't kept.
+const entry = (id, ord, at) => ({ id, anchor: { ord, at }, last: { ord, at }, gone: false });
+const anon = await session();
+const an = await sync(anon.cookie);
+await an.until((m) => m.type === "ready");
+an.ws.send(JSON.stringify({ type: "history", entries: [entry("x", G, 1)] }));
+await new Promise((r) => setTimeout(r, 300));
+assert.ok(!an.msgs.some((m) => m.type === "history"), "anonymous: nothing from the server");
+an.ws.close();
+const d1 = await sync(s1.cookie), d2 = await sync(s1.cookie);
+for (const d of [d1, d2]) assert.deepEqual((await d.until((m) => m.type === "history")).entries, [], "an account's (empty) history after ready");
+d1.ws.send(JSON.stringify({ type: "history", entries: [entry("h1", G, 10), entry("future", G, 4e15)] }));
+for (const d of [d1, d2]) {
+  await d.until((m) => m.type === "history" && m.entries.length);
+  assert.deepEqual(d.msgs.filter((m) => m.type === "history").at(-1).entries, [entry("h1", G, 10)], "both devices hear it; a future time is refused");
+}
+const d3 = await sync(s1.cookie);
+await d3.until((m) => m.type === "ready");
+assert.ok(!d3.msgs.some((m) => m.type === "change" && m.change.kind === "history"), "not in the change log");
+assert.deepEqual((await d3.until((m) => m.type === "history")).entries, [entry("h1", G, 10)]);
+for (const d of [d1, d2, d3]) d.ws.close();
+
 fake.close();
 console.log("cloudflare auth e2e: ok");

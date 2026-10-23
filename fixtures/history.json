@@ -1,0 +1,35 @@
+{
+  "about": "Reading-history merge (space::merge_history, packages/scripture/src/history.ts mergeEntry). Each case merges a and b (same id) both ways; out is the result. Each part keeps the later position by (at, ord); gone stays set.",
+  "cases": [
+    {
+      "name": "the same entry merges to itself",
+      "a": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": false },
+      "b": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": false },
+      "out": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": false }
+    },
+    {
+      "name": "a later scroll position wins",
+      "a": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": false },
+      "b": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 150, "at": 30 }, "gone": false },
+      "out": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 150, "at": 30 }, "gone": false }
+    },
+    {
+      "name": "each part independently: anchor from one side, last from the other",
+      "a": { "id": "h", "anchor": { "ord": 500, "at": 40 }, "last": { "ord": 500, "at": 40 }, "gone": false },
+      "b": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 900, "at": 50 }, "gone": false },
+      "out": { "id": "h", "anchor": { "ord": 500, "at": 40 }, "last": { "ord": 900, "at": 50 }, "gone": false }
+    },
+    {
+      "name": "same time: the higher ordinal wins, so both sides agree",
+      "a": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 300, "at": 20 }, "gone": false },
+      "b": { "id": "h", "anchor": { "ord": 101, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": false },
+      "out": { "id": "h", "anchor": { "ord": 101, "at": 10 }, "last": { "ord": 300, "at": 20 }, "gone": false }
+    },
+    {
+      "name": "gone stays gone, even against newer positions",
+      "a": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 200, "at": 20 }, "gone": true },
+      "b": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 400, "at": 90 }, "gone": false },
+      "out": { "id": "h", "anchor": { "ord": 100, "at": 10 }, "last": { "ord": 400, "at": 90 }, "gone": true }
+    }
+  ]
+}

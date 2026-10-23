@@ -48,6 +48,31 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   them, and the `app` wrapper sets the server's at run time (read before the compiled-in value), so a commit doesn't
   rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
   the PATH's `git` is the Xcode stub that fails: add `git` (`nix-shell -p nodejs_22 git`).
+- **Reading history** (2026-10-23; an automatic bookmark per reading track, for reading plans with several daily
+  portions): an entry = where a jump landed (`anchor`) + where scrolling from there got to (`last`), each with its
+  time; the later orders the list. Jumps = the omnibox, a clicked place, the contents, a link (`[ ]` chapter steps
+  are reading on). A jump within `NEAR_VERSES` (5) of an entry's `last` resumes it, its anchor moving there (so an
+  entry shows that sitting: "Genesis 12:3–15:4"); an older entry whose anchor and last are both near a newer one's
+  is dropped; beyond `HISTORY_SIZE` (40) the oldest never-read entries go first. Logic: `packages/scripture/src/
+  history.ts` (TS only: needs the text index). Each jump is a browser history step (state `{entry}`) and Back
+  resumes that entry where it left off; a fresh launch seeds the stack with the recent entries; a launch without a
+  link (or opening a group) goes to the newest and follows the server's list until the user goes somewhere; a reload
+  resumes the tab's entry (sessionStorage). The reader reports the verse at the top 1 s after the user's own
+  scrolling stops (`Bible.tsx` `onPosition`). Storage (decided with the user: not D1, too many writes; not ops,
+  whose change log would broadcast every scroll to the group, fill the log, and need undo/role exceptions): per
+  space and member, a `history` table in the space database outside the change log (`crates/space/src/history.rs`),
+  any role, accounts only (anonymous history stays in the device's localStorage, so read-only visitors still store
+  nothing); bounded at `HISTORY_KEEP` (200) rows per member; deleted when a member leaves (`/kick` checks the
+  membership). Merge is conflict-free (each part keeps the later; `gone` sticks), spec `fixtures/history.json` in
+  both languages. Sync: `history{entries}` messages on the space's socket; after `ready` the server sends the
+  member's list, the client merges it and sends what the server lacks; then changes go as they happen (a jump at
+  once, scrolling at most every 15 s, and on hide); the server passes changes to the member's other sockets only.
+  Tested: `crates/space/tests/history.rs`, server `reading_history_syncs_between_an_accounts_devices_only` and
+  `a_member_who_leaves_a_group_leaves_no_history_there`, Cloudflare `test/auth.mjs` part 4, TS `history.test.ts`;
+  browser-checked on a throwaway server (jumps, scroll tracking, Back/Forward, the menu list, reload to the same
+  verse, a fresh launch's Back stack, an account's upload, a device without local history opening at the newest).
+  Mutation-checked (7/7: merge both languages, the row bound, dedupe, eviction order, re-anchoring). Not yet:
+  showing friends where members read (opt-in; the rows are there), a real phone.
 - **Client updates** (2026-10-22; an installed app resumed from the background never reloads): the build writes the
   client's version into index.html (`<meta name="build-client">` = the service worker's version, a hash of the
   client's content-hashed file names + source index.html, so it changes only when the client does, never for a
@@ -259,7 +284,7 @@ Rust: `crates/normalize/src/lib.rs`).
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
 : `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build, client}` ->
-  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`. Lag -> `error` + reconnect.
+  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`; `history{entries}` both ways (reading history). Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
   session/sync/logout.

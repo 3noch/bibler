@@ -11,7 +11,8 @@
 //! `/sync`):
 //! ```text
 //! GET  /sync   (WebSocket upgrade, x-owner, x-space)   the sync protocol
-//! POST /kick?owner=                           close that owner's sockets (their role changed or they left)
+//! POST /kick?owner=&space=                    close that owner's sockets (their role changed or they left; if
+//!                                             they left, their reading history here is deleted)
 //! GET  /export?owner=   -> [Row]              an owner's live data (space::export)
 //! POST /merge  {owner, from, rows} -> n       copy another owner's exported data in (space::merge)
 //! POST /reassign {space, from, to}            `from`'s comments here become `to`'s (space::reassign_author)
@@ -56,6 +57,9 @@ struct Socket {
     write: bool,
     /// `hello` was answered: the socket gets live changes.
     ready: bool,
+    /// A signed-in account: its reading history is kept here (an anonymous one stays on its device).
+    #[serde(default)]
+    account: bool,
 }
 
 // No awaits in the socket handlers is the point: each event is atomic.
@@ -101,6 +105,7 @@ impl DurableObject for Space {
                 let (Some(owner), Some(space)) = (h.get("x-owner")?, h.get("x-space")?) else {
                     return Response::error("no owner", 400);
                 };
+                let account = h.get("x-account")?.is_some();
                 // The Worker checked the role, but a removal or role change may have landed since, and its kick
                 // found no socket to close. Check again while no other event runs: a later kick finds this socket.
                 let (env, o, s) = (self.env.clone(), owner.clone(), space.clone());
@@ -115,7 +120,7 @@ impl DurableObject for Space {
                 let write = role.can_write();
                 let pair = WebSocketPair::new()?;
                 self.state.accept_websocket_with_tags(&pair.server, &[&owner]);
-                pair.server.serialize_attachment(Socket { owner, space, write, ready: false })?;
+                pair.server.serialize_attachment(Socket { owner, space, write, ready: false, account })?;
                 Response::from_websocket(pair.client)
             }
             "/export" => {
@@ -128,8 +133,17 @@ impl DurableObject for Space {
             }
             "/kick" => {
                 let owner = url.query_pairs().find(|(k, _)| k == "owner").map(|(_, v)| v.into_owned());
-                for ws in self.state.get_websockets_with_tag(&owner.unwrap_or_default()) {
+                let owner = owner.unwrap_or_default();
+                for ws in self.state.get_websockets_with_tag(&owner) {
                     let _ = close(&ws, "membership changed; reconnect");
+                }
+                // Left the group: their reading history here goes too.
+                let space = url.query_pairs().find(|(k, _)| k == "space").map(|(_, v)| v.into_owned());
+                if let (Some(space), true) = (space, self.created.get()) {
+                    let db = crate::D1Accounts(self.env.d1("ACCOUNTS")?);
+                    if api::groups::role_of(&db, &space, &owner).await.map_err(worker::Error::RustError)?.is_none() {
+                        space::forget_history(&self.db, &owner).map_err(worker::Error::RustError)?;
+                    }
                 }
                 Response::ok("")
             }
@@ -190,10 +204,19 @@ impl DurableObject for Space {
                 }
                 let seq = if created { self.replay(&ws, after)? } else { after };
                 ws.send_with_str(ServerMsg::Ready { seq, build: api::build(), client: client() }.json())?;
+                if socket.account {
+                    let entries = if created {
+                        space::history(&self.db, &socket.owner).map_err(worker::Error::RustError)?
+                    } else {
+                        vec![]
+                    };
+                    ws.send_with_str(ServerMsg::History { entries: &entries }.json())?;
+                }
                 socket.ready = true;
                 ws.serialize_attachment(socket)
             }
             (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket, &op),
+            (true, Ok(ClientMsg::History { entries })) => self.history(&socket, entries),
             // Normally the auto-response's (a ping spelled differently arrives here).
             (_, Ok(ClientMsg::Ping)) => ws.send_with_str(ServerMsg::Pong { client: client() }.json()),
             (false, _) => close(&ws, "expected hello"),
@@ -286,6 +309,27 @@ impl Space {
     }
 
     /// Send to every socket that has finished its replay.
+    /// Store a member's history entries (any role; accounts only) and pass what changed to their ready sockets,
+    /// the sender's included (merging is idempotent).
+    fn history(&self, socket: &Socket, entries: Vec<space::HistoryEntry>) -> Result<()> {
+        let entries = api::protocol::check_history(entries, now_ms());
+        if !socket.account || entries.is_empty() {
+            return Ok(());
+        }
+        self.create()?;
+        let changed = space::put_history(&self.db, &socket.owner, &entries).map_err(worker::Error::RustError)?;
+        if changed.is_empty() {
+            return Ok(());
+        }
+        let json = ServerMsg::History { entries: &changed }.json();
+        for ws in self.state.get_websockets_with_tag(&socket.owner) {
+            if ws.deserialize_attachment::<Socket>().ok().flatten().is_some_and(|s| s.ready) {
+                let _ = ws.send_with_str(&json);
+            }
+        }
+        Ok(())
+    }
+
     fn broadcast(&self, json: &str) {
         for ws in self.state.get_websockets() {
             if ws.deserialize_attachment::<Socket>().ok().flatten().is_some_and(|s| s.ready) {

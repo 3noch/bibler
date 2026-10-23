@@ -11,12 +11,15 @@
 //   localStorage  OUTBOX_KEY  unconfirmed ops of every tab (union; an op leaves only once confirmed or dropped),
 //                             updated under a Web Lock. Any tab may (re)send any op: ops are idempotent.
 //   sessionStorage UNDO_KEY   this tab's undo/redo history
+//   localStorage  HISTORY_KEY reading history (packages/scripture/src/history.ts), the device's copy; signed in, it
+//                             also syncs with the space (`history` messages: the server's list after each `ready`
+//                             is merged and what it lacks is sent; then changes go as they happen, throttled)
 //
 // Offline-only builds (VITE_SYNC=local, e.g. GitHub Pages): no server, no account. `localServer.ts` stands in for the
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
-import { resolveTagging, SyncState, type Build, type ClientMsg, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
+import { mergeHistory, resolveTagging, sameEntry, SyncState, type Build, type HistoryEntry, type ClientMsg, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
@@ -43,6 +46,9 @@ const UNDO_KEY = "bible-tags/undo/v1";
 /** The open group (absent: the personal space). */
 const SPACE_KEY = "bible-tags/space/v1";
 const HIDDEN_KEY = "bible-tags/hidden/v1";
+const HISTORY_KEY = "bible-tags/history/v1";
+/** Reading history goes to the server at most this often while scrolling (a jump goes at once). */
+const HISTORY_SEND_MS = 15_000;
 /** The last session and group list from the server, for starting offline (else a group's role is unknown and it
  *  opens view-only, and your own comments aren't recognized as yours). */
 const SESSION_KEY = "bible-tags/session/v1";
@@ -163,6 +169,8 @@ interface Opened {
   owner: string;
   sync: SyncState;
   keyOf: (k: string) => string;
+  /** Replace the reading history (`urgent`: send it now, e.g. a jump, rather than throttled). */
+  setHistory: (entries: HistoryEntry[], urgent: boolean) => void;
   close: () => void;
 }
 
@@ -204,6 +212,8 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
   const [serverBuild, setServerBuild] = createSignal<Build | null>(null);
   const [serverClient, setServerClient] = createSignal<string | null>(null);
   const [members, setMembers] = createSignal<Member[]>([]);
+  /** The open space's reading history (gone entries included: see `liveHistory`). */
+  const [historyList, setHistoryList] = createSignal<HistoryEntry[]>([]);
   const hiddenKeyOf = (space: string | null) => `${HIDDEN_KEY}:${space ?? "me"}`;
   const loadHidden = (space: string | null) => new Set<string>(JSON.parse(storageGet(hiddenKeyOf(space)) ?? "[]") as string[]);
 
@@ -263,7 +273,7 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
     const sync = new SyncState(owner, ulid, Date.now, snap);
     const outbox = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
     if (outbox?.owner === owner) sync.adopt(outbox.ops);
-    const opened: Opened = { space, owner, sync, keyOf, close: () => {} };
+    const opened: Opened = { space, owner, sync, keyOf, setHistory: () => {}, close: () => {} };
     sync.onNotice(notify);
     sync.onChange(() => {
       setVersion((v) => v + 1);
@@ -277,13 +287,100 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
       if (theirs.owner === owner) sync.adopt(theirs.ops);
     };
     window.addEventListener("storage", onStorage);
-    const disconnect = LOCAL_ONLY ? (connectLocal(sync, textIndex, notify), () => {}) : connectForever(sync, space, () => void refreshGroups(), (m) => {
-          if (m.build) setServerBuild(m.build);
-          if (m.client) setServerClient(m.client);
-        });
+
+    // Reading history: this device's copy, synced with the space when signed in (an anonymous owner's stays here).
+    const historyKey = keyOf(HISTORY_KEY);
+    let entries = read<HistoryEntry[]>(localStorage, historyKey) ?? [];
+    let closed = false;
+    /** The server's list since this connection's `ready` was merged (until then, changes wait for it). */
+    let reconciled = false;
+    const dirty = new Set<string>();
+    let flushTimer: number | undefined;
+    let lastFlush = 0;
+    const syncsHistory = !LOCAL_ONLY && !!session?.account;
+    const publishHistory = () => {
+      if (!closed) setHistoryList(entries);
+    };
+    const saveHistory = () => {
+      if (signedOut) return;
+      try {
+        localStorage.setItem(historyKey, JSON.stringify(entries));
+      } catch {
+        // storage full or blocked: kept for this page (and the server, signed in)
+      }
+    };
+    const sendHistory = (list: HistoryEntry[]) => {
+      for (let i = 0; i < list.length; i += 100) if (!connection.send({ type: "history", entries: list.slice(i, i + 100) })) return false;
+      return true;
+    };
+    const flushHistory = () => {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+      if (!syncsHistory || !reconciled || !dirty.size) return;
+      if (sendHistory(entries.filter((e) => dirty.has(e.id)))) {
+        dirty.clear();
+        lastFlush = Date.now();
+      }
+    };
+    const onHistory = (incoming: HistoryEntry[]) => {
+      if (!reconciled) {
+        // The server's whole list: what it lacks (made offline, or before signing in) goes to it.
+        const theirs = new Map(incoming.map((e) => [e.id, e]));
+        entries = mergeHistory(entries, incoming);
+        reconciled = true;
+        dirty.clear();
+        sendHistory(entries.filter((e) => !theirs.has(e.id) || !sameEntry(theirs.get(e.id)!, e)));
+      } else {
+        entries = mergeHistory(entries, incoming);
+      }
+      saveHistory();
+      publishHistory();
+    };
+    opened.setHistory = (next, urgent) => {
+      const old = new Map(entries.map((e) => [e.id, e]));
+      for (const e of next) if (!old.has(e.id) || !sameEntry(old.get(e.id)!, e)) dirty.add(e.id);
+      entries = next;
+      saveHistory();
+      publishHistory();
+      if (!syncsHistory) return dirty.clear();
+      const wait = HISTORY_SEND_MS - (Date.now() - lastFlush);
+      if (urgent || wait <= 0) flushHistory();
+      else flushTimer ??= window.setTimeout(flushHistory, wait);
+    };
+    const onHistoryStorage = (e: StorageEvent) => {
+      if (e.key !== historyKey || !e.newValue) return;
+      entries = mergeHistory(entries, JSON.parse(e.newValue) as HistoryEntry[]); // another tab's (it sends them)
+      publishHistory();
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushHistory();
+    };
+    window.addEventListener("storage", onHistoryStorage);
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flushHistory);
+    publishHistory();
+
+    const connection = LOCAL_ONLY
+      ? (connectLocal(sync, textIndex, notify), { send: () => false, close: () => {} })
+      : connectForever(
+          sync,
+          space,
+          () => void refreshGroups(),
+          (m) => {
+            if (m.build) setServerBuild(m.build);
+            if (m.client) setServerClient(m.client);
+          },
+          () => (reconciled = false),
+          onHistory,
+        );
     opened.close = () => {
-      disconnect();
+      flushHistory();
+      closed = true;
+      connection.close();
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("storage", onHistoryStorage);
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flushHistory);
     };
     return opened;
   };
@@ -471,7 +568,7 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
       signedOut = true;
       clearTimeout(saveTimer);
       withStorageLock(() => {
-        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY, SESSION_KEY, GROUPS_KEY, HIDDEN_KEY];
+        const ours = [BASE_KEY, OUTBOX_KEY, SPACE_KEY, SESSION_KEY, GROUPS_KEY, HIDDEN_KEY, HISTORY_KEY];
         for (const k of Object.keys(localStorage)) if (ours.some((o) => k === o || k.startsWith(`${o}:`))) localStorage.removeItem(k);
         for (const k of Object.keys(sessionStorage)) if (k.startsWith(UNDO_KEY)) sessionStorage.removeItem(k);
         location.reload();
@@ -513,6 +610,9 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
     },
     hidden,
     setHidden,
+    /** The open space's reading history, and replacing it (App.tsx decides what goes in: history.ts). */
+    history: historyList,
+    setHistory: (entries: HistoryEntry[], urgent: boolean) => current().setHistory(entries, urgent),
     tags,
     taggings,
     visibleTaggings,
@@ -579,14 +679,25 @@ const PONG_MS = 4000;
 /** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online or the page
  *  comes back to a dead socket (a live one has missed nothing). `onOpen` runs on each connection (a group refreshes
  *  the role, which may have changed); `onServer` gets each `ready` and `pong` (the server's build, and the client
- *  version served now: `Update.tsx`). Returns a function that closes it for good (switching spaces). */
-function connectForever(sync: SyncState, space: string | null, onOpen: () => void, onServer: (m: { build?: Build; client?: string }) => void): () => void {
+ *  version served now: `Update.tsx`); `onHistory` gets `history` messages, `onReady` runs once each connection's
+ *  replay is done. Returns `send` (a message, once ready; false if not sent) and `close` (for good: switching
+ *  spaces). */
+function connectForever(
+  sync: SyncState,
+  space: string | null,
+  onOpen: () => void,
+  onServer: (m: { build?: Build; client?: string }) => void,
+  onReady: () => void,
+  onHistory: (entries: HistoryEntry[]) => void,
+): { send: (m: ClientMsg) => boolean; close: () => void } {
   let delay = 1000;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
   let closed = false;
   let hiddenAt = document.hidden ? performance.now() : null;
   let pongTimer: number | undefined;
+  /** The current socket's replay is done (messages other than hello may go). */
+  let ready = false;
   const open = () => {
     clearTimeout(timer);
     if (ws || closed) return;
@@ -594,6 +705,7 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
     const query = space ? `?space=${encodeURIComponent(space)}` : "";
     const sock = new WebSocket(`${proto}://${location.host}/api/sync${query}`);
     ws = sock;
+    ready = false;
     sock.onopen = () => {
       if (closed || ws !== sock) return sock.close();
       sync.connected((m) => sock.send(JSON.stringify(m)));
@@ -606,15 +718,21 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
         clearTimeout(pongTimer);
         return onServer(msg);
       }
+      if (msg.type === "history") return onHistory(msg.entries);
       if (msg.type === "ready") {
         delay = 1000;
         onServer(msg);
       }
-      if (!sync.receive(msg)) sock.close();
+      if (!sync.receive(msg)) return sock.close();
+      if (msg.type === "ready") {
+        ready = true;
+        onReady();
+      }
     };
     sock.onclose = (e) => {
       if (ws !== sock) return; // dropped by `replace`
       ws = null;
+      ready = false;
       clearTimeout(pongTimer);
       if (closed) return;
       if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
@@ -627,6 +745,7 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
   const replace = () => {
     const old = ws;
     ws = null;
+    ready = false;
     clearTimeout(pongTimer);
     if (old) {
       old.close();
@@ -655,7 +774,12 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
   window.addEventListener("online", online);
   document.addEventListener("visibilitychange", onVisibility);
   open();
-  return () => {
+  const send = (m: ClientMsg) => {
+    if (!ws || !ready || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(m));
+    return true;
+  };
+  const close = () => {
     closed = true;
     clearTimeout(timer);
     clearTimeout(pongTimer);
@@ -663,4 +787,5 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
     document.removeEventListener("visibilitychange", onVisibility);
     ws?.close();
   };
+  return { send, close };
 }

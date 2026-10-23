@@ -15,7 +15,8 @@
   side panel, no help text.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card), undo/redo,
-  help, contents (Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
+  help, recent reading (collapsed; the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
+  ago; choosing one goes back to where it left off), contents (Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
   books go straight there; choosing closes the menu), and at the very bottom (seen only by scrolling there) a faded version stamp (`Version.tsx`: the app's commit from index.html's meta tags and the server's from the last sync `ready`).
 - Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no

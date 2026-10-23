@@ -14,6 +14,9 @@
 //! can no longer be replayed or reverted. `meta.pruned_through` is the last pruned seq: a client whose last seq is
 //! older gets a [`reset`] (every row) instead of a replay.
 
+mod history;
+pub use history::{forget_history, history, merge as merge_history, put_history, HistoryEntry, Pos, HISTORY_KEEP};
+
 use ops::{effect, Change, CommentRow, Intent, Op, OpError, PaletteRow, Row, RowSource, TagRow, TaggingRow};
 use std::cell::RefCell;
 
@@ -121,6 +124,17 @@ pub const SCHEMA: &[&str] = &[
       deleted_at INTEGER
     )",
     "CREATE INDEX IF NOT EXISTS comments_by_tagging ON comments (owner_id, tagging_id)",
+    // Each member's reading history (`history`): not part of the change log.
+    "CREATE TABLE IF NOT EXISTS history (
+      owner_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      anchor_ord INTEGER NOT NULL,
+      anchor_at INTEGER NOT NULL,
+      last_ord INTEGER NOT NULL,
+      last_at INTEGER NOT NULL,
+      gone INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (owner_id, id)
+    )",
     // `owner_id` = the op's author. `seq` is per space.
     "CREATE TABLE IF NOT EXISTS changes (
       seq INTEGER PRIMARY KEY,

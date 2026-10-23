@@ -1,7 +1,7 @@
-// The menu (top-left button): account, space, undo/redo, help and the contents (books -> chapters), in a drawer so
-// the top bar fits a phone.
+// The menu (top-left button): account, space, undo/redo, help, recent reading (history.ts) and the contents (books
+// -> chapters), in a drawer so the top bar fits a phone.
 import { createSignal, For, Show } from "solid-js";
-import { BOOKS, type TextIndex } from "@bible-tags/scripture";
+import { BOOKS, formatInterval, type HistoryEntry, type TextIndex } from "@bible-tags/scripture";
 import type { TagStore } from "./store.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
@@ -13,6 +13,10 @@ export function Menu(props: {
   /** Global chapter being read. */
   here: number;
   onChapter: (ch: number) => void;
+  /** Reading history, newest first, and this tab's entry. */
+  recent: HistoryEntry[];
+  reading: string | null;
+  onResume: (e: HistoryEntry) => void;
   onSpaces: () => void;
   onHelp: () => void;
   onClose: () => void;
@@ -54,10 +58,59 @@ export function Menu(props: {
             <span class="menu-label">Help</span>
           </button>
         </section>
+        <Recent index={props.index} recent={props.recent} reading={props.reading} onResume={props.onResume} />
         <Contents index={props.index} here={props.here} onChapter={props.onChapter} />
         <Version server={s.mode === "server" ? s.serverBuild() : undefined} />
       </aside>
     </>
+  );
+}
+
+/** "Genesis 12:3–15:4": from where the entry's sitting began to where it got (or one verse). */
+function span(ix: TextIndex, e: HistoryEntry): string {
+  const [a, b] = [ix.slotOf(Math.min(e.anchor.ord, e.last.ord)), ix.slotOf(Math.max(e.anchor.ord, e.last.ord))];
+  return formatInterval(ix, [ix.verseStart[a]!, ix.slotEnd(b)]);
+}
+
+function ago(at: number): string {
+  const m = Math.round((Date.now() - at) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(at).toLocaleDateString();
+}
+
+/** Recent reading: each track's last sitting, newest first; choosing one goes back to where it left off. */
+function Recent(props: { index: TextIndex; recent: HistoryEntry[]; reading: string | null; onResume: (e: HistoryEntry) => void }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <Show when={props.recent.length > 0}>
+      <nav class="menu-section recent" aria-label="Recent reading">
+        <button class="menu-row" aria-expanded={open()} onClick={() => setOpen(!open())}>
+          <span class="menu-label">
+            Recent reading
+            <span class="muted">{props.recent.length} {props.recent.length === 1 ? "place" : "places"}</span>
+          </span>
+          <NextIcon />
+        </button>
+        <Show when={open()}>
+          <ul>
+            <For each={props.recent}>
+              {(e) => (
+                <li>
+                  <button class="recent-row" classList={{ current: e.id === props.reading }} onClick={() => props.onResume(e)}>
+                    {span(props.index, e)}
+                    <span class="muted">{ago(Math.max(e.anchor.at, e.last.at))}</span>
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </nav>
+    </Show>
   );
 }
 

@@ -7,3 +7,4 @@ export * from "./syncState.ts";
 export * from "./queries.ts";
 export * from "./scopes.ts";
 export * from "./check.ts";
+export * from "./history.ts";

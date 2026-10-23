@@ -44,6 +44,13 @@ pub async fn groups(
         Ok(reply) => {
             for (space, who) in &reply.kicks {
                 st.hub.kick(space, who);
+                // Left the group: their reading history there goes too.
+                if let Ok(None) = api::groups::role_of(&db, space, who).await {
+                    let (store, s, w) = (st.store.clone(), space.clone(), who.clone());
+                    if let Err(e) | Ok(Err(e)) = crate::sync::blocking(move || store.forget_history(&s, &w)).await {
+                        tracing::error!("forget history: {e}");
+                    }
+                }
             }
             let status = StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
             (status, Json(reply.body)).into_response()

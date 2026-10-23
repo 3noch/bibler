@@ -8,7 +8,7 @@
 
 use ops::{Change, Op, Row};
 use rusqlite::{params, Connection, OptionalExtension};
-use space::{Applied, ApplyError, Db, Value};
+use space::{Applied, ApplyError, Db, HistoryEntry, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -89,6 +89,21 @@ pub trait Store: Send + Sync {
     /// # Errors
     /// On storage failure.
     fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String>;
+    /// `owner`'s reading history in `space` (`space::history`).
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn history(&self, space: &str, owner: &str) -> Result<Vec<HistoryEntry>, String>;
+    /// Merge entries into `owner`'s history in `space`; returns those that changed (`space::put_history`).
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn put_history(&self, space: &str, owner: &str, entries: Vec<HistoryEntry>) -> Result<Vec<HistoryEntry>, String>;
+    /// Delete `owner`'s history in `space` (they left the group).
+    ///
+    /// # Errors
+    /// On storage failure.
+    fn forget_history(&self, space: &str, owner: &str) -> Result<(), String>;
 }
 
 pub use api::Identity;
@@ -398,6 +413,29 @@ impl Store for SqliteStore {
             }
             Ok(())
         })?
+    }
+
+    fn history(&self, space: &str, owner: &str) -> Result<Vec<HistoryEntry>, String> {
+        self.read(space, |c| space::history(c, owner))
+    }
+
+    fn put_history(&self, space: &str, owner: &str, entries: Vec<HistoryEntry>) -> Result<Vec<HistoryEntry>, String> {
+        let (dir, space, owner) = (self.dir.clone(), space.to_string(), owner.to_string());
+        self.write(move |w| {
+            let conn = w.space(&dir, &space)?;
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let changed = space::put_history(&*tx, &owner, &entries)?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(changed)
+        })?
+    }
+
+    fn forget_history(&self, space: &str, owner: &str) -> Result<(), String> {
+        if !space_path(&self.dir, space)?.exists() {
+            return Ok(()); // nothing was ever written there
+        }
+        let (dir, space, owner) = (self.dir.clone(), space.to_string(), owner.to_string());
+        self.write(move |w| space::forget_history(w.space(&dir, &space)?, &owner))?
     }
 
     fn merge(&self, from_space: &str, from: &str, into_space: &str, into: &str, now: i64) -> Result<usize, String> {

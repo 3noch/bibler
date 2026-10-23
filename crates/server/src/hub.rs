@@ -14,6 +14,8 @@ pub enum Event {
     Change(Arc<Change>),
     /// Close this owner's sockets.
     Kick(String),
+    /// This owner's reading history changed (`space::put_history`): their sockets pass it on.
+    History(String, Arc<Vec<space::HistoryEntry>>),
 }
 
 #[derive(Default)]
@@ -68,6 +70,10 @@ impl Hub {
 
     pub fn kick(&self, space: &str, owner: &str) {
         self.send(space, Event::Kick(owner.to_string()));
+    }
+
+    pub fn history(&self, space: &str, owner: &str, entries: Vec<space::HistoryEntry>) {
+        self.send(space, Event::History(owner.to_string(), Arc::new(entries)));
     }
 
     fn send(&self, space: &str, event: Event) {

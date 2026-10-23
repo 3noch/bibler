@@ -8,10 +8,12 @@ import { loadBook, overlaps, type BookText, type Text } from "./text.ts";
 import type { TagStore } from "./store.ts";
 import { Verse, type Stroke } from "./Verse.tsx";
 
-/** A navigation request: show global chapter `ch` (and flash/center `target`, if any). `n` makes each unique. */
+/** A navigation request: show global chapter `ch` (and flash/center `target`, if any, or put the verse of ordinal
+ *  `top` at the top: back where reading left off). `n` makes each unique. */
 export interface Nav {
   ch: number;
   target: Interval | null;
+  top?: number | null;
   n: number;
 }
 
@@ -23,6 +25,8 @@ interface Props {
   nav: Nav;
   /** The chapter at the top of the viewport changed (by scrolling or navigation). */
   onLocation: (ch: number) => void;
+  /** The user scrolled and stopped: the first word of the verse now at the top (reading history). */
+  onPosition: (ord: number) => void;
   /** A word was clicked while not painting. */
   onInspect: (ord: number, rect: DOMRect) => void;
 }
@@ -32,6 +36,8 @@ const MAX_CHAPTERS = 9;
 const EDGE_PX = 1500;
 const EMPTY: readonly Tagging[] = [];
 const LONG_PRESS_MS = 300;
+/** Scrolling has stopped this long: report the position. */
+const SETTLE_MS = 1000;
 const TOUCH_SLOP_PX = 8;
 const sameRefs = (a: readonly Tagging[], b: readonly Tagging[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -139,10 +145,31 @@ export function Bible(props: Props) {
     }
   };
 
+  /** The verse at the top of the reading area, once the user's own scrolling stops. */
+  let settleTimer = 0;
+  const reportPosition = () => {
+    if (navigating || pinned) return;
+    // The first verse that starts at the top or below (a resume puts that verse's first line at the top, which may
+    // also hold the end of the one before), unless that is far down: then the long verse already under way.
+    const top = barHeight() - 2;
+    let under: HTMLElement | null = null;
+    for (const el of root.querySelectorAll<HTMLElement>(".verse[data-slot]")) {
+      const start = el.querySelector("[data-ord]")?.getBoundingClientRect().top ?? Infinity;
+      if (start >= top) {
+        const pick = start > top + innerHeight / 2 && under ? under : el;
+        props.onPosition(index.verseStart[Number(pick.dataset.slot)]!);
+        return;
+      }
+      under = el;
+    }
+  };
+
   let raf = 0;
   const onScroll = () => {
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(pump);
+    clearTimeout(settleTimer);
+    if (!navigating && !pinned) settleTimer = window.setTimeout(reportPosition, SETTLE_MS);
   };
 
   createEffect(
@@ -169,7 +196,9 @@ export function Bible(props: Props) {
         requestAnimationFrame(() => {
           if (seq !== navSeq) return;
           const word = nav.target && root.querySelector(`[data-ord="${nav.target[0]}"]`);
+          const verse = nav.top != null && index.bookOf(nav.top) >= 0 && root.querySelector(`.verse[data-slot="${index.slotOf(nav.top)}"]`);
           if (word) word.scrollIntoView({ block: "center" });
+          else if (verse) verse.scrollIntoView({ block: "start" });
           else root.querySelector(`[data-ch="${nav.ch}"]`)?.scrollIntoView({ block: "start" });
           setTarget(nav.target);
           clearTimeout(flashTimer); // an earlier navigation's timer would end this flash early
@@ -304,6 +333,7 @@ export function Bible(props: Props) {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
       cancelAnimationFrame(raf);
+      clearTimeout(settleTimer);
       clearPending();
     });
   });

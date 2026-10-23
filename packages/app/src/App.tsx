@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { BOOKS, parseRef, type Interval } from "@bible-tags/scripture";
+import { BOOKS, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
 import { loadText, type Text } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
@@ -10,6 +10,25 @@ import { Menu } from "./Menu.tsx";
 import { SpaceButton, SpacesCard } from "./Groups.tsx";
 import { UpdateNotice } from "./Update.tsx";
 import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, TagsIcon } from "./icons.tsx";
+import { ulid } from "./ulid.ts";
+
+/** This tab's reading-history entry (App's `reading`). */
+const READING_KEY = "bible-tags/reading/v1";
+const sessionGet = (k: string) => {
+  try {
+    return sessionStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const sessionSet = (k: string, v: string | null) => {
+  try {
+    if (v === null) sessionStorage.removeItem(k);
+    else sessionStorage.setItem(k, v);
+  } catch {
+    // blocked: a reload just starts from the newest entry
+  }
+};
 
 export function App() {
   const textP = loadText();
@@ -47,27 +66,138 @@ function Main(props: { text: Text; store: TagStore }) {
   };
 
   // --- navigation: the URL hash is the location (`#/John 3:16`) ------------------------------------------
-  const goTo = (ch: number, target: Interval | null = null) => setNav((n) => ({ ch, target, n: n.n + 1 }));
-  const goRef = (raw: string): string | null => {
+  const goTo = (ch: number, target: Interval | null = null, top: number | null = null) => setNav((n) => ({ ch, target, top, n: n.n + 1 }));
+  const chapterOf = (ord: number) => {
+    const { book, chapter } = index.locate(ord);
+    return index.chapterIndex(book, chapter);
+  };
+
+  // --- reading history (packages/scripture/src/history.ts): a jump (the omnibox, a clicked place, the contents,
+  // a link) starts or resumes an entry, scrolling moves that entry's `last`, and each jump is a browser history
+  // step whose Back returns to where the previous entry left off. Stepping chapters ([ ]) is reading on.
+  /** This tab's entry (sessionStorage: a reload resumes it). */
+  const [reading, setReading] = createSignal<string | null>(sessionGet(READING_KEY));
+  const setEntry = (id: string, push: boolean) => {
+    setReading(id);
+    sessionSet(READING_KEY, id);
+    (push ? history.pushState : history.replaceState).call(history, { entry: id }, "", location.hash);
+  };
+  /** Opened without a place to go (the app, a group): follow the newest entry, also when the server's list
+   *  arrives, until the user goes somewhere themselves. */
+  let following = false;
+  const record = (ord: number, push: boolean) => {
+    following = false;
+    const r = visit(index, store.history(), ord, Date.now(), ulid());
+    store.setHistory(r.entries, true);
+    setEntry(r.id, push);
+  };
+  const resume = (e: HistoryEntry, push: boolean) => {
+    store.setHistory(resumeEntry(index, store.history(), e.id, Date.now()), true);
+    setEntry(e.id, push);
+    goTo(chapterOf(e.last.ord), null, e.last.ord);
+  };
+  /** A jump: recorded in history, then shown. */
+  const jump = (ch: number, target: Interval | null, push = true) => {
+    record(target ? index.verseStart[index.slotOf(target[0])]! : index.verseStart[index.chapterFirstVerse[ch]!]!, push);
+    goTo(ch, target);
+  };
+  const goRef = (raw: string, push = true): string | null => {
     const r = parseRef(index, raw, { book: index.bookOfChapter[here()]!, chapter: here() - index.bookFirstChapter[index.bookOfChapter[here()]!]! + 1 });
     const ref = r.refs[0];
     if (!ref) return r.warnings[0]?.message ?? "Not a reference";
-    goTo(index.chapterIndex(ref.start.book, ref.start.chapter), ref.start.verse === null ? null : ref.interval);
+    jump(index.chapterIndex(ref.start.book, ref.start.chapter), ref.start.verse === null ? null : ref.interval, push);
     return null;
   };
-  const goInterval = (iv: Interval) => {
-    const { book, chapter } = index.locate(iv[0]);
-    goTo(index.chapterIndex(book, chapter), iv);
+  const goInterval = (iv: Interval) => jump(chapterOf(iv[0]), iv);
+  const hashRef = () => decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+  const hashFor = (e: HistoryEntry) => "#/" + encodeURIComponent(chapterLabel(chapterOf(e.last.ord)));
+  /** Back (or Forward) to a history step: that entry, where it left off now. The hash change that follows is it. */
+  let popped: string | null = null;
+  const onPop = (ev: PopStateEvent) => {
+    const id = (ev.state as { entry?: string } | null)?.entry;
+    const e = id && liveHistory(store.history()).find((x) => x.id === id);
+    if (!e) return;
+    popped = location.hash;
+    following = false;
+    resume(e, false);
+    history.replaceState({ entry: e.id }, "", location.hash);
   };
-  const readHash = () => goRef(decodeURIComponent(location.hash.replace(/^#\/?/, "")) || "Genesis 1");
+  // A typed or followed link (#/Ref) in an open tab; its browser history step exists already.
+  const onHash = () => {
+    if (location.hash === popped) return void (popped = null);
+    goRef(hashRef() || "Genesis 1", false);
+  };
+  /** A fresh start: Back walks the recent entries (oldest at the bottom of this app's part of the stack; Back
+   *  from there leaves the app as before). Not again for a browser history step the app already used. */
+  const seedBack = (live: HistoryEntry[]) => {
+    if (history.state !== null) return;
+    const older = live.slice(1, 10).reverse();
+    older.forEach((e, i) => (i === 0 ? history.replaceState : history.pushState).call(history, { entry: e.id }, "", hashFor(e)));
+    if (older.length) history.pushState({ entry: live[0]!.id }, "", hashFor(live[0]!));
+  };
+  const resumeNewest = () => {
+    const newest = liveHistory(store.history())[0];
+    if (!newest) return false;
+    resume(newest, false);
+    following = true;
+    return true;
+  };
   onMount(() => {
-    readHash();
-    window.addEventListener("hashchange", readHash);
-    onCleanup(() => window.removeEventListener("hashchange", readHash));
+    const mine = liveHistory(store.history()).find((e) => e.id === reading());
+    if (mine) resume(mine, false); // a reload: where this tab was
+    else if (hashRef()) goRef(hashRef(), false); // a link
+    else {
+      seedBack(liveHistory(store.history()));
+      // Nothing here yet: the start of the Bible, not recorded (the server's list may still bring a place).
+      if (!resumeNewest()) goTo(0);
+      following = true;
+    }
+    window.addEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onPop);
+    onCleanup(() => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onPop);
+    });
   });
+  // The server's list arrived (a new device, or another one read on): follow it while nothing else was chosen.
+  createEffect(
+    on(
+      () => liveHistory(store.history())[0],
+      (newest) => {
+        if (!following || !newest) return;
+        const shown = liveHistory(store.history()).find((e) => e.id === reading());
+        if (newest.id !== shown?.id || (shown && !samePlace(index, newest.last.ord, shown.last.ord))) resumeNewest();
+      },
+      { defer: true },
+    ),
+  );
+  // Another space has its own history: open where you last read there (else stay).
+  createEffect(
+    on(
+      () => store.space,
+      () => {
+        setReading(null);
+        sessionSet(READING_KEY, null);
+        resumeNewest();
+        following = true;
+      },
+      { defer: true },
+    ),
+  );
+  const onPosition = (ord: number) => {
+    following = false;
+    const id = reading();
+    if (id) store.setHistory(scrolled(index, store.history(), id, ord, Date.now()), false);
+    else record(ord, false); // scrolled from a place no jump recorded (e.g. after switching spaces)
+  };
+  /** The next or previous chapter: reading on in the same entry. */
+  const step = (ch: number) => {
+    goTo(ch);
+    onPosition(index.verseStart[index.chapterFirstVerse[ch]!]!);
+  };
   const onLocation = (ch: number) => {
     setHere(ch);
-    history.replaceState(null, "", "#/" + encodeURIComponent(chapterLabel(ch)));
+    history.replaceState(history.state, "", "#/" + encodeURIComponent(chapterLabel(ch)));
   };
 
   // --- tags -----------------------------------------------------------------------------------------------
@@ -168,9 +298,9 @@ function Main(props: { text: Text; store: TagStore }) {
     } else if (key === "e") {
       toggleEraser();
     } else if (key === "[" && here() > 0) {
-      goTo(here() - 1);
+      step(here() - 1);
     } else if (key === "]" && here() < index.chapters - 1) {
-      goTo(here() + 1);
+      step(here() + 1);
     } else if (key === "/" || key === "g") {
       e.preventDefault();
       document.querySelector<HTMLInputElement>(".omnibox input")?.focus();
@@ -224,7 +354,13 @@ function Main(props: { text: Text; store: TagStore }) {
           here={here()}
           onChapter={(ch) => {
             setMenuOpen(false);
-            goTo(ch);
+            jump(ch, null);
+          }}
+          recent={liveHistory(store.history())}
+          reading={reading()}
+          onResume={(e) => {
+            setMenuOpen(false);
+            resume(e, true);
           }}
           onSpaces={() => {
             setMenuOpen(false);
@@ -254,6 +390,7 @@ function Main(props: { text: Text; store: TagStore }) {
           eraser={eraser()}
           nav={nav()}
           onLocation={onLocation}
+          onPosition={onPosition}
           onInspect={(ord) => {
             // Tags at this word, in palette order (then by name).
             const ids = [...new Set(store.visibleTaggings().filter((t) => t.start <= ord && ord < t.end).map((t) => t.tag))];

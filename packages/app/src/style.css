@@ -77,7 +77,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   max-width: 38rem; margin: 0 auto;
   padding: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px) 20px calc(120px + env(safe-area-inset-bottom, 0px));
 }
-.chapter { scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
+.chapter, .verse { scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
 .edge { height: 40vh; }
 .book-head { text-align: center; margin: 3.5rem 0 1rem; }
 .book-head h1 { margin: 0; font: 600 2rem/1.2 var(--serif); letter-spacing: 0.02em; font-variant: small-caps; }
@@ -408,6 +408,15 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .book-row .muted { font: 0.8rem var(--sans); }
 .book-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .book-row.current { font-weight: 600; }
+.recent ul { list-style: none; margin: 0; padding: 0 0 4px; }
+.recent .menu-row[aria-expanded="true"] svg { transform: rotate(90deg); }
+.recent-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; min-height: 40px;
+  padding: 0 10px 0 22px; border-radius: 10px; text-align: left; font-family: var(--serif); font-size: 1.02rem;
+}
+.recent-row .muted { flex: none; font: 0.8rem var(--sans); }
+.recent-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.recent-row.current { font-weight: 600; }
 .chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 4px; padding: 4px 6px 10px; }
 .chapter-grid button {
   height: 40px; border-radius: 8px; font-variant-numeric: tabular-nums; font-size: 0.9rem;

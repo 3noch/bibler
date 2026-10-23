@@ -11,12 +11,13 @@
  * - Several tabs/devices may hold the same op (a shared outbox): `adopt` takes ops queued elsewhere, and
  *   `confirmed` (recent op ids seen as changes) lets an already-applied op be dropped silently.
  */
+import type { HistoryEntry } from "./history.ts";
 import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row } from "./ops.ts";
 
 /** `hello.last_op`: the op of the client's change at `after`, so a server whose space went back (restored from an
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
-export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op } | { type: "ping" };
+export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op } | { type: "ping" } | { type: "history"; entries: HistoryEntry[] };
 /** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
 export type Build = { commit: string; committed_at: string };
 export type ServerMsg =
@@ -24,6 +25,9 @@ export type ServerMsg =
   | { type: "ready"; seq: number; build?: Build; client?: string }
   /** The answer to a ping (handled by the socket's owner, not SyncState): the client version served now. */
   | { type: "pong"; client?: string }
+  /** This member's reading history (all of it after `ready`, then other devices' changes); handled by the
+   *  socket's owner, not SyncState. */
+  | { type: "history"; entries: HistoryEntry[] }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }
@@ -235,7 +239,8 @@ export class SyncState {
       case "error":
         return false;
       case "pong":
-        return true; // the socket's owner reads it (the served client version)
+      case "history":
+        return true; // the socket's owner reads them (the served client version; reading history)
       case "reset": {
         this.base = new MemRows(msg.rows, msg.changes);
         if (msg.seq < this.seq) this.wentBack = true;
