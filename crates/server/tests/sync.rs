@@ -589,3 +589,18 @@ async fn ready_says_which_client_is_served_now() {
     std::fs::write(&version, "bbbb\n").unwrap();
     assert_eq!(ready().await["client"], "bbbb");
 }
+
+#[tokio::test]
+async fn a_ping_gets_a_pong_before_and_after_hello() {
+    let cfg = config("ping");
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+    c.send(json!({"type": "ping"})).await;
+    assert_eq!(c.recv().await, json!({"type": "pong"}));
+    c.send(json!({"type": "hello", "after": 0})).await;
+    assert_eq!(c.recv().await["type"], "ready");
+    c.send(json!({"type": "ping"})).await;
+    assert_eq!(c.recv().await, json!({"type": "pong"}));
+    c.quiet().await;
+}

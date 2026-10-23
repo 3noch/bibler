@@ -17,6 +17,9 @@ import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
 export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op };
+/** A heartbeat and its answer, sent as exactly this text (`api::protocol::PING`/`PONG`), outside `ClientMsg`. */
+export const PING = '{"type":"ping"}';
+export const PONG = '{"type":"pong"}';
 /** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
 export type Build = { commit: string; committed_at: string };
 export type ServerMsg =

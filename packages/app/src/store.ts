@@ -16,7 +16,7 @@
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
-import { resolveTagging, SyncState, type Build, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
+import { PING, PONG, resolveTagging, SyncState, type Build, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
 import { TEXT_ID } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
@@ -570,8 +570,14 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
   };
 }
 
-/** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online.
- *  `onOpen` runs on each connection (a group refreshes the role, which may have changed); `onReady` gets each
+/** After the page was hidden this long, coming back checks the socket (a phone may have killed it while leaving it
+ *  looking open, so it would never reconnect): a ping, and a new socket unless the pong comes within PONG_MS. */
+const RESUME_CHECK_MS = 30_000;
+const PONG_MS = 4000;
+
+/** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online or the page
+ *  comes back to a dead socket (a live one has missed nothing, and a deploy always drops them, so its `ready` brings
+ *  any new client version: `Update.tsx`). `onOpen` runs on each connection (a group refreshes the role, which may have changed); `onReady` gets each
  *  `ready` (the server's build and client version). Returns a function that
  *  closes it for good (switching spaces). */
 function connectForever(sync: SyncState, space: string | null, onOpen: () => void, onReady: (m: Extract<ServerMsg, { type: "ready" }>) => void): () => void {
@@ -579,6 +585,8 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
   let timer: number | undefined;
   let ws: WebSocket | null = null;
   let closed = false;
+  let hiddenAt = document.hidden ? performance.now() : null;
+  let pongTimer: number | undefined;
   const open = () => {
     clearTimeout(timer);
     if (ws || closed) return;
@@ -587,12 +595,13 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
     const sock = new WebSocket(`${proto}://${location.host}/api/sync${query}`);
     ws = sock;
     sock.onopen = () => {
-      if (closed) return sock.close();
+      if (closed || ws !== sock) return sock.close();
       sync.connected((m) => sock.send(JSON.stringify(m)));
       onOpen();
     };
     sock.onmessage = (e) => {
-      if (closed) return;
+      if (closed || ws !== sock) return;
+      if (e.data === PONG) return clearTimeout(pongTimer);
       const msg = JSON.parse(e.data as string) as ServerMsg;
       if (msg.type === "ready") {
         delay = 1000;
@@ -601,7 +610,9 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
       if (!sync.receive(msg)) sock.close();
     };
     sock.onclose = (e) => {
+      if (ws !== sock) return; // dropped by `replace`
       ws = null;
+      clearTimeout(pongTimer);
       if (closed) return;
       if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
       sync.disconnected();
@@ -609,16 +620,44 @@ function connectForever(sync: SyncState, space: string | null, onOpen: () => voi
       delay = Math.min(delay * 2, 30_000);
     };
   };
+  /** Give up on the current socket (its close may never come) and connect again now. */
+  const replace = () => {
+    const old = ws;
+    ws = null;
+    clearTimeout(pongTimer);
+    if (old) {
+      old.close();
+      sync.disconnected();
+    }
+    delay = 1000;
+    open();
+  };
   const online = () => {
     delay = 1000;
     if (!ws) open();
   };
+  const onVisibility = () => {
+    if (document.hidden) {
+      hiddenAt = performance.now();
+      return;
+    }
+    const away = hiddenAt === null ? 0 : performance.now() - hiddenAt;
+    hiddenAt = null;
+    if (closed || away < RESUME_CHECK_MS) return;
+    if (ws?.readyState !== WebSocket.OPEN) return replace();
+    ws.send(PING);
+    clearTimeout(pongTimer);
+    pongTimer = window.setTimeout(replace, PONG_MS);
+  };
   window.addEventListener("online", online);
+  document.addEventListener("visibilitychange", onVisibility);
   open();
   return () => {
     closed = true;
     clearTimeout(timer);
+    clearTimeout(pongTimer);
     window.removeEventListener("online", online);
+    document.removeEventListener("visibilitychange", onVisibility);
     ws?.close();
   };
 }

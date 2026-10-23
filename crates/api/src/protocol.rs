@@ -5,13 +5,15 @@
 //!                                                  older backup is noticed), and the ops it holds unconfirmed
 //!                                                  (only used for a reset)
 //!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
+//!         {"type":"ping"}                          at any time, exactly this text: answered `{"type":"pong"}`
+//!                                                  (the client checks its socket is still alive after resuming)
 //! server: {"type":"change","change":{seq,...}}     every change after `after`, then live, in seq order
 //!         {"type":"reset","seq":n,"last_op":..,"rows":[..],"changes":[],"applied":[op_id]}   instead of the
 //!                                                  replay when one can't be trusted or done (`space::needs_reset`:
 //!                                                  changes after `after` were pruned, or the space has a different
 //!                                                  change at `after` or none): the whole state at seq n;
 //!                                                  `applied` = which of `pending` are already in it
-//!         {"type":"ready","seq":n}                 replay finished
+//!         {"type":"ready","seq":n,"build":..,"client":..}   replay finished
 //!         {"type":"ack","op_id":..,"seq":n}        op applied (its change arrives as a `change` message, unless
 //!                                                  it was applied long ago: seq <= the client's, change pruned)
 //!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused for good (the client drops it); it had
@@ -22,6 +24,11 @@
 
 use ops::{Change, Op, Row};
 use serde::{Deserialize, Serialize};
+
+/// A heartbeat, matched as exact text (the Durable Object answers it with an auto-response, without waking).
+pub const PING: &str = r#"{"type":"ping"}"#;
+/// The answer to [`PING`].
+pub const PONG: &str = r#"{"type":"pong"}"#;
 
 /// Changes per replay query.
 pub const REPLAY_PAGE: usize = 500;

@@ -65,6 +65,11 @@ struct Socket {
 impl DurableObject for Space {
     fn new(state: State, env: Env) -> Self {
         let db = Sql(state.storage().sql());
+        // Heartbeats are answered by the runtime, without waking the object.
+        match worker::WebSocketRequestResponsePair::new(api::protocol::PING, api::protocol::PONG) {
+            Ok(pair) => state.set_websocket_auto_response(&pair),
+            Err(e) => worker::console_error!("ping auto-response: {e:?}"),
+        }
         let retention_ms =
             env.var("RETENTION_MS").ok().and_then(|v| v.to_string().parse().ok()).unwrap_or(space::RETENTION_MS);
         let created = match has_schema(&db) {

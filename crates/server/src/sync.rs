@@ -4,7 +4,7 @@ use crate::hub::{Event, Hub};
 use crate::store::{Identity, Store};
 use crate::texts::Texts;
 use api::groups::Role;
-use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, REPLAY_PAGE};
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, PING, PONG, REPLAY_PAGE};
 use api::session::{random_hex, token_hash};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -211,6 +211,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     };
     let (mut last, last_op, mut pending) = loop {
         match rx.next().await {
+            Some(Ok(Message::Text(t))) if t.as_str() == PING => {
+                if tx.send(Message::Text(PONG.into())).await.is_err() {
+                    return;
+                }
+            }
             Some(Ok(Message::Text(t))) => {
                 if let Ok(ClientMsg::Hello { after, last_op, pending }) = serde_json::from_str::<ClientMsg>(&t) {
                     break (after, last_op, pending);
@@ -248,6 +253,11 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     loop {
         tokio::select! {
             msg = rx.next() => match msg {
+                Some(Ok(Message::Text(t))) if t.as_str() == PING => {
+                    if tx.send(Message::Text(PONG.into())).await.is_err() {
+                        return;
+                    }
+                }
                 Some(Ok(Message::Text(t))) => {
                     if !handle_op(&st, &space, &owner, role, &mut tx, &t).await {
                         return;

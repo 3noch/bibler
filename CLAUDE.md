@@ -55,10 +55,14 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   servers, so they never look inside HTML. Each `ready` carries the version the server serves now (the self-hosted
   server re-reads `--static`'s file per connection, so a client replaced without a restart is noticed; the
   Durable Object reads its assets' once when it starts; none in dev). A deploy drops the sockets, so open apps hear it
-  on reconnecting. The client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
+  on reconnecting; a phone may leave a dead socket looking open while suspended, so a page back after >= 30 s hidden
+  sends a `ping` (exact text, `api::protocol::PING`; the Durable Object answers by auto-response without waking)
+  and replaces the socket if no `pong` comes within 4 s (`connectForever`; a live socket has missed nothing). The
+  client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
   (unless a field is focused or a textarea has text), else shows "A new version is available" + Reload; it never
   auto-reloads twice for the same version (sessionStorage guard). Browser-checked on a throwaway server (hidden
-  auto-reload, the notice while typing, Reload).
+  auto-reload, the notice while typing, Reload; with faked visibility: a short absence does nothing, a live socket
+  answers the ping, a dead one is replaced and its `ready` reloads the page). Not yet tried on a real phone.
 
 ## Dev environment and checks
 - Rust: `rust-toolchain.toml` = `stable` (+ rustfmt, clippy); verified on 1.99.0. `rustfmt.toml` = 120 cols.
