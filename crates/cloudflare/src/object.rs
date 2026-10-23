@@ -41,8 +41,6 @@ pub struct Space {
     /// The schema exists (something was written); see the module docs.
     created: Cell<bool>,
     texts: Rc<RefCell<Texts>>,
-    /// The deployed client's version (the assets' `api::CLIENT_VERSION_FILE`), sent in `ready`.
-    client: Rc<RefCell<Option<String>>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
     retention_ms: i64,
 }
@@ -78,20 +76,21 @@ impl DurableObject for Space {
         }));
         // Events wait until the texts are loaded, so ops are checked (and applied) in arrival order.
         let texts = Rc::new(RefCell::new(Texts::default()));
-        let client = Rc::new(RefCell::new(None));
-        let (slot, client_slot, assets) = (texts.clone(), client.clone(), env.clone());
+        let (slot, assets) = (texts.clone(), env.clone());
         drop(state.block_concurrency_while(async move {
             match load_texts(&assets).await {
                 Ok(t) => *slot.borrow_mut() = t,
                 Err(e) => worker::console_error!("loading texts: {e}"),
             }
-            match asset(&assets, api::CLIENT_VERSION_FILE).await {
-                Ok(v) => *client_slot.borrow_mut() = api::client_version(&String::from_utf8_lossy(&v)),
-                Err(e) => worker::console_error!("loading {}: {e}", api::CLIENT_VERSION_FILE),
-            }
             Ok(())
         }));
-        Space { state, env, db, created, texts, client, retention_ms }
+        // The runtime answers pings without waking the object; the answer is fixed per deploy (`client`).
+        let pong = ServerMsg::Pong { client: client() }.json();
+        match worker::WebSocketRequestResponsePair::new(api::protocol::PING, &pong) {
+            Ok(pair) => state.set_websocket_auto_response(&pair),
+            Err(e) => worker::console_error!("ping auto-response: {e:?}"),
+        }
+        Space { state, env, db, created, texts, retention_ms }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -190,18 +189,13 @@ impl DurableObject for Space {
                     after = reset.seq;
                 }
                 let seq = if created { self.replay(&ws, after)? } else { after };
-                ws.send_with_str(
-                    ServerMsg::Ready { seq, build: api::build(), client: self.client.borrow().as_deref() }.json(),
-                )?;
+                ws.send_with_str(ServerMsg::Ready { seq, build: api::build(), client: client() }.json())?;
                 socket.ready = true;
                 ws.serialize_attachment(socket)
             }
             (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket, &op),
-            // A deploy restarts the object (and drops its sockets), so the version it read when it started is
-            // the one served now.
-            (_, Ok(ClientMsg::Ping)) => {
-                ws.send_with_str(ServerMsg::Pong { client: self.client.borrow().as_deref() }.json())
-            }
+            // Normally the auto-response's (a ping spelled differently arrives here).
+            (_, Ok(ClientMsg::Ping)) => ws.send_with_str(ServerMsg::Pong { client: client() }.json()),
             (false, _) => close(&ws, "expected hello"),
             (true, _) => close(&ws, "expected an op"),
         }
@@ -308,6 +302,11 @@ fn close(ws: &WebSocket, message: &str) -> Result<()> {
 
 pub(crate) fn now_ms() -> i64 {
     i64::try_from(worker::Date::now().as_millis()).unwrap_or(i64::MAX)
+}
+
+/// The client deployed with this Worker (build.rs); none without assets.
+fn client() -> Option<&'static str> {
+    Some(env!("CLIENT_VERSION")).filter(|v| !v.is_empty())
 }
 
 /// A static asset's bytes.

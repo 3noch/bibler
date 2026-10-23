@@ -54,9 +54,10 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   server-only commit), and the same into `client-version.txt` beside it (`api::CLIENT_VERSION_FILE`) for the
   servers, so they never look inside HTML. Each `ready` carries the version the server serves now (the self-hosted
   server re-reads `--static`'s file per connection, so a client replaced without a restart is noticed; the
-  Durable Object reads its assets' once when it starts, which is right because a deploy restarts it (assumed, not
-  checked against a real deploy); none in dev). `pong{client}` says it too: a page back after >= 30 s hidden sends
-  a `ping` (`connectForever`), since a socket that stayed open hears of no new client (self-hosted: replaced without
+  Worker has it compiled in (`crates/cloudflare/build.rs` reads the assets' file: one deploy uploads both and the
+  assets are built first, so a new client is new Worker code, and a code deploy restarts the Durable Objects); none
+  in dev). `pong{client}` says it too (on Cloudflare a fixed auto-response, so a
+  ping doesn't wake the object): a page back after >= 30 s hidden sends a `ping` (`connectForever`), since a socket that stayed open hears of no new client (self-hosted: replaced without
   a restart), and a phone may leave a dead socket looking open while suspended: no `pong` within 4 s -> a new socket
   (a live one has missed nothing). The offline-only build has no socket: it fetches `client-version.txt` on coming
   back instead (`no-store`; the service worker leaves that file alone). The client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back

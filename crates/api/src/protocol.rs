@@ -26,6 +26,9 @@
 use ops::{Change, Op, Row};
 use serde::{Deserialize, Serialize};
 
+/// A ping as clients send it: the Durable Object's auto-response matches this exact text.
+pub const PING: &str = r#"{"type":"ping"}"#;
+
 /// Changes per replay query.
 pub const REPLAY_PAGE: usize = 500;
 /// `hello.pending` op ids considered at most (a client rarely holds more).
