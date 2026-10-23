@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { BOOKS, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
-import { loadText, type Text } from "./text.ts";
+import { chooseText, DEFAULT_TEXT, keepOffline, loadCatalog, loadText, textId, type Text, type TextInfo } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
@@ -31,19 +31,50 @@ const sessionSet = (k: string, v: string | null) => {
 };
 
 export function App() {
-  const textP = loadText();
-  const [text] = createResource(() => textP);
-  const [store] = createResource(() => openTagStore(textP.then((t) => t.index)));
+  const [catalog] = createResource(loadCatalog);
+  const [text] = createResource(textId, loadText);
+  const [store] = createResource(() => openTagStore((id) => loadText(id).then((t) => t.index, () => null)));
   const failure = () =>
     text.error ? `Couldn't load the text (${text.error})` : store.error ? `Couldn't reach the server (${store.error})` : null;
+  // A text no longer offered (a stale choice): the default instead.
+  createEffect(() => {
+    const list = catalog();
+    if (list?.length && !list.some((t) => t.id === textId())) chooseText(DEFAULT_TEXT);
+  });
+  createEffect(() => {
+    const t = text();
+    if (t) keepOffline(t.id);
+  });
+  /** Where the reader starts after switching texts: the verse that was at the top. */
+  let start: number | null = null;
+  const switchText = async (id: string, top: number | null) => {
+    if (id === textId()) return;
+    try {
+      await loadText(id); // first, so the reader switches at once (and stays put if the text can't be had)
+    } catch (e) {
+      store()?.notify(`Couldn't load that translation (${String(e)})`);
+      return;
+    }
+    start = top;
+    chooseText(id);
+  };
+  // Keyed: each text gets its own reader (its index is fixed for the reader's life).
   return (
-    <Show when={text() && store()} fallback={<p class="splash">{failure() ?? ""}</p>}>
-      <Main text={text()!} store={store()!} />
+    <Show when={store() && text()} keyed fallback={<p class="splash">{failure() ?? ""}</p>}>
+      {(t) => <Main text={t} store={store()!} texts={catalog() ?? [t.info]} start={start} onText={(id, top) => void switchText(id, top)} />}
     </Show>
   );
 }
 
-function Main(props: { text: Text; store: TagStore }) {
+function Main(props: {
+  text: Text;
+  store: TagStore;
+  /** The texts on offer. */
+  texts: TextInfo[];
+  /** Open at this verse (switching texts), not where history says. */
+  start: number | null;
+  onText: (id: string, top: number | null) => void;
+}) {
   const { index } = props.text;
   const store = props.store;
   const [nav, setNav] = createSignal<Nav>({ ch: 0, target: null, n: 0 });
@@ -142,9 +173,12 @@ function Main(props: { text: Text; store: TagStore }) {
     following = true;
     return true;
   };
+  /** The verse at the top of the reader, from `Bible`. */
+  let topVerse: () => number | null = () => null;
   onMount(() => {
     const mine = liveHistory(store.history()).find((e) => e.id === reading());
-    if (mine) resume(mine, false); // a reload: where this tab was
+    if (props.start !== null) goTo(chapterOf(props.start), null, props.start); // another text, same place
+    else if (mine) resume(mine, false); // a reload: where this tab was
     else if (hashRef()) goRef(hashRef(), false); // a link
     else {
       seedBack(liveHistory(store.history()));
@@ -362,6 +396,12 @@ function Main(props: { text: Text; store: TagStore }) {
             setMenuOpen(false);
             resume(e, true);
           }}
+          texts={props.texts}
+          text={props.text.info}
+          onText={(id) => {
+            setMenuOpen(false);
+            props.onText(id, topVerse());
+          }}
           onSpaces={() => {
             setMenuOpen(false);
             setHelp(false);
@@ -391,6 +431,7 @@ function Main(props: { text: Text; store: TagStore }) {
           nav={nav()}
           onLocation={onLocation}
           onPosition={onPosition}
+          topRef={(f) => (topVerse = f)}
           onInspect={(ord) => {
             // Tags at this word, in palette order (then by name).
             const ids = [...new Set(store.visibleTaggings().filter((t) => t.start <= ord && ord < t.end).map((t) => t.tag))];

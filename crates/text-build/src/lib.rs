@@ -7,7 +7,45 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const TEXT_ID: &str = "kjv-1769-v2";
+/// A text this tool builds: where its USFM lives (under `data/source/`) and how it is named. Its golden file is
+/// `fixtures/text/<id>.golden.json`.
+#[derive(Debug, Clone, Copy)]
+pub struct Source {
+    /// The `text_id` taggings carry. Changing a text's ordinals needs a new one (docs/text-format.md).
+    pub id: &'static str,
+    /// Directory under `data/source/`.
+    pub dir: &'static str,
+    pub abbr: &'static str,
+    pub name: &'static str,
+    /// Where the files came from (`SOURCE.md` in its directory has the details).
+    pub origin: &'static str,
+    /// Shown to readers: the license or copyright line.
+    pub rights: &'static str,
+}
+
+pub const KJV: Source = Source {
+    id: "kjv-1769-v2",
+    dir: "eng-kjv2006",
+    abbr: "KJV",
+    name: "King James Version",
+    origin: "eBible.org eng-kjv2006 USFM (2026-09-26), see data/source/eng-kjv2006/SOURCE.md",
+    rights: "The 1769 Oxford text. Public domain (outside the UK); text courtesy of CrossWire and eBible.org.",
+};
+
+pub const BSB: Source = Source {
+    id: "bsb-2026-v1",
+    dir: "engbsb",
+    abbr: "BSB",
+    name: "Berean Standard Bible",
+    origin: "eBible.org engbsb USFM (2026-10-20), see data/source/engbsb/SOURCE.md",
+    rights: "Public domain; text courtesy of BSB Publishing and eBible.org.",
+};
+
+/// Every text, the default first.
+pub const SOURCES: &[Source] = &[KJV, BSB];
+
+/// The default text's id.
+pub const TEXT_ID: &str = KJV.id;
 pub const INDEX_MAGIC: &[u8; 4] = b"BTIX";
 pub const INDEX_VERSION: u32 = 3;
 /// Ordinals are addresses: `book_id << 24 | chapter << 16 | verse << 8 | word` (chapter and verse numbers as
@@ -50,10 +88,16 @@ const WORDS_OF_JESUS: u8 = 4;
 /// Not followed by a space: the word ends with a hyphen (`Beth-` of `Beth-el`).
 const JOINED: u8 = 8;
 
+/// A heading, anchored before a word (it may fall inside a verse: a speaker in the Song of Songs) or, for the
+/// epistle subscriptions, after the book's last word.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Heading {
-    pub slot: u32,
+    /// The word's ordinal (a dense word index while building).
+    pub at: u32,
     pub pos: HeadingPos,
+    /// The USFM marker without its backslash: `s1` section, `s2` subsection, `r` parallel passages, `ms1` + `mr`
+    /// a major section and its range (the five books of Psalms), `qa` an acrostic letter.
+    pub kind: String,
     pub text: String,
 }
 
@@ -124,6 +168,8 @@ pub struct Text {
     /// First chapter of each book, plus a sentinel (= number of chapters) once finished.
     pub book_first_chapter: Vec<u16>,
     pub pilcrow: Vec<u32>,
+    /// Layout breaks before a word (its ordinal; a dense word index while building): the USFM paragraph or poetry
+    /// marker without its backslash. One may fall inside a verse (a poetry line, the rest of a paragraph).
     pub breaks: Vec<(u32, String)>,
     pub headings: Vec<Heading>,
     pub notes: Vec<Note>,
@@ -243,11 +289,12 @@ struct Styles {
     nd: u32,
     wj: u32,
     tl: u32,
+    it: u32,
 }
 
 impl Styles {
     fn bits(&self) -> u8 {
-        (if self.add > 0 { ITALIC } else { 0 })
+        (if self.add + self.it > 0 { ITALIC } else { 0 })
             | (if self.nd > 0 { DIVINE_NAME } else { 0 })
             | (if self.wj > 0 { WORDS_OF_JESUS } else { 0 })
     }
@@ -259,7 +306,8 @@ struct Builder {
     chapter: u32,
     verse: Option<u32>,
     pending_breaks: Vec<String>,
-    pending_headings: Vec<String>,
+    /// (kind, text)
+    pending_headings: Vec<(String, String)>,
 }
 
 impl Builder {
@@ -330,12 +378,16 @@ impl Builder {
         let Some(prev) = self.verse else {
             return Err(format!("{}: verse {n} before any chapter", self.here()));
         };
-        if n != prev + 1 {
+        if n <= prev {
             return Err(format!("{}: verse {n} out of sequence", self.here()));
         }
-        self.check_slot_capacity()?;
-        self.verse = Some(n);
-        self.push_slot(self.text.chapter_first_verse.len() - 1);
+        // A verse the translation leaves out (Matthew 17:21 in the BSB) is an empty slot, so every text with this
+        // versification has the same slots.
+        for v in prev + 1..=n {
+            self.check_slot_capacity()?;
+            self.verse = Some(v);
+            self.push_slot(self.text.chapter_first_verse.len() - 1);
+        }
         Ok(())
     }
 
@@ -360,15 +412,19 @@ impl Builder {
         Ok(())
     }
 
-    /// Attach pending breaks/headings to the current slot (which is about to receive tokens).
-    fn attach_pending(&mut self) {
-        let slot = self.slot();
-        for kind in self.pending_breaks.drain(..) {
-            self.text.breaks.push((slot, kind));
+    /// Tokenize `s` into the current slot; pending breaks and headings go before its first word, if it has any.
+    fn add_words(&mut self, s: &str) -> Result<(), String> {
+        let first = narrow32(self.text.words.len());
+        self.tokenize(s)?;
+        if self.text.words.len() > first as usize {
+            for kind in self.pending_breaks.drain(..) {
+                self.text.breaks.push((first, kind));
+            }
+            for (kind, text) in self.pending_headings.drain(..) {
+                self.text.headings.push(Heading { at: first, pos: HeadingPos::Before, kind, text });
+            }
         }
-        for text in self.pending_headings.drain(..) {
-            self.text.headings.push(Heading { slot, pos: HeadingPos::Before, text });
-        }
+        Ok(())
     }
 
     /// Tokenize the inline content of a `\v` or `\d` line into the current slot.
@@ -381,15 +437,35 @@ impl Builder {
         let mut cur_letter = false;
         // Just split at a hyphen: the next word must follow without a space.
         let mut joining = false;
+        // Just after a footnote that followed a space (`Sea \f …\f*).` in the BSB): punctuation from here up to the
+        // next space belongs to the word before the note.
+        let mut after_note = false;
+        // Punctuation that opens a verse on its own (`... for this reason`, BSB Ephesians 3:14) joins the next word.
+        let mut lead = String::new();
         let mut chars = s.char_indices().peekable();
 
-        let flush = |t: &mut Text, cur: &mut String, flags: &mut u8, letter: &mut bool| -> Result<(), String> {
+        let flush = |t: &mut Text,
+                     cur: &mut String,
+                     flags: &mut u8,
+                     letter: &mut bool,
+                     after_note: bool,
+                     lead: &mut String|
+         -> Result<(), String> {
             if cur.is_empty() {
                 return Ok(());
             }
             if !*letter {
-                return Err(format!("{here}: punctuation-only token {cur:?}"));
+                let in_slot = t.slot_first_word.last().is_some_and(|&f| (f as usize) < t.words.len());
+                match t.words.last_mut() {
+                    Some(prev) if after_note && in_slot => prev.push_str(cur),
+                    _ if !in_slot && lead.is_empty() => lead.push_str(cur),
+                    _ => return Err(format!("{here}: punctuation-only token {cur:?}")),
+                }
+                cur.clear();
+                *flags = 0;
+                return Ok(());
             }
+            cur.insert_str(0, &std::mem::take(lead));
             if t.words.len() >= MAX_WORDS {
                 return Err(format!("{here}: too many words for the index"));
             }
@@ -419,6 +495,7 @@ impl Builder {
                     let body_start = i + 1 + name_len;
                     let end = s[body_start..].find("\\f*").ok_or_else(|| format!("{here}: unterminated footnote"))?;
                     self.footnote(&here, &s[body_start..body_start + end], !cur.is_empty())?;
+                    after_note = cur.is_empty();
                     let skip_to = body_start + end + 3;
                     while chars.peek().is_some_and(|&(j, _)| j < skip_to) {
                         chars.next();
@@ -431,6 +508,7 @@ impl Builder {
                     "nd" => Some(&mut st.nd),
                     "wj" => Some(&mut st.wj),
                     "tl" => Some(&mut st.tl),
+                    "it" => Some(&mut st.it),
                     "w" => None,
                     _ => return Err(format!("{here}: unexpected marker \\{name}{}", if closing { "*" } else { "" })),
                 };
@@ -470,28 +548,88 @@ impl Builder {
                 if joining {
                     return Err(format!("{here}: hyphen before a space"));
                 }
-                flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
+                flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter, after_note, &mut lead)?;
+                after_note = false;
                 continue;
             }
             joining = false;
             cur.push(c);
-            if c.is_alphabetic() {
+            if c.is_alphanumeric() {
+                // A letter or digit (the BSB writes numbers as numerals: "130 years").
                 cur_letter = true;
                 cur_flags |= st.bits();
             }
             if c == '-' {
                 // A hyphen ends a word (`Beth-el` = `Beth-` + `el`); the first part is shown without a space after.
                 cur_flags |= JOINED;
-                flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
+                flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter, after_note, &mut lead)?;
                 joining = true;
             }
         }
         if joining {
             return Err(format!("{here}: hyphen at the end of a verse"));
         }
-        flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter)?;
-        if st.add + st.nd + st.wj + st.tl != 0 {
+        flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter, after_note, &mut lead)?;
+        if !lead.is_empty() {
+            return Err(format!("{here}: punctuation-only token {lead:?}"));
+        }
+        if st.add + st.nd + st.wj + st.tl + st.it != 0 {
             return Err(format!("{here}: unclosed character style"));
+        }
+        Ok(())
+    }
+
+    /// One line of a book's USFM.
+    fn line(&mut self, line: &str) -> Result<(), String> {
+        let (marker, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let rest = rest.trim();
+        let last_book = self.text.books.len() - 1;
+        let book = &mut self.text.books[last_book];
+        match marker {
+            "\\id" => {
+                let code = rest.split_whitespace().next().unwrap_or_default().to_string();
+                book.code.clone_from(&code);
+                self.book_code = code;
+            }
+            "\\h" => {}
+            "\\toc1" => book.name_long = plain(rest),
+            "\\toc2" => book.name_short = plain(rest),
+            "\\toc3" => book.abbr = plain(rest),
+            "\\mt1" | "\\mt2" => book.titles.push(plain(rest)),
+            "\\c" => {
+                let n = rest.parse().map_err(|_| format!("{}: bad chapter {rest:?}", self.here()))?;
+                self.start_chapter(n)?;
+            }
+            "\\d" if rest.is_empty() => {} // an empty title (BSB Zechariah 12)
+            "\\d" => {
+                if self.verse != Some(0) || self.slot_has_tokens() {
+                    return Err(format!("{}: \\d must precede verse 1", self.here()));
+                }
+                self.add_words(rest)?;
+            }
+            "\\v" => {
+                let (num, body) = rest.split_once(' ').unwrap_or((rest, ""));
+                let n = num.parse().map_err(|_| format!("{}: bad verse {num:?}", self.here()))?;
+                self.start_verse(n)?;
+                self.add_words(body)?;
+                if !self.slot_has_tokens() {
+                    return Err(format!("{}: empty verse", self.here()));
+                }
+            }
+            // Paragraphs and poetry lines; text after the marker continues the current verse.
+            "\\p" | "\\m" | "\\pmo" | "\\pc" | "\\b" | "\\q1" | "\\q2" | "\\qr" | "\\li1" | "\\li2" => {
+                self.pending_breaks.push(marker[1..].to_string());
+                if !rest.is_empty() {
+                    if self.verse.is_none_or(|v| v == 0) {
+                        return Err(format!("{}: text after {marker} outside a verse", self.here()));
+                    }
+                    self.add_words(rest)?;
+                }
+            }
+            "\\s1" | "\\s2" | "\\r" | "\\ms1" | "\\mr" | "\\qa" => {
+                self.pending_headings.push((marker[1..].to_string(), plain(rest)));
+            }
+            _ => return Err(format!("{}: unexpected line marker {marker}", self.here())),
         }
         Ok(())
     }
@@ -500,9 +638,10 @@ impl Builder {
         if !self.pending_breaks.is_empty() {
             return Err(format!("{}: trailing breaks {:?}", self.book_code, self.pending_breaks));
         }
-        let last = self.slot();
-        for text in self.pending_headings.drain(..) {
-            self.text.headings.push(Heading { slot: last, pos: HeadingPos::After, text });
+        let last =
+            narrow32(self.text.words.len()).checked_sub(1).ok_or_else(|| format!("{}: no words", self.book_code))?;
+        for (kind, text) in self.pending_headings.drain(..) {
+            self.text.headings.push(Heading { at: last, pos: HeadingPos::After, kind, text });
         }
         let t = &mut self.text;
         let (chapters, slots, tokens) = (t.chapters(), t.slots(), t.tokens());
@@ -515,12 +654,14 @@ impl Builder {
     }
 }
 
-/// Strip simple character markers (`\tl`, `\add`, …) from heading/title text.
+/// Strip simple character markers (`\tl`, `\add`, …) and word attributes (`\w The|strong="H2142"\w*`) from
+/// heading/title text.
 fn plain(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
     while let Some(i) = rest.find('\\') {
-        out.push_str(&rest[..i]);
+        let text = &rest[..i];
+        out.push_str(text.split_once('|').map_or(text, |(word, _)| word));
         let after = &rest[i + 1..];
         let n = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '*')).unwrap_or(after.len());
         rest = &after[n..];
@@ -588,53 +729,8 @@ pub fn build(src: &Path) -> Result<Text, String> {
 
         for line in raw.lines() {
             let line = line.trim_end();
-            if line.is_empty() {
-                continue;
-            }
-            let (marker, rest) = line.split_once(' ').unwrap_or((line, ""));
-            let rest = rest.trim();
-            let last_book = b.text.books.len() - 1;
-            let book = &mut b.text.books[last_book];
-            match marker {
-                "\\id" => {
-                    let code = rest.split_whitespace().next().unwrap_or_default().to_string();
-                    book.code.clone_from(&code);
-                    b.book_code = code;
-                }
-                "\\h" => {}
-                "\\toc1" => book.name_long = plain(rest),
-                "\\toc2" => book.name_short = plain(rest),
-                "\\toc3" => book.abbr = plain(rest),
-                "\\mt1" | "\\mt2" => book.titles.push(plain(rest)),
-                "\\c" => {
-                    let n = rest.parse().map_err(|_| format!("{}: bad chapter {rest:?}", b.here()))?;
-                    b.start_chapter(n)?;
-                }
-                "\\d" => {
-                    if b.verse != Some(0) || b.slot_has_tokens() {
-                        return Err(format!("{}: \\d must precede verse 1", b.here()));
-                    }
-                    b.attach_pending();
-                    b.tokenize(rest)?;
-                }
-                "\\v" => {
-                    let (num, body) = rest.split_once(' ').unwrap_or((rest, ""));
-                    let n = num.parse().map_err(|_| format!("{}: bad verse {num:?}", b.here()))?;
-                    b.start_verse(n)?;
-                    b.attach_pending();
-                    b.tokenize(body)?;
-                    if !b.slot_has_tokens() {
-                        return Err(format!("{}: empty verse", b.here()));
-                    }
-                }
-                "\\p" | "\\q1" | "\\b" => {
-                    if !rest.is_empty() {
-                        return Err(format!("{}: text after {marker}", b.here()));
-                    }
-                    b.pending_breaks.push(marker[1..].to_string());
-                }
-                "\\s1" => b.pending_headings.push(plain(rest)),
-                _ => return Err(format!("{}: unexpected line marker {marker}", b.here())),
+            if !line.is_empty() {
+                b.line(line)?;
             }
         }
         if b.book_code.is_empty() {
@@ -693,6 +789,10 @@ fn sparsify(t: &mut Text) -> Result<(), String> {
     t.verse_start.push(*t.book_end.last().unwrap());
     let notes = std::mem::take(&mut t.notes);
     t.notes = notes.into_iter().map(|n| Note { after: t.ord_of_word(n.after), ..n }).collect();
+    let breaks = std::mem::take(&mut t.breaks);
+    t.breaks = breaks.into_iter().map(|(w, kind)| (t.ord_of_word(w), kind)).collect();
+    let headings = std::mem::take(&mut t.headings);
+    t.headings = headings.into_iter().map(|h| Heading { at: t.ord_of_word(h.at), ..h }).collect();
     Ok(())
 }
 
@@ -751,7 +851,7 @@ pub struct Golden {
 }
 
 #[must_use]
-pub fn golden(t: &Text) -> Golden {
+pub fn golden(t: &Text, text_id: &str) -> Golden {
     let books = t
         .books
         .iter()
@@ -773,7 +873,7 @@ pub fn golden(t: &Text) -> Golden {
             }
         })
         .collect();
-    Golden { text_id: TEXT_ID.to_string(), book_shift: BOOK_SHIFT, books }
+    Golden { text_id: text_id.to_string(), book_shift: BOOK_SHIFT, books }
 }
 
 /// Half-open ordinal runs `[s, e)` of the book's words whose flags contain `bit` (ends as for any interval: the
@@ -826,6 +926,9 @@ pub struct ManifestBook {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
     pub text_id: String,
+    pub abbr: String,
+    pub name: String,
+    pub rights: String,
     pub source: String,
     pub index: String,
     pub book_shift: u32,
@@ -841,7 +944,7 @@ fn hashed_name(stem: &str, ext: &str, bytes: &[u8]) -> String {
 ///
 /// # Errors
 /// If `out` cannot be created or written.
-pub fn write_artifacts(t: &Text, out: &Path) -> Result<Manifest, String> {
+pub fn write_artifacts(t: &Text, src: &Source, out: &Path) -> Result<Manifest, String> {
     fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let write = |name: &str, bytes: &[u8]| fs::write(out.join(name), bytes).map_err(|e| format!("{name}: {e}"));
 
@@ -867,8 +970,8 @@ pub fn write_artifacts(t: &Text, out: &Path) -> Result<Manifest, String> {
                 .map(|w| t.ord_of_word(w))
                 .collect(),
             pilcrow: t.pilcrow.iter().copied().filter(|s| slots.contains(s)).collect(),
-            breaks: t.breaks.iter().filter(|(s, _)| slots.contains(s)).collect(),
-            headings: t.headings.iter().filter(|h| slots.contains(&h.slot)).collect(),
+            breaks: t.breaks.iter().filter(|(o, _)| ords.contains(o)).collect(),
+            headings: t.headings.iter().filter(|h| ords.contains(&h.at)).collect(),
             notes: t.notes.iter().filter(|n| ords.contains(&n.after)).collect(),
         };
         let bytes = serde_json::to_vec(&file).map_err(|e| e.to_string())?;
@@ -889,8 +992,11 @@ pub fn write_artifacts(t: &Text, out: &Path) -> Result<Manifest, String> {
     }
 
     let manifest = Manifest {
-        text_id: TEXT_ID.to_string(),
-        source: "eBible.org eng-kjv2006 USFM (2026-09-26), see data/source/eng-kjv2006/SOURCE.md".to_string(),
+        text_id: src.id.to_string(),
+        abbr: src.abbr.to_string(),
+        name: src.name.to_string(),
+        rights: src.rights.to_string(),
+        source: src.origin.to_string(),
         index: index_name,
         book_shift: BOOK_SHIFT,
         tokens: t.tokens(),
@@ -907,12 +1013,49 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// The text with this id.
 #[must_use]
-pub fn default_source() -> PathBuf {
-    repo_root().join("data/source/eng-kjv2006")
+pub fn source(id: &str) -> Option<&'static Source> {
+    SOURCES.iter().find(|s| s.id == id)
 }
 
+/// A text's vendored USFM directory in this repo.
 #[must_use]
-pub fn golden_path() -> PathBuf {
-    repo_root().join(format!("fixtures/text/{TEXT_ID}.golden.json"))
+pub fn source_dir(src: &Source) -> PathBuf {
+    repo_root().join("data/source").join(src.dir)
+}
+
+/// A text's golden file in this repo.
+#[must_use]
+pub fn golden_path(src: &Source) -> PathBuf {
+    repo_root().join(format!("fixtures/text/{}.golden.json", src.id))
+}
+
+/// One entry of `texts.json`, the list of texts next to their directories (what the client offers and the
+/// Cloudflare Worker loads).
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CatalogEntry {
+    pub id: String,
+    pub abbr: String,
+    pub name: String,
+    pub rights: String,
+}
+
+/// Write `<dir>/texts.json` listing every `<dir>/<text_id>/manifest.json`, in [`SOURCES`] order (then by id).
+///
+/// # Errors
+/// If `dir` or a manifest cannot be read, or the catalog cannot be written.
+pub fn write_catalog(dir: &Path) -> Result<Vec<CatalogEntry>, String> {
+    let mut texts = vec![];
+    for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path().join("manifest.json");
+        let Ok(raw) = fs::read_to_string(&path) else { continue };
+        let m: Manifest = serde_json::from_str(&raw).map_err(|e| format!("{}: {e}", path.display()))?;
+        texts.push(CatalogEntry { id: m.text_id, abbr: m.abbr, name: m.name, rights: m.rights });
+    }
+    let rank = |id: &str| SOURCES.iter().position(|s| s.id == id).unwrap_or(SOURCES.len());
+    texts.sort_by(|a, b| (rank(&a.id), &a.id).cmp(&(rank(&b.id), &b.id)));
+    let bytes = serde_json::to_vec_pretty(&texts).map_err(|e| e.to_string())?;
+    fs::write(dir.join("texts.json"), bytes).map_err(|e| format!("texts.json: {e}"))?;
+    Ok(texts)
 }

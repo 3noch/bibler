@@ -27,18 +27,19 @@ test("check: tagging ends follow the server's rule (crates/api/src/check.rs)", (
 
 test("check: ops get bad_id / bad_text like the server", () => {
   const T = "kjv-1769-v2";
+  const texts = (id: string) => (id === T ? index : undefined);
   const paint = (start: number, end: number, extra: Partial<Op> = {}) =>
     ({ op_id: "o1", kind: "paint", tag: "T", text_id: T, start, end, new_id: "g1", now: 1, ...extra }) as Op;
   const s = at(GEN, 1, 1, 0);
   const e = at(GEN, 1, 1, 3);
-  assert.equal(checkOp(index, T, paint(s, e)), null);
-  assert.equal(checkOp(index, T, paint(s, e + 7))?.code, "bad_text");
-  assert.equal(checkOp(index, T, paint(s, e, { text_id: "other" } as Partial<Op>))?.code, "bad_text");
-  assert.equal(checkOp(index, T, paint(s, e, { op_id: "" }))?.code, "bad_id");
-  assert.equal(checkOp(index, T, paint(s, e, { new_id: "x".repeat(65) } as Partial<Op>))?.code, "bad_id");
-  assert.equal(checkOp(index, T, { op_id: "o2", kind: "erase", tag: "T", text_id: T, start: s, end: e, split_id: "", now: 1 })?.code, "bad_id");
-  assert.equal(checkOp(index, T, { op_id: "o2", kind: "erase", tag: "T", text_id: T, start: s, end: e, split_id: null, now: 1 }), null);
-  assert.equal(checkOp(index, T, { op_id: "o3", kind: "palette_set", tags: ["a", "b c"], now: 1 })?.code, "bad_id");
-  assert.equal(checkOp(index, T, { op_id: "o4", kind: "comment_create", id: "c", tagging: "g/1", body: "x", now: 1 })?.code, "bad_id");
-  assert.equal(checkOp(index, T, { op_id: "o5", kind: "tag_create", id: "T", name: "Any name", color: "#123456", now: 1 }), null);
+  assert.equal(checkOp(texts, paint(s, e)), null);
+  assert.equal(checkOp(texts, paint(s, e + 7))?.code, "bad_text");
+  assert.equal(checkOp(texts, paint(s, e, { text_id: "other" } as Partial<Op>))?.code, "bad_text");
+  assert.equal(checkOp(texts, paint(s, e, { op_id: "" }))?.code, "bad_id");
+  assert.equal(checkOp(texts, paint(s, e, { new_id: "x".repeat(65) } as Partial<Op>))?.code, "bad_id");
+  assert.equal(checkOp(texts, { op_id: "o2", kind: "erase", tag: "T", text_id: T, start: s, end: e, split_id: "", now: 1 })?.code, "bad_id");
+  assert.equal(checkOp(texts, { op_id: "o2", kind: "erase", tag: "T", text_id: T, start: s, end: e, split_id: null, now: 1 }), null);
+  assert.equal(checkOp(texts, { op_id: "o3", kind: "palette_set", tags: ["a", "b c"], now: 1 })?.code, "bad_id");
+  assert.equal(checkOp(texts, { op_id: "o4", kind: "comment_create", id: "c", tagging: "g/1", body: "x", now: 1 })?.code, "bad_id");
+  assert.equal(checkOp(texts, { op_id: "o5", kind: "tag_create", id: "T", name: "Any name", color: "#123456", now: 1 }), null);
 });

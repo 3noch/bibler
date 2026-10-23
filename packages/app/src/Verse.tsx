@@ -24,6 +24,26 @@ interface Segment {
   ords: number[];
 }
 
+/** Breaks that start a paragraph (a gap); any other starts a line. */
+const PARAGRAPH = new Set(["p", "b"]);
+/** Lines whose first row is indented (style.css `.indent`). */
+const INDENTED = new Set(["q2", "li1", "li2", "qr", "pc"]);
+
+/** What comes before a word: its headings, then a paragraph or line break and the line's indent. */
+function before(bt: BookText, ord: number): JSX.Element {
+  const heads = bt.headingsBefore.get(ord);
+  const kinds = bt.breaks.get(ord);
+  if (!heads && !kinds) return null;
+  const indent = kinds?.filter((k) => INDENTED.has(k)).pop();
+  return (
+    <>
+      <For each={heads ?? []}>{(h) => <span class={`heading ${h.kind}`}>{h.text}</span>}</For>
+      <Show when={kinds}>{(k) => <span class={k().some((x) => PARAGRAPH.has(x)) ? "para-break" : "line-break"} />}</Show>
+      <Show when={indent}>{(i) => <span class={`indent ${i()}`} />}</Show>
+    </>
+  );
+}
+
 export function Verse(props: VerseProps) {
   const index = props.text.index;
   const ords = index.slotOrds(props.slot);
@@ -49,7 +69,6 @@ export function Verse(props: VerseProps) {
     return out;
   });
 
-  const breaks = bt.breaks.get(props.slot) ?? [];
   const local = (ord: number) => index.pos(ord) - bt.firstPos;
   /** A space follows the word unless it is the first part of a hyphenated word. */
   const spaced = (ord: number) => !(bt.flags[local(ord)]! & JOINED);
@@ -91,13 +110,7 @@ export function Verse(props: VerseProps) {
 
   return (
     <>
-      <For each={bt.headingsBefore.get(props.slot) ?? []}>{(h) => <span class="heading">{h}</span>}</For>
-      <Show when={breaks.includes("p") || breaks.includes("b")}>
-        <span class="para-break" />
-      </Show>
-      <Show when={breaks.includes("q1")}>
-        <span class="line-break" />
-      </Show>
+      <Show when={ords.length > 0}>{before(bt, ords[0]!)}</Show>
       <Show when={ords.length > 0}>
         <span class="verse" classList={{ title: verse === 0 }} data-slot={props.slot}>
           <Show when={verse > 0}>
@@ -114,6 +127,7 @@ export function Verse(props: VerseProps) {
                     {(ord, j) => (
                       <>
                         {j > 0 && spaced(seg().ords[j - 1]!) ? " " : ""}
+                        {ord() !== ords[0] && before(bt, ord())}
                         {word(ord())}
                       </>
                     )}
@@ -129,7 +143,7 @@ export function Verse(props: VerseProps) {
           </Index>{" "}
         </span>
       </Show>
-      <For each={bt.headingsAfter.get(props.slot) ?? []}>{(h) => <span class="heading subscription">{h}</span>}</For>
+      <For each={ords.flatMap((o) => bt.headingsAfter.get(o) ?? [])}>{(h) => <span class={`heading subscription ${h.kind}`}>{h.text}</span>}</For>
     </>
   );
 }

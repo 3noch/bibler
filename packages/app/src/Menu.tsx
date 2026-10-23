@@ -1,8 +1,9 @@
-// The menu (top-left button): account, space, undo/redo, help, recent reading (history.ts) and the contents (books
-// -> chapters), in a drawer so the top bar fits a phone.
+// The menu (top-left button): account, space, undo/redo, help, the translation, recent reading (history.ts) and the
+// contents (books -> chapters), in a drawer so the top bar fits a phone.
 import { createSignal, For, Show } from "solid-js";
 import { BOOKS, formatInterval, type HistoryEntry, type TextIndex } from "@bible-tags/scripture";
 import type { TagStore } from "./store.ts";
+import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
 import { CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
@@ -17,6 +18,10 @@ export function Menu(props: {
   recent: HistoryEntry[];
   reading: string | null;
   onResume: (e: HistoryEntry) => void;
+  /** The texts on offer and the one being read. */
+  texts: TextInfo[];
+  text: TextInfo;
+  onText: (id: string) => void;
   onSpaces: () => void;
   onHelp: () => void;
   onClose: () => void;
@@ -58,6 +63,7 @@ export function Menu(props: {
             <span class="menu-label">Help</span>
           </button>
         </section>
+        <Texts texts={props.texts} text={props.text} onText={props.onText} />
         <Recent index={props.index} recent={props.recent} reading={props.reading} onResume={props.onResume} />
         <Contents index={props.index} here={props.here} onChapter={props.onChapter} />
         <Version server={s.mode === "server" ? s.serverBuild() : undefined} />
@@ -80,6 +86,40 @@ function ago(at: number): string {
   if (h < 24) return `${h} h ago`;
   const d = Math.round(h / 24);
   return d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(at).toLocaleDateString();
+}
+
+/** The translation being read, and the others on offer with their rights lines. Tags show only on the text they
+ *  were made in (another text's ordinals mean other words). */
+function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <nav class="menu-section texts" aria-label="Translation">
+      <button class="menu-row" aria-expanded={open()} onClick={() => setOpen(!open())}>
+        <span class="menu-label">
+          {props.text.name}
+          <span class="muted">Translation · {props.text.abbr}</span>
+        </span>
+        <NextIcon />
+      </button>
+      <Show when={open()}>
+        <ul>
+          <For each={props.texts}>
+            {(t) => (
+              <li>
+                <button class="text-row" classList={{ current: t.id === props.text.id }} aria-current={t.id === props.text.id} onClick={() => props.onText(t.id)}>
+                  <span class="text-name">
+                    {t.name} <span class="muted">{t.abbr}</span>
+                  </span>
+                  <span class="muted rights">{t.rights}</span>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+        <p class="muted texts-note">Tags show in the translation they were made in.</p>
+      </Show>
+    </nav>
+  );
 }
 
 /** Recent reading: each track's last sitting, newest first; choosing one goes back to where it left off. */

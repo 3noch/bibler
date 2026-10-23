@@ -77,7 +77,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   max-width: 38rem; margin: 0 auto;
   padding: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px) 20px calc(120px + env(safe-area-inset-bottom, 0px));
 }
-.chapter, .verse { scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
+.chapter, .verse, .heading { scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
 .edge { height: 40vh; }
 .book-head { text-align: center; margin: 3.5rem 0 1rem; }
 .book-head h1 { margin: 0; font: 600 2rem/1.2 var(--serif); letter-spacing: 0.02em; font-variant: small-caps; }
@@ -92,8 +92,21 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .verse.title { display: block; font-style: italic; color: var(--muted); margin-bottom: 0.4rem; }
 .para-break { display: block; height: 0.6em; }
 .line-break { display: block; }
+/* Poetry and list lines (USFM q2, li1, …): only a line's first row is indented (lines aren't wrapped in elements,
+   since a line may begin inside a verse and a paragraph spans verses). */
+.indent { display: inline-block; }
+.indent.q2 { width: 1.5em; }
+.indent.li1 { width: 0.75em; }
+.indent.li2 { width: 2em; }
+.indent.qr, .indent.pc { width: 3em; }
 .heading { display: block; margin: 1.2rem 0 0.2rem; font-variant: small-caps; letter-spacing: 0.04em; color: var(--muted); }
 .heading.subscription { margin-top: 1rem; font-variant: normal; font-style: italic; font-size: 0.95rem; }
+/* A subsection or a speaker (Song of Songs); parallel passages; a book of Psalms and its range. */
+.heading.s2 { margin-top: 0.8rem; font-variant: normal; font-style: italic; letter-spacing: 0; }
+.heading.r { margin-top: 0; font: italic 0.85rem var(--sans); font-variant: normal; letter-spacing: 0; }
+.heading.ms1 { margin-top: 1.6rem; text-align: center; font-size: 1.1rem; }
+.heading.mr { margin-top: 0; text-align: center; font: italic 0.85rem var(--sans); font-variant: normal; letter-spacing: 0; }
+.heading + .heading.r, .heading + .heading.mr, .heading + .heading.s2 { margin-top: 0; }
 .pilcrow { color: var(--faint); }
 .note { font-size: 0.6em; color: var(--faint); cursor: help; }
 .seg { border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
@@ -417,6 +430,16 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .recent-row .muted { flex: none; font: 0.8rem var(--sans); }
 .recent-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .recent-row.current { font-weight: 600; }
+.texts ul { list-style: none; margin: 0; padding: 0 0 4px; }
+.texts .menu-row[aria-expanded="true"] svg { transform: rotate(90deg); }
+.text-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px 8px 22px; border-radius: 10px;
+  text-align: left; font-family: var(--serif); font-size: 1.02rem;
+}
+.text-row .muted { font: 0.8rem var(--sans); }
+.text-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.text-row.current .text-name { font-weight: 600; }
+.texts-note { margin: 2px 10px 6px 22px; font: 0.8rem var(--sans); }
 .chapter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 4px; padding: 4px 6px 10px; }
 .chapter-grid button {
   height: 40px; border-radius: 8px; font-variant-numeric: tabular-nums; font-size: 0.9rem;

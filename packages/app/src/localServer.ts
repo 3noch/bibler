@@ -8,7 +8,6 @@
 // index). Tabs hear each other's changes over a BroadcastChannel; a tab that falls behind (a gap) says hello again
 // and gets a `reset`.
 import { checkOp, effect, MemRows, OpError, type Change, type ClientMsg, type Row, type ServerMsg, type SyncState, type TextIndex } from "@bible-tags/scripture";
-import { TEXT_ID } from "./textId.ts";
 
 const DB_KEY = "bible-tags/local-db/v1";
 const KEEP_CHANGES = 1000;
@@ -41,8 +40,9 @@ function withLock(f: () => void | Promise<void>) {
   queue = queue.then(() => (navigator.locks ? navigator.locks.request("bible-tags-local-db", async () => f()) : f())).catch((e: unknown) => console.error(e));
 }
 
-/** Connect `sync` to the browser-local store; `index` (the text's) checks ops' ordinals. */
-export function connectLocal(sync: SyncState, index: Promise<TextIndex>, onError: (msg: string) => void) {
+/** Connect `sync` to the browser-local store; `textIndex` (a text's index, null if there is no such text) checks
+ *  ops' ordinals. */
+export function connectLocal(sync: SyncState, textIndex: (id: string) => Promise<TextIndex | null>, onError: (msg: string) => void) {
   const channel = "BroadcastChannel" in window ? new BroadcastChannel("bible-tags-local") : null;
   const reply = (m: ServerMsg) => {
     if (!sync.receive(m)) hello(); // a gap: start over with a reset
@@ -59,7 +59,8 @@ export function connectLocal(sync: SyncState, index: Promise<TextIndex>, onError
     if (m.type === "history") return; // kept by the page itself (store.ts), never sent here
     const op = m.op;
     withLock(async () => {
-      const bad = checkOp(await index, TEXT_ID, op);
+      const index = op.kind === "paint" || op.kind === "erase" ? await textIndex(op.text_id) : null;
+      const bad = checkOp((id) => (index && "text_id" in op && id === op.text_id ? index : undefined), op);
       const db = loadLocalDb();
       const done = db.changes.find((c) => c.op_id === op.op_id);
       if (done || db.older?.includes(op.op_id)) {

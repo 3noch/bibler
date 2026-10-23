@@ -15,7 +15,8 @@
   side panel, no help text.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card), undo/redo,
-  help, recent reading (collapsed; the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
+  help, translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
+  translation they were made in), recent reading (collapsed; the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
   ago; choosing one goes back to where it left off), contents (Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
   books go straight there; choosing closes the menu), and at the very bottom (seen only by scrolling there) a faded version stamp (`Version.tsx`: the app's commit from index.html's meta tags and the server's from the last sync `ready`).
 - Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
@@ -89,10 +90,13 @@
   snippets by interval, and resets its cursor only when the places actually change.
 - **PWA** (installable, offline reading; both builds): `public/manifest.webmanifest` + icons (`icon.svg` drawn by
   hand, PNGs rasterized from it with `rsvg-convert`; the maskable/Apple ones are full-bleed with the art at 80%).
-  `src/sw.js` is a template: the `serviceWorker()` plugin in `vite.config.ts` fills in this build's file list,
-  a version hash and `TEXT_ID` (`src/textId.ts`) and emits `sw.js`; `main.tsx` registers it in production only.
-  Shell precached per version (old versions deleted); text precached when the page asks (`postMessage("precache-text")` once the worker is ready; not in `activate`,
-  where it stalled the page's requests on a first visit), four files at a time, into `text-<TEXT_ID>`;
+  `src/sw.js` is a template: the `serviceWorker()` plugin in `vite.config.ts` fills in this build's file list and
+  a version hash and emits `sw.js`; `main.tsx` registers it in production only.
+  Shell precached per version (old versions deleted); `text/texts.json` network-first into a `texts` cache; texts
+  (2026-10-23, several translations) one cache each, `text-<id>`: the page sends `{type: "keep-texts", texts}` (the 3
+  most recently read, `keepOffline` in `src/text.ts`, whenever one is shown; not in `activate`, where it stalled the
+  page's requests on a first visit) and the worker downloads each whole, four files at a time, deletes files an
+  older build of it left, and drops every other text's cache;
   hashed files cache-first; navigations and other files network-first with cache fallback; `/api/` untouched.
   Browser-tested under `/pages/`: 9 shell + 68 text files cached, and with the server stopped an unvisited book
   (Obadiah) opened. iOS gives an installed app storage separate from Safari (matters for local-only tags).

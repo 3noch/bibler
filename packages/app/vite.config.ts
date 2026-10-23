@@ -4,7 +4,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import solid from "vite-plugin-solid";
-import { TEXT_ID } from "./src/textId.ts";
 
 /** Emits sw.js (from src/sw.js) listing this build's files; its version changes whenever any file does. That version
  * is also the client's: it changes only when the client does (file names are content hashes), never for a commit
@@ -23,8 +22,7 @@ function serviceWorker(): Plugin {
       const version = createHash("sha256").update(files.join("\n")).update(readFileSync(here("index.html"))).digest("hex").slice(0, 16);
       const source = readFileSync(here("src/sw.js"), "utf8")
         .replace("__VERSION__", version)
-        .replace("__SHELL__", JSON.stringify(files))
-        .replace("__TEXT_ID__", TEXT_ID);
+        .replace("__SHELL__", JSON.stringify(files));
       this.emitFile({ type: "asset", fileName: "sw.js", source });
       this.emitFile({ type: "asset", fileName: "client-version.txt", source: version + "\n" }); // not in the shell
       const html = bundle["index.html"];

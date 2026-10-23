@@ -48,6 +48,17 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   them, and the `app` wrapper sets the server's at run time (read before the compiled-in value), so a commit doesn't
   rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
   the PATH's `git` is the Xcode stub that fails: add `git` (`nix-shell -p nodejs_22 git`).
+- **Translations** (2026-10-23): KJV and the Berean Standard Bible (public domain, eBible.org USFM like the KJV;
+  the NET and most modern translations need a license). `text-build` builds every text in its `SOURCES` into
+  `build/text/<text_id>/` plus `build/text/texts.json` (the list the client offers and the Worker loads; the
+  self-hosted server loads every manifest). The client (`src/text.ts`) reads one text at a time, chosen per device
+  (menu -> Translation; localStorage), and switching keeps the verse at the top (the reader remounts on the new
+  text). **Caching** (the user: a device can't hold every translation we'll offer): the service worker keeps one
+  cache per text and only the 3 most recently read (`KEEP_TEXTS`; the page sends `keep-texts`), each downloaded
+  whole for offline reading (~1.8 MB gz), files an older build of a kept text left are deleted, other texts'
+  caches dropped. Browser-checked (both builds): switching both ways in place, BSB poetry/headings/omitted verse,
+  painting in the BSB (server and in-browser server accept it; the KJV doesn't show it), both texts cached, eviction,
+  stale-file cleanup. Not yet: tags across translations, a translation in the URL, a real phone.
 - **Reading history** (2026-10-23; an automatic bookmark per reading track, for reading plans with several daily
   portions): an entry = where a jump landed (`anchor`) + where scrolling from there got to (`last`), each with its
   time; the later orders the list. Jumps = the omnibox, a clicked place, the contents, a link (`[ ]` chapter steps
@@ -139,7 +150,9 @@ the server requires the end to be a word of the start's book or that book's end,
 selections with `TextIndex.byBook` (one tagging per book, one undo step). JS must use
 `bookIdOf`/`makeOrd`, never `>>` (ids >= 128 exceed int32). ~791k words in KJV; **hyphens split words**
 (`Beth-` + `el`, the first part flagged `joined`).
-Anchors are keyed by `text_id` (versioned, now `kjv-1769-v2`); the client ignores taggings of other texts.
+Anchors are keyed by `text_id` (versioned: `kjv-1769-v2`, `bsb-2026-v1`); the client shows only the taggings of the
+text being read (decided with the user 2026-10-23: tags made in one translation don't show in another, for now; both
+share verse addresses, so projecting by verse is the natural later step).
 Planned for licensed translations (user, 2026-10-12): build their index ahead of time from a licensed copy and
 treat it as static data (the index holds no text); if it can't be published as a file, store it in the shared
 database and let clients cache it forever. Text itself is fetched at runtime within the license's caching terms.
@@ -340,9 +353,9 @@ the word (superset semantics: other tags may also be present). OPEN: whether to 
 - NOT supported, by design: NOT and OR.
 
 ## Text (frozen): see `crates/text-build/CLAUDE.md` and `docs/text-format.md`
-- **Never edit or refresh `data/source/eng-kjv2006/`.** The tokenization (hence every user's ordinals) is
-  frozen by `fixtures/text/kjv-1769-v2.golden.json` once anyone has data; changing it then needs a new `text_id`
-  plus an ordinal remap.
+- **Never edit or refresh `data/source/eng-kjv2006/` or `data/source/engbsb/`.** The tokenization (hence every
+  user's ordinals) is frozen by `fixtures/text/<text_id>.golden.json` once anyone has data; changing it then needs
+  a new `text_id` plus an ordinal remap.
 
 ## Testing philosophy
 Shared JSON fixtures are the behavioral spec for anything duplicated across TS and Rust. Property tests

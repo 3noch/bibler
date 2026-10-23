@@ -20,7 +20,7 @@
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
 import { mergeHistory, resolveTagging, sameEntry, SyncState, type Build, type HistoryEntry, type ClientMsg, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
-import { TEXT_ID } from "./text.ts";
+import { textId } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
 
@@ -174,8 +174,9 @@ interface Opened {
   close: () => void;
 }
 
-/** `textIndex` checks ops in the offline-only build (its in-browser server does what the server would). */
-export async function openTagStore(textIndex: Promise<TextIndex>) {
+/** `textIndex` (a text's index, or null if there is no such text) checks ops in the offline-only build (its
+ *  in-browser server does what the server would). */
+export async function openTagStore(textIndex: (id: string) => Promise<TextIndex | null>) {
   let session: Session | undefined;
   const joined = LOCAL_ONLY ? undefined : await takeJoin();
   let groups: GroupSummary[] = [];
@@ -481,8 +482,11 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
 
   const view = createMemo(() => (version(), sync().view), undefined, { equals: false });
   const tags = createMemo(() => [...view().tags.values()].filter((t) => t.deleted_at === null));
-  // Only this text's taggings: another text's ordinals mean other words.
-  const taggings = createMemo(() => [...view().taggings.values()].filter((t) => t.deleted_at === null && t.text_id === TEXT_ID));
+  // Only the taggings of the text being read: another text's ordinals mean other words.
+  const taggings = createMemo(() => {
+    const id = textId();
+    return [...view().taggings.values()].filter((t) => t.deleted_at === null && t.text_id === id);
+  });
   /** What the text shows: taggings of tags that aren't hidden. */
   const visibleTaggings = createMemo(() => {
     const h = hidden();
@@ -623,6 +627,8 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
     /** The live tagging of `tag` starting at `start` (a single tag's instances are its taggings). */
     taggingAt: (tag: string, start: number) => byTag().get(tag)?.find((t) => t.start === start),
     notices,
+    /** Show a notice (like the store's own). */
+    notify,
     status: () => (version(), sync().status),
     pendingCount: () => (version(), sync().pending.length),
     canUndo: () => (version(), sync().canUndo()),
@@ -630,17 +636,17 @@ export async function openTagStore(textIndex: Promise<TextIndex>) {
 
     /** Paint intervals (each within one book: `TextIndex.byBook`) as one undo step. */
     paint: (tag: string, ivs: readonly Interval[]) =>
-      submit(ivs.map(([start, end]) => ({ kind: "paint" as const, tag, text_id: TEXT_ID, start, end, new_id: ulid(), now: Date.now() }))),
+      submit(ivs.map(([start, end]) => ({ kind: "paint" as const, tag, text_id: textId(), start, end, new_id: ulid(), now: Date.now() }))),
     /** Erase one tag from intervals (each within one book) as one undo step. */
     erase: (tag: string, ivs: readonly Interval[]) =>
-      submit(ivs.map(([start, end]) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now: Date.now() }))),
+      submit(ivs.map(([start, end]) => ({ kind: "erase" as const, tag, text_id: textId(), start, end, split_id: ulid(), now: Date.now() }))),
     /** Erase every tag over intervals (each within one book) as one undo step. */
     eraseAll(ivs: readonly Interval[]) {
       const now = Date.now();
       return submit(
         ivs.flatMap(([start, end]) => {
           const hit = new Set(visibleTaggings().filter((t) => t.start < end && t.end > start).map((t) => t.tag));
-          return [...hit].map((tag) => ({ kind: "erase" as const, tag, text_id: TEXT_ID, start, end, split_id: ulid(), now }));
+          return [...hit].map((tag) => ({ kind: "erase" as const, tag, text_id: textId(), start, end, split_id: ulid(), now }));
         }),
       );
     },

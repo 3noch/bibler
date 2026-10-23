@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BOOKS } from "../src/books.ts";
 import { bookIdOf, makeOrd } from "../src/textIndex.ts";
-import { kjv, bookWords } from "./kjv.ts";
+import { bsb, kjv, bookWords } from "./kjv.ts";
 
 const { index, manifest } = kjv;
 
@@ -120,4 +120,21 @@ test("byBook cuts an interval at book boundaries (one piece per book with words)
   assert.deepEqual(index.byBook([ge, es]), [], "between books there are no words");
   assert.equal(index.byBook(index.bookInterval(gen)).length, 1);
   assert.equal(index.byBook([gs, index.bookEnd[index.books - 1]!]).length, index.books, "the whole Bible: every book");
+});
+
+test("another text with the KJV's versification: same slots, so a verse's address finds the same verse", () => {
+  const [k, b] = [kjv.index, bsb.index];
+  assert.equal(b.slots, k.slots);
+  assert.deepEqual([...b.chapterFirstVerse], [...k.chapterFirstVerse]);
+  let omitted = 0;
+  for (let s = 0; s < k.slots; s++) {
+    if (k.slotWords[s] === 0) continue; // an empty title starts where verse 1 does
+    // A verse the BSB leaves out is an empty slot: its address is a gap ordinal of the verse before.
+    if (b.slotWords[s] === 0) omitted++;
+    assert.equal(b.slotOf(k.verseStart[s]!), b.slotWords[s] === 0 ? s - 1 : s, `slot ${s}`);
+  }
+  assert.equal(omitted, 16);
+  const mat17 = b.chapterFirstVerse[b.chapterIndex(b.bookOf(makeOrd(70, 1, 1, 0)), 17)]!;
+  assert.equal(b.slotWords[mat17 + 21], 0, "Matthew 17:21");
+  assert.ok(b.slotWords[mat17 + 20]! > 0 && b.slotWords[mat17 + 22]! > 0);
 });

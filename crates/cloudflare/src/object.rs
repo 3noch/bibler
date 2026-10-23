@@ -362,12 +362,18 @@ async fn asset(env: &Env, path: &str) -> Result<Vec<u8>> {
     res.bytes().await
 }
 
-/// The texts listed in `/text/texts.json` (written by `make cloudflare`), read from the static assets.
+/// One entry of `/text/texts.json` (text-build's list of texts; the client reads the rest).
+#[derive(serde::Deserialize)]
+struct TextEntry {
+    id: String,
+}
+
+/// The texts listed in `/text/texts.json` (written by text-build), read from the static assets.
 async fn load_texts(env: &Env) -> Result<Texts> {
     let get = |path: String| async move { asset(env, &format!("text/{path}")).await };
-    let ids: Vec<String> = serde_json::from_slice(&get("texts.json".into()).await?)?;
+    let entries: Vec<TextEntry> = serde_json::from_slice(&get("texts.json".into()).await?)?;
     let mut texts = Texts::default();
-    for id in ids.iter().filter(|id| api::check::valid_id(id)) {
+    for id in entries.iter().map(|e| &e.id).filter(|id| api::check::valid_id(id)) {
         let manifest: serde_json::Value = serde_json::from_slice(&get(format!("{id}/manifest.json")).await?)?;
         let index = manifest["index"].as_str().unwrap_or_default();
         let bytes = get(format!("{id}/{index}")).await?;

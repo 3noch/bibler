@@ -1,14 +1,15 @@
 # Scripture text: tokenizer spec and build artifacts
 
-Status: **frozen for `kjv-1769-v2`** once any user has taggings (golden file `fixtures/text/kjv-1769-v2.golden.json`).
-Changing anything below that affects ordinals then requires a new `text_id` and a remap. (`kjv-1769-v1` numbered
-words by their position in the book and kept hyphenated words whole; it was replaced on 2026-10-12, before anyone
-had data, with no migration.)
+Status: **frozen for `kjv-1769-v2` and `bsb-2026-v1`** once any user has taggings (golden files
+`fixtures/text/<text_id>.golden.json`). Changing anything below that affects a text's ordinals then requires a new
+`text_id` and a remap. (`kjv-1769-v1` numbered words by their position in the book and kept hyphenated words whole;
+it was replaced on 2026-10-12, before anyone had data, with no migration.)
 
 ## Input
 
-`data/source/eng-kjv2006/*.usfm` (see `SOURCE.md`): 66 books, one file per book, canonical order = filename
-order (`02-GEN` … `96-REV`). Files have no BOM and no trailing newline; each file is parsed on its own.
+Each text (`text_build::SOURCES`: id, directory, name, rights line) is `data/source/<dir>/*.usfm` (see its
+`SOURCE.md`): KJV = `eng-kjv2006`, BSB (Berean Standard Bible, added 2026-10-23) = `engbsb`, both eBible.org USFM.
+66 books, one file per book, canonical order = filename order (`02-GEN` … `96-REV`). Each file is parsed on its own.
 
 ## Verse slots
 
@@ -16,10 +17,13 @@ The unit of the index is the **verse slot**. Every chapter has slots `0..=n`, wh
 
 - Slot 0 holds the chapter title (Psalm superscription, USFM `\d`) and is empty otherwise.
   116 Psalms have titles (1,034 tokens). Habakkuk 3:1 and 3:19 are ordinary verses (in the source too).
-- Verses must be numbered `1, 2, 3, …` with no gaps or repeats, else the build fails.
+- Verse numbers must increase. A number skipped (a verse the translation leaves out: 16 in the BSB, e.g. Matthew
+  17:21, listed in its `SOURCE.md`) is an **empty slot**, so texts with the same versification have the same slots.
+  A repeat or a step back fails the build.
 
 Slots are numbered globally in canonical order (Gen 1:0 = slot 0, Gen 1:1 = slot 1, …). For KJV:
-1,189 chapters, 31,102 verses, 32,291 slots.
+1,189 chapters, 31,102 verses, 32,291 slots. The BSB has the same slots (tested: `bsb_shares_kjv_versification`),
+so a verse's address is the same in both and reading history, links and future cross-text tags can go by verse.
 
 ## Tokens (ordinals)
 
@@ -47,18 +51,22 @@ next merges, exactly as before), and the server rejects any end that is neither 
 slot starts where the next slot with words starts. Taggings at the end of one book and the start of the next never
 abut.
 
-Tokenizing a `\v N` / `\d` line:
+Tokenizing a `\v N` / `\d` line, or the text after a paragraph or poetry marker (below), which continues the
+current verse:
 1. Remove footnotes `\f … \f*` entirely (kept separately as notes, below).
 2. Remove `\w`/`\+w` attributes (`|strong="…"`).
-3. Remove character markers. An **opening** marker (`\add `, `\+add `, `\nd `, `\+nd `, `\wj `, `\w `, `\+w `)
+3. Remove character markers. An **opening** marker (`\add `, `\+add `, `\nd `, `\+nd `, `\wj `, `\it `, `\w `, `\+w `)
    consumes exactly one following space. A **closing** marker (`\add*`, …) consumes nothing. So
    `\w heaven|strong="H8064"\w*,` becomes `heaven,`.
 4. Remove `¶` (recorded as the slot's pilcrow flag; it only ever appears before the verse's first token).
 5. Split on whitespace and **after each hyphen** (decided 2026-10-12, so either half of `Beth-el` can be tagged):
    `Beth-el` = `Beth-` + `el`, and `Beth-` is flagged `joined` (displayed with no space after it). Every non-empty
-   piece is one token, punctuation attached (`heaven,` `LORD’s` `sin—;` `(for`); the em dash does not split. No
-   token is punctuation-only in KJV, and a hyphen must be followed by more of the word (both checked by the
-   build). KJV has 785 hyphenated words, which become 1,593 tokens.
+   piece is one token, punctuation attached (`heaven,` `LORD’s` `sin—;` `(for`); the em dash does not split. A
+   token needs a letter or digit (the BSB writes numbers as numerals: `130`), and a hyphen must be followed by more
+   of the word (both checked by the build). KJV has 785 hyphenated words, which become 1,593 tokens. Two kinds of
+   punctuation-only piece are joined to a word instead (none occur in the KJV): right after a footnote that
+   followed a space (`Sea \f …\f*).` = `Sea).`, 48 in the BSB), to the word before; opening a verse
+   (`... for`, BSB Ephesians 3:14 only), to the next (`...for`). Any other is a build error.
 6. Token text is stored exactly as in the source (U+2019 `’`, U+00E6 `æ`, U+2014 `—` kept). Case-folding and
    apostrophe normalization are a search concern, not a tokenizer concern.
 
@@ -66,7 +74,7 @@ Any other marker inside a verse is a build error, so source surprises surface in
 
 ### Per-token flags (stored as half-open ordinal runs)
 
-- `italic`: any letter inside `\add` / `\+add` (KJV supplied words).
+- `italic`: any letter inside `\add` / `\+add` (KJV supplied words) or `\it` (BSB Habakkuk 3:19's last line).
 - `divine_name`: inside `\nd` / `\+nd` (LORD/GOD in small caps).
 - `words_of_jesus`: inside `\wj`.
 - `joined` (a list of ordinals, not runs): the token ends with a hyphen and is followed by no space.
@@ -74,18 +82,24 @@ Any other marker inside a verse is a build error, so source surprises surface in
 Verified on the source: no markup boundary falls between two letters of one token, so the flags are exact for
 letters. (360 italic spans include trailing punctuation; the flag ignores punctuation.)
 
-### Per-slot flags
+### Layout
 
-- `pilcrow`: the KJV's own paragraph mark `¶` (2,970; the KJV stops using them after Acts 20).
-- `break`: a layout break from the source's `\p` (paragraph), `\q1` (poetry line), or `\b` (blank line), attached
-  to the next slot that has tokens. These are the CrossWire editors' layout, not the 1769 text.
+- `pilcrow` (per slot): the KJV's own paragraph mark `¶` (2,970; the KJV stops using them after Acts 20).
+- `break` (before a word; since 2026-10-23, when the BSB's poetry needed breaks inside verses): a line marker
+  `\p` `\m` `\pmo` `\pc` (paragraphs: indented, flush, embedded, centered), `\b` (blank line), `\q1` `\q2` `\qr`
+  (poetry lines, the last right-aligned), `\li1` `\li2` (list items), anchored at the next word emitted. Text after
+  the marker on its line continues the current verse (an error outside a verse). The KJV's are the CrossWire
+  editors' layout, not the 1769 text, and always fall at a verse's first word.
 
 ## Non-token material (no ordinals)
 
 - Book titles: `\mt1` (+ `\mt2` for 1–2 Kings), names from `\toc1` (long), `\toc2` (short), `\toc3` (abbr).
-- Section headings `\s1`: Psalm 119 letter headings (22, `\tl` letter + name) are anchored **before** the next
-  slot; epistle subscriptions (14) have no following verse in their book and are anchored **after** the book's
-  last slot.
+- Headings, with their marker as `kind`: `\s1` sections, `\s2` subsections (in the Song of Songs a speaker, inside
+  a verse), `\r` parallel passages, `\ms1` + `\mr` the five books of Psalms and their ranges, `\qa` acrostic letters.
+  Anchored **before** the next word emitted (so possibly inside a verse); headings with no word after them in
+  their book (the KJV's 14 epistle subscriptions) are anchored **after** the book's last word. KJV: 22 Psalm 119
+  letter headings (`\s1`, `\tl` letter + name) + the subscriptions. Word attributes are removed from heading text.
+- An empty `\d` (BSB Zechariah 12) is ignored.
 - Notes (KJV marginal notes, `\f + \fr c.v \ft text\f*`, 6,959): anchored **after** the last token emitted before
   the note (ordinal), with the `\ft` text.
 
@@ -122,21 +136,25 @@ The index holds no text, so it can be built for a text whose words cannot be red
   "words": ["In", "the", …],                    // reading order; ordinals come from the index (slot starts + i)
   "italic": [[s, e], …], "divine_name": [[s, e], …], "words_of_jesus": [[s, e], …],   // ord intervals (tiling)
   "joined": [ord, …],                                                                  // `Beth-` of `Beth-el`
-  "pilcrow": [slot, …], "breaks": [[slot, "p"|"q1"|"b"], …],                         // global slots
-  "headings": [{ "slot": n, "pos": "before"|"after", "text": "…" }],
+  "pilcrow": [slot, …],                                                                // global slots
+  "breaks": [[ord, "p"|"m"|"q1"|"b"|…], …],                                           // before the word at ord
+  "headings": [{ "at": ord, "pos": "before"|"after", "kind": "s1"|"s2"|"r"|…, "text": "…" }],
   "notes": [{ "after": ord, "ref": "1.4", "text": "…" }] }
 ```
 
-`manifest.json` (not hashed; the entry point): `text_id`, source info, `index` file name, `book_shift` (24), and for
+`build/text/texts.json` (not hashed): the texts built, `[{id, abbr, name, rights}]` in `SOURCES` order: what the
+client offers and the Cloudflare Worker loads (the self-hosted server reads every `<text_id>/manifest.json`).
+
+`manifest.json` (not hashed; the entry point): `text_id`, `abbr`, `name`, `rights`, source info, `index` file name, `book_shift` (24), and for
 each book its code, id, first word's ordinal, names, chapter count, token count and file name.
 
 ## Golden checks
 
-`fixtures/text/kjv-1769-v2.golden.json` is **per book** (so adding a book only appends entries): code, id, chapters,
+Each text's `fixtures/text/<text_id>.golden.json` is **per book** (so adding a book only appends entries): code, id, chapters,
 slots, tokens, sha256 of the book's tokens joined by `\n`, sha256 of its words as displayed (hyphen-joined parts put
 back together; this equals v1's token hash, so the text itself did not change), sha256 of its verse starts
 without the book id bits (with address ordinals this only pins which slots are empty), and sha256 of its words per
 slot (one byte each; this pins where verses split the word stream, hence every word's ordinal: added 2026-10-17
 after a review showed a word moving into the next verse passed every other check). `cargo test -p text-build` rebuilds from
-the vendored source and fails on any difference. `text-build --write-golden` regenerates it (only legitimate before
+the vendored source and fails on any difference. `text-build --id <text_id> --write-golden` regenerates it (only legitimate before
 any user has taggings).

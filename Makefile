@@ -15,8 +15,8 @@
 #   make cloudflare-deploy  deploy production to its custom domain (one-time setup in README.md)
 
 SHELL := bash
-TEXT_ID := kjv-1769-v2
-TEXT := build/text/$(TEXT_ID)/manifest.json
+# Every text (crates/text-build SOURCES) in build/text/<text_id>/, listed in build/text/texts.json.
+TEXT := build/text/texts.json
 SERVER_ADDR ?= 127.0.0.1:8080
 NPM := npm
 # Data directories; a pre-spaces database (build/dev.db, build/serve.db) is imported once if it exists.
@@ -51,10 +51,10 @@ client: node_modules/.installed
 server:
 	cargo build --release -p server
 
-# Text artifacts are rebuilt only when the source text or the tokenizer changes.
+# Text artifacts are rebuilt only when a source text or the tokenizer changes.
 text: $(TEXT)
-$(TEXT): $(wildcard data/source/eng-kjv2006/*.usfm) $(wildcard crates/text-build/src/*.rs) fixtures/text/$(TEXT_ID).golden.json
-	rm -rf build/text/$(TEXT_ID)
+$(TEXT): $(wildcard data/source/*/*.usfm) $(wildcard crates/text-build/src/*.rs) $(wildcard fixtures/text/*.golden.json)
+	rm -rf build/text
 	cargo run -q -p text-build --release
 
 node_modules/.installed: package.json package-lock.json packages/app/package.json packages/scripture/package.json | node-check
@@ -89,8 +89,7 @@ nix:
 pages: $(TEXT) node_modules/.installed
 	rm -rf build/pages
 	VITE_SYNC=local VITE_BASE=./ $(NPM) run -w @bible-tags/app build -- --outDir ../../build/pages --emptyOutDir
-	mkdir -p build/pages/text
-	cp -R build/text/$(TEXT_ID) build/pages/text/
+	cp -R build/text build/pages/text
 	touch build/pages/.nojekyll
 
 pages-serve: pages
@@ -107,7 +106,6 @@ cloudflare-assets: $(TEXT) node_modules/.installed
 	rm -rf $(CF_ASSETS)
 	$(NPM) run -w @bible-tags/app build -- --outDir ../../$(CF_ASSETS) --emptyOutDir
 	cp -R build/text $(CF_ASSETS)/text
-	ls build/text | sed 's/.*/"&"/' | paste -sd, - | sed 's/.*/[&]/' > $(CF_ASSETS)/text/texts.json
 	cp crates/cloudflare/_headers $(CF_ASSETS)/_headers
 
 $(WORKER_BUILD):

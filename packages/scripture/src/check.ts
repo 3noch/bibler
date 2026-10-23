@@ -16,8 +16,9 @@ export function wordRange(index: TextIndex, start: number, end: number): boolean
   return (index.isWord(end) && index.bookOf(end) === book) || end === index.bookEnd[book];
 }
 
-/** `{code, message}` for a `reject` (`bad_id` or `bad_text`), or null if the op may be applied. */
-export function checkOp(index: TextIndex, textId: string, op: Op): { code: "bad_id" | "bad_text"; message: string } | null {
+/** `{code, message}` for a `reject` (`bad_id` or `bad_text`), or null if the op may be applied. `texts` gives the
+ *  index of each known text (like `api::check::Texts`). */
+export function checkOp(texts: (textId: string) => TextIndex | undefined, op: Op): { code: "bad_id" | "bad_text"; message: string } | null {
   const ids: string[] = (() => {
     switch (op.kind) {
       case "paint":
@@ -36,8 +37,9 @@ export function checkOp(index: TextIndex, textId: string, op: Op): { code: "bad_
   })();
   if (!validId(op.op_id) || !ids.every(validId)) return { code: "bad_id", message: "ids must be 1-64 characters of [0-9A-Za-z_-]" };
   if (op.kind === "paint" || op.kind === "erase") {
-    if (op.text_id !== textId) return { code: "bad_text", message: `unknown text ${op.text_id}` };
-    if (!wordRange(index, op.start, op.end)) return { code: "bad_text", message: `[${op.start}, ${op.end}) is not a range of words in ${textId}` };
+    const index = texts(op.text_id);
+    if (!index) return { code: "bad_text", message: `unknown text ${op.text_id}` };
+    if (!wordRange(index, op.start, op.end)) return { code: "bad_text", message: `[${op.start}, ${op.end}) is not a range of words in ${op.text_id}` };
   }
   return null;
 }

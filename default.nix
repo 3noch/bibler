@@ -53,12 +53,12 @@ let
     cargoTestFlags = [ "-p" "text-build" ];
   };
 
-  # Content-hashed text artifacts: $out/<text_id>/{manifest.json,index.*.bin,*.json}
+  # Content-hashed text artifacts of every text: $out/<text_id>/{manifest.json,index.*.bin,*.json} + $out/texts.json
   text = pkgs.runCommand "bible-tags-text-${version}" { } ''
     ${textBuild}/bin/text-build \
-      --src ${./data/source/eng-kjv2006} \
-      --golden ${./fixtures/text/kjv-1769-v2.golden.json} \
-      --out $out/kjv-1769-v2
+      --sources ${./data/source} \
+      --fixtures ${./fixtures/text} \
+      --out $out
   '';
 
   server = pkgs.rustPlatform.buildRustPackage {

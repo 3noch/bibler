@@ -27,6 +27,8 @@ interface Props {
   onLocation: (ch: number) => void;
   /** The user scrolled and stopped: the first word of the verse now at the top (reading history). */
   onPosition: (ord: number) => void;
+  /** Gets a function giving the first word of the verse at the top now (or null before anything shows). */
+  topRef?: (top: () => number | null) => void;
   /** A word was clicked while not painting. */
   onInspect: (ord: number, rect: DOMRect) => void;
 }
@@ -40,6 +42,17 @@ const LONG_PRESS_MS = 300;
 const SETTLE_MS = 1000;
 const TOUCH_SLOP_PX = 8;
 const sameRefs = (a: readonly Tagging[], b: readonly Tagging[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** Where to scroll to show a verse at the top: its chapter when it is the first verse there (the number, a book's
+ *  head, a Psalm's title), else the headings just before it, so none is hidden under the bar. */
+function withHeadings(verse: Element): Element {
+  let top = verse;
+  for (let p = verse.previousElementSibling; p; p = p.previousElementSibling) {
+    if (p.classList.contains("verse") && !p.classList.contains("title")) return top;
+    if (p.classList.contains("heading")) top = p;
+  }
+  return verse.closest(".chapter") ?? top;
+}
 
 /** Height of the fixed top bar (content under it is not "visible"). */
 const barHeight = () => document.querySelector<HTMLElement>(".topbar")?.offsetHeight ?? 0;
@@ -149,20 +162,25 @@ export function Bible(props: Props) {
   let settleTimer = 0;
   const reportPosition = () => {
     if (navigating || pinned) return;
-    // The first verse that starts at the top or below (a resume puts that verse's first line at the top, which may
-    // also hold the end of the one before), unless that is far down: then the long verse already under way.
+    const ord = topVerse();
+    if (ord !== null) props.onPosition(ord);
+  };
+  /** The first verse that starts at the top or below (a resume puts that verse's first line at the top, which may
+   *  also hold the end of the one before), unless that is far down: then the long verse already under way. */
+  const topVerse = (): number | null => {
     const top = barHeight() - 2;
     let under: HTMLElement | null = null;
     for (const el of root.querySelectorAll<HTMLElement>(".verse[data-slot]")) {
       const start = el.querySelector("[data-ord]")?.getBoundingClientRect().top ?? Infinity;
       if (start >= top) {
         const pick = start > top + innerHeight / 2 && under ? under : el;
-        props.onPosition(index.verseStart[Number(pick.dataset.slot)]!);
-        return;
+        return index.verseStart[Number(pick.dataset.slot)]!;
       }
       under = el;
     }
+    return under ? index.verseStart[Number(under.dataset.slot)]! : null;
   };
+  props.topRef?.(topVerse);
 
   let raf = 0;
   const onScroll = () => {
@@ -198,7 +216,7 @@ export function Bible(props: Props) {
           const word = nav.target && root.querySelector(`[data-ord="${nav.target[0]}"]`);
           const verse = nav.top != null && index.bookOf(nav.top) >= 0 && root.querySelector(`.verse[data-slot="${index.slotOf(nav.top)}"]`);
           if (word) word.scrollIntoView({ block: "center" });
-          else if (verse) verse.scrollIntoView({ block: "start" });
+          else if (verse) withHeadings(verse).scrollIntoView({ block: "start" });
           else root.querySelector(`[data-ch="${nav.ch}"]`)?.scrollIntoView({ block: "start" });
           setTarget(nav.target);
           clearTimeout(flashTimer); // an earlier navigation's timer would end this flash early
@@ -399,7 +417,8 @@ function Chapter(props: {
       <Show when={number === 1}>
         <header class="book-head">
           <h1>{info.name}</h1>
-          <Show when={title && title !== info.name}>
+          {/* The text's own title, unless it only shortens the name (the BSB's "Song") */}
+          <Show when={title && !info.name.startsWith(title)}>
             <p>{title}</p>
           </Show>
         </header>
