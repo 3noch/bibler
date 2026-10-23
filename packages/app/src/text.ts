@@ -49,6 +49,25 @@ export function chooseText(id: string) {
   setTextId(id);
 }
 
+/** A location hash, `#/<translation>/<ref>` or just `#/<ref>`: the translation it names (if any) and the ref. */
+export function splitHash(hash: string): { text: string | null; ref: string } {
+  let raw = hash.replace(/^#\/?/, "");
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    // a malformed escape: take it as typed
+  }
+  const i = raw.indexOf("/"); // refs never contain one
+  return i < 0 ? { text: null, ref: raw } : { text: raw.slice(0, i), ref: raw.slice(i + 1) };
+}
+
+/** The text a link names: its abbreviation (any case) or id. */
+export const findText = (texts: TextInfo[], name: string) =>
+  texts.find((t) => t.abbr.toLowerCase() === name.toLowerCase() || t.id === name);
+
+/** The location hash the app writes: the translation, then the place (`#/BSB/John%203`). */
+export const hashOf = (text: TextInfo, ref: string) => `#/${encodeURIComponent(text.abbr)}/${encodeURIComponent(ref)}`;
+
 /** The texts on offer. Offline without a cached list: just the one being read. */
 export async function loadCatalog(): Promise<TextInfo[]> {
   try {

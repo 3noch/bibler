@@ -6,7 +6,7 @@ import type { TagStore } from "./store.ts";
 import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
-import { CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
+import { CheckIcon, CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
 
 export function Menu(props: {
   store: TagStore;
@@ -109,6 +109,11 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
                 <button class="text-row" classList={{ current: t.id === props.text.id }} aria-current={t.id === props.text.id} onClick={() => props.onText(t.id)}>
                   <span class="text-name">
                     {t.name} <span class="muted">{t.abbr}</span>
+                    <Show when={t.id === props.text.id}>
+                      <span class="text-reading">
+                        <CheckIcon /> Reading
+                      </span>
+                    </Show>
                   </span>
                   <span class="muted rights">{t.rights}</span>
                 </button>

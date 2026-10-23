@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { BOOKS, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
-import { chooseText, DEFAULT_TEXT, keepOffline, loadCatalog, loadText, textId, type Text, type TextInfo } from "./text.ts";
+import { chooseText, DEFAULT_TEXT, findText, hashOf, keepOffline, loadCatalog, loadText, splitHash, textId, type Text, type TextInfo } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
@@ -32,7 +32,17 @@ const sessionSet = (k: string, v: string | null) => {
 
 export function App() {
   const [catalog] = createResource(loadCatalog);
-  const [text] = createResource(textId, loadText);
+  // A link may name a translation (`#/BSB/John%203`): it becomes the one read. Without one, this device's choice.
+  const named = splitHash(location.hash).text;
+  const [ready, setReady] = createSignal(!named);
+  if (named) {
+    void loadCatalog().then((list) => {
+      const t = findText(list, named);
+      if (t) chooseText(t.id);
+      setReady(true);
+    });
+  }
+  const [text] = createResource(() => ready() && textId(), loadText);
   const [store] = createResource(() => openTagStore((id) => loadText(id).then((t) => t.index, () => null)));
   const failure = () =>
     text.error ? `Couldn't load the text (${text.error})` : store.error ? `Couldn't reach the server (${store.error})` : null;
@@ -45,9 +55,9 @@ export function App() {
     const t = text();
     if (t) keepOffline(t.id);
   });
-  /** Where the reader starts after switching texts: the verse that was at the top. */
-  let start: number | null = null;
-  const switchText = async (id: string, top: number | null) => {
+  /** Where the reader starts after switching texts: the verse that was at the top, or the link that switched. */
+  let start: number | "link" | null = null;
+  const switchText = async (id: string, top: number | "link" | null) => {
     if (id === textId()) return;
     try {
       await loadText(id); // first, so the reader switches at once (and stays put if the text can't be had)
@@ -71,9 +81,9 @@ function Main(props: {
   store: TagStore;
   /** The texts on offer. */
   texts: TextInfo[];
-  /** Open at this verse (switching texts), not where history says. */
-  start: number | null;
-  onText: (id: string, top: number | null) => void;
+  /** Open at this verse (switching texts) or at the link in the URL (which switched them), not where history says. */
+  start: number | "link" | null;
+  onText: (id: string, top: number | "link" | null) => void;
 }) {
   const { index } = props.text;
   const store = props.store;
@@ -140,8 +150,8 @@ function Main(props: {
     return null;
   };
   const goInterval = (iv: Interval) => jump(chapterOf(iv[0]), iv);
-  const hashRef = () => decodeURIComponent(location.hash.replace(/^#\/?/, ""));
-  const hashFor = (e: HistoryEntry) => "#/" + encodeURIComponent(chapterLabel(chapterOf(e.last.ord)));
+  const hashRef = () => splitHash(location.hash).ref;
+  const hashFor = (e: HistoryEntry) => hashOf(props.text.info, chapterLabel(chapterOf(e.last.ord)));
   /** Back (or Forward) to a history step: that entry, where it left off now. The hash change that follows is it. */
   let popped: string | null = null;
   const onPop = (ev: PopStateEvent) => {
@@ -156,6 +166,9 @@ function Main(props: {
   // A typed or followed link (#/Ref) in an open tab; its browser history step exists already.
   const onHash = () => {
     if (location.hash === popped) return void (popped = null);
+    const named = splitHash(location.hash).text;
+    const other = named && findText(props.texts, named);
+    if (other && other.id !== props.text.id) return props.onText(other.id, "link"); // the new reader goes there
     goRef(hashRef() || "Genesis 1", false);
   };
   /** A fresh start: Back walks the recent entries (oldest at the bottom of this app's part of the stack; Back
@@ -177,7 +190,8 @@ function Main(props: {
   let topVerse: () => number | null = () => null;
   onMount(() => {
     const mine = liveHistory(store.history()).find((e) => e.id === reading());
-    if (props.start !== null) goTo(chapterOf(props.start), null, props.start); // another text, same place
+    if (typeof props.start === "number") goTo(chapterOf(props.start), null, props.start); // another text, same place
+    else if (props.start === "link") goRef(hashRef() || "Genesis 1", false); // a link that named another text
     else if (mine) resume(mine, false); // a reload: where this tab was
     else if (hashRef()) goRef(hashRef(), false); // a link
     else {
@@ -231,7 +245,7 @@ function Main(props: {
   };
   const onLocation = (ch: number) => {
     setHere(ch);
-    history.replaceState(history.state, "", "#/" + encodeURIComponent(chapterLabel(ch)));
+    history.replaceState(history.state, "", hashOf(props.text.info, chapterLabel(ch)));
   };
 
   // --- tags -----------------------------------------------------------------------------------------------
@@ -364,6 +378,8 @@ function Main(props: {
             setSheetTag(null);
           }}
           onGo={goRef}
+          badge={props.text.info.abbr}
+          badgeTitle={`${props.text.info.name} (menu: Translation)`}
         />
         <div class="actions">
           <Show when={store.mode === "local"} fallback={<SyncDot store={store} />}>

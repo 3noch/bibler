@@ -52,13 +52,17 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   the NET and most modern translations need a license). `text-build` builds every text in its `SOURCES` into
   `build/text/<text_id>/` plus `build/text/texts.json` (the list the client offers and the Worker loads; the
   self-hosted server loads every manifest). The client (`src/text.ts`) reads one text at a time, chosen per device
-  (menu -> Translation; localStorage), and switching keeps the verse at the top (the reader remounts on the new
-  text). **Caching** (the user: a device can't hold every translation we'll offer): the service worker keeps one
+  (menu -> Translation, where the current one is marked "Reading"; localStorage), and switching keeps the verse at
+  the top (the reader remounts on the new text). The location field shows the translation's abbreviation at rest
+  only when the chapter's full name still fits beside it. **Links** (2026-10-23): `#/BSB/John%203` (abbreviation,
+  any case, or id) opens that translation and makes it this device's choice; `#/John%203` (older links) keeps the
+  current one; the app writes the prefixed form, so a copied address keeps the translation. **Caching** (the user: a device can't hold every translation we'll offer): the service worker keeps one
   cache per text and only the 3 most recently read (`KEEP_TEXTS`; the page sends `keep-texts`), each downloaded
   whole for offline reading (~1.8 MB gz), files an older build of a kept text left are deleted, other texts'
   caches dropped. Browser-checked (both builds): switching both ways in place, BSB poetry/headings/omitted verse,
   painting in the BSB (server and in-browser server accept it; the KJV doesn't show it), both texts cached, eviction,
-  stale-file cleanup. Not yet: tags across translations, a translation in the URL, a real phone.
+  stale-file cleanup; links with and without a translation (fresh tab, followed in an open tab, Back), the badge
+  giving way before the chapter name shortens. Not yet: tags across translations, a real phone.
 - **Reading history** (2026-10-23; an automatic bookmark per reading track, for reading plans with several daily
   portions): an entry = where a jump landed (`anchor`) + where scrolling from there got to (`last`), each with its
   time; the later orders the list. Jumps = the omnibox, a clicked place, the contents, a link (`[ ]` chapter steps

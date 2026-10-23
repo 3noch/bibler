@@ -1,7 +1,7 @@
 // Tag search. Query = chips: tag chips are ANDed (places where all of them overlap, superset semantics), scope chips
 // (references or book groups) are ORed and keep the instances overlapping them. With scope chips only, the panel
 // lists what is tagged in that scope. The omnibox also stays the "go to" box: a plain reference + Enter navigates.
-import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { BOOKS, formatInterval, groupInterval, inScope, intersectRuns, matchGroups, parseRef, type Interval } from "@bible-tags/scripture";
 import type { Text } from "./text.ts";
 import { intervalOf, type Tag, type TagStore } from "./store.ts";
@@ -28,6 +28,9 @@ export function Omnibox(props: {
   chips: Chip[];
   onChips: (chips: Chip[]) => void;
   onGo: (ref: string) => string | null;
+  /** The translation's abbreviation, shown at rest when there is room, and its name. */
+  badge?: string;
+  badgeTitle?: string;
 }) {
   const { index } = props.text;
   const [focused, setFocused] = createSignal(false);
@@ -35,20 +38,32 @@ export function Omnibox(props: {
   const [sel, setSel] = createSignal(0);
   const [error, setError] = createSignal<string | null>(null);
   let input!: HTMLInputElement;
-  // The idle label's room and font (read at mount, while idle: focus changes the font), to pick the short label.
-  const [room, setRoom] = createSignal<{ width: number; font: string } | null>(null);
+  let probe!: HTMLSpanElement;
+  // The idle label's room and font (read at mount, while idle: focus changes the font), to pick the short label, and
+  // the room the translation badge takes. `width` counts the badge's room too when it shows, so showing it doesn't
+  // change the answer.
+  const [room, setRoom] = createSignal<{ width: number; font: string; badge: number } | null>(null);
   const canvas = document.createElement("canvas").getContext("2d");
-  const idleLabel = () => {
+  /** The chapter's full name with the badge if both fit, else the full name alone, else the short one. */
+  const idle = createMemo(() => {
     const r = room();
-    if (!canvas || !r) return props.label;
+    if (!canvas || !r) return { label: props.label, badge: false };
     canvas.font = r.font;
-    return canvas.measureText(props.label).width <= r.width ? props.label : props.shortLabel;
-  };
+    const w = canvas.measureText(props.label).width;
+    if (props.badge && w + r.badge <= r.width) return { label: props.label, badge: true };
+    return { label: w <= r.width ? props.label : props.shortLabel, badge: false };
+  });
+  const idleLabel = () => idle().label;
+  const showBadge = () => !focused() && !props.chips.length && idle().badge;
+  const GAP = 4; // .omni-field's
   onMount(() => {
     const s = getComputedStyle(input);
     const pad = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight);
     const font = s.font;
-    const measure = () => setRoom({ width: input.clientWidth - pad, font });
+    const measure = () => {
+      const badge = props.badge ? probe.offsetWidth + GAP : 0;
+      setRoom({ width: input.clientWidth - pad + (untrack(showBadge) ? badge : 0), font, badge });
+    };
     const ro = new ResizeObserver(measure);
     ro.observe(input);
     void document.fonts?.ready.then(measure); // the serif may arrive after the first measure
@@ -167,6 +182,14 @@ export function Omnibox(props: {
             }
           }}
         />
+        <Show when={showBadge()}>
+          <span class="omni-badge" title={props.badgeTitle}>
+            {props.badge}
+          </span>
+        </Show>
+        <span class="omni-badge probe" ref={probe} aria-hidden="true">
+          {props.badge}
+        </span>
         <Show when={!focused() && !props.chips.length}>
           <kbd class="omni-kbd" aria-hidden="true">/</kbd>
         </Show>

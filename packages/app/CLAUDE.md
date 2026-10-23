@@ -10,7 +10,8 @@
   boundaries (one hit-testing container); across books they become one tagging per book (`index.byBook`), as one undo
   step (`store.paint/erase/eraseAll` take a list of intervals).
 - Top bar (must fit a 320px phone): menu button, location field (shows "Psalm 23"; click/`/` to type a ref; at rest
-  it is styled as a field with a magnifier, outline and `/` hint because a bare label didn't read as editable), sync
+  it is styled as a field with a magnifier, outline and `/` hint because a bare label didn't read as editable; the
+  translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): account (sign in,
@@ -58,6 +59,8 @@
   2026-10-19: the user found a tag used once shown twice) shown as text snippets: <= 40 words with up to 10 words of
   dimmed context clipped to the instance's verse(s); longer ones show 40 words and fade. Clicking one navigates
   (centered + flashed) and re-centers the panel on it. Pairs of a 3+ tag set are NOT shown yet.
+- **Location hash**: `#/<translation abbr>/<ref>` written by the app (`hashOf`); links may omit the translation
+  (`splitHash`/`findText` in `src/text.ts`; App waits for texts.json only when a link names one).
 - **Search** (`Search.tsx`; designed 2026-10-11): the top box is "go to or search". Typing suggests "Go to <ref>"
   (default on Enter when no chips, so plain navigation is unchanged), "<ref>: search within", matching tags
   (substring, prefix first) and book groups (`BOOK_GROUPS` in `packages/scripture/src/scopes.ts`: OT/NT, Law,
