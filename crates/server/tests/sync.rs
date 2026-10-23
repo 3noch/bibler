@@ -585,9 +585,15 @@ async fn ready_says_which_client_is_served_now() {
         c.recv().await
     };
     assert_eq!(ready().await["client"], "aaaa");
-    // A new client is put in place without restarting the server: the next connection says so.
+    let mut open = connect(&srv, Some(&cookie), None).await.unwrap();
+    open.send(json!({"type": "hello", "after": 0})).await;
+    assert_eq!(open.recv().await["client"], "aaaa");
+    // A new client is put in place without restarting the server: the next connection says so, and so does a
+    // socket that stayed open, when it pings.
     std::fs::write(&version, "bbbb\n").unwrap();
     assert_eq!(ready().await["client"], "bbbb");
+    open.send(json!({"type": "ping"})).await;
+    assert_eq!(open.recv().await, json!({"type": "pong", "client": "bbbb"}));
 }
 
 #[tokio::test]

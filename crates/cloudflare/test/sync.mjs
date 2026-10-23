@@ -44,8 +44,8 @@ const served = (await (await fetch(B + "/")).text()).match(/<meta name="build-cl
 assert.ok(served && first.client === served, "ready says which client is deployed (so open apps can update)");
 assert.equal((await (await fetch(B + "/client-version.txt")).text()).trim(), served, "the page and the file agree");
 await c2.ready;
-c1.ws.send('{"type":"ping"}'); // exact text: answered by the runtime (auto-response), not the object
-await c1.until((m) => m.type === "pong");
+c1.ws.send(JSON.stringify({ type: "ping" }));
+assert.equal((await c1.until((m) => m.type === "pong")).client, served, "a pong says which client is deployed too");
 const op = (o) => c1.ws.send(JSON.stringify({ type: "op", op: o }));
 op({ op_id: "o1", kind: "tag_create", id: "T1", name: "Grace", color: "#ff0000", now: 1 });
 op({ op_id: "o2", kind: "paint", tag: "T1", text_id: "kjv-1769-v2", start: G + 10, end: G + 20, new_id: "p1", now: 2 });

@@ -5,8 +5,8 @@
 //!                                                  older backup is noticed), and the ops it holds unconfirmed
 //!                                                  (only used for a reset)
 //!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
-//!         {"type":"ping"}                          at any time, exactly this text: answered `{"type":"pong"}`
-//!                                                  (the client checks its socket is still alive after resuming)
+//!         {"type":"ping"}                          at any time: answered with a pong (the client checks, after
+//!                                                  resuming, that its socket is alive and its own version current)
 //! server: {"type":"change","change":{seq,...}}     every change after `after`, then live, in seq order
 //!         {"type":"reset","seq":n,"last_op":..,"rows":[..],"changes":[],"applied":[op_id]}   instead of the
 //!                                                  replay when one can't be trusted or done (`space::needs_reset`:
@@ -19,16 +19,12 @@
 //!         {"type":"reject","op_id":..,"code":..,"message":..}   op refused for good (the client drops it); it had
 //!                                                  no effect. A storage failure is an `error` instead, so the op is
 //!                                                  re-sent after reconnecting
+//!         {"type":"pong","client":..}             the client version served now (as in `ready`)
 //!         {"type":"error","message":..}            then the server closes; the client reconnects with hello
 //! ```
 
 use ops::{Change, Op, Row};
 use serde::{Deserialize, Serialize};
-
-/// A heartbeat, matched as exact text (the Durable Object answers it with an auto-response, without waking).
-pub const PING: &str = r#"{"type":"ping"}"#;
-/// The answer to [`PING`].
-pub const PONG: &str = r#"{"type":"pong"}"#;
 
 /// Changes per replay query.
 pub const REPLAY_PAGE: usize = 500;
@@ -51,6 +47,7 @@ pub enum ClientMsg {
     Op {
         op: Op,
     },
+    Ping,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,6 +61,12 @@ pub enum ServerMsg<'a> {
     Ready {
         seq: u64,
         build: &'a crate::Build,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client: Option<&'a str>,
+    },
+    /// The answer to a ping: the client version served now, as in `Ready` (a socket that stays open while the
+    /// client is replaced would otherwise never hear of it).
+    Pong {
         #[serde(skip_serializing_if = "Option::is_none")]
         client: Option<&'a str>,
     },

@@ -4,7 +4,7 @@ use crate::hub::{Event, Hub};
 use crate::store::{Identity, Store};
 use crate::texts::Texts;
 use api::groups::Role;
-use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, PING, PONG, REPLAY_PAGE};
+use api::protocol::{ClientMsg, ServerMsg, MAX_FRAME, MAX_HELLO_PENDING, REPLAY_PAGE};
 use api::session::{random_hex, token_hash};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -142,6 +142,17 @@ async fn send(tx: &mut Tx, msg: &ServerMsg<'_>) -> bool {
     tx.send(Message::Text(msg.json().into())).await.is_ok()
 }
 
+/// The client version served now (`--static`'s `api::CLIENT_VERSION_FILE`, read each time, so a client replaced
+/// without a restart is noticed).
+async fn client_version(st: &AppState) -> Option<String> {
+    let path = st.client_version.as_ref()?;
+    tokio::fs::read_to_string(path).await.ok().and_then(|v| api::client_version(&v))
+}
+
+async fn pong(st: &AppState, tx: &mut Tx) -> bool {
+    send(tx, &ServerMsg::Pong { client: client_version(st).await.as_deref() }).await
+}
+
 /// Send the space's stored changes after `*last` (up to `until`, if given), advancing `*last`.
 async fn send_since(st: &Arc<AppState>, space: &str, tx: &mut Tx, last: &mut u64, until: Option<u64>) -> bool {
     loop {
@@ -211,18 +222,18 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     };
     let (mut last, last_op, mut pending) = loop {
         match rx.next().await {
-            Some(Ok(Message::Text(t))) if t.as_str() == PING => {
-                if tx.send(Message::Text(PONG.into())).await.is_err() {
+            Some(Ok(Message::Text(t))) => match serde_json::from_str::<ClientMsg>(&t) {
+                Ok(ClientMsg::Hello { after, last_op, pending }) => break (after, last_op, pending),
+                Ok(ClientMsg::Ping) => {
+                    if !pong(&st, &mut tx).await {
+                        return;
+                    }
+                }
+                _ => {
+                    let _ = send(&mut tx, &ServerMsg::Error { message: "expected hello" }).await;
                     return;
                 }
-            }
-            Some(Ok(Message::Text(t))) => {
-                if let Ok(ClientMsg::Hello { after, last_op, pending }) = serde_json::from_str::<ClientMsg>(&t) {
-                    break (after, last_op, pending);
-                }
-                let _ = send(&mut tx, &ServerMsg::Error { message: "expected hello" }).await;
-                return;
-            }
+            },
             Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
             _ => return,
         }
@@ -243,21 +254,13 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     }
-    let client = match &st.client_version {
-        Some(path) => tokio::fs::read_to_string(path).await.ok().and_then(|v| api::client_version(&v)),
-        None => None,
-    };
+    let client = client_version(&st).await;
     if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build(), client: client.as_deref() }).await {
         return;
     }
     loop {
         tokio::select! {
             msg = rx.next() => match msg {
-                Some(Ok(Message::Text(t))) if t.as_str() == PING => {
-                    if tx.send(Message::Text(PONG.into())).await.is_err() {
-                        return;
-                    }
-                }
                 Some(Ok(Message::Text(t))) => {
                     if !handle_op(&st, &space, &owner, role, &mut tx, &t).await {
                         return;
@@ -300,6 +303,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
 async fn handle_op(st: &Arc<AppState>, space: &str, owner: &str, role: Role, tx: &mut Tx, text: &str) -> bool {
     let op = match serde_json::from_str::<ClientMsg>(text) {
         Ok(ClientMsg::Op { op }) => op,
+        Ok(ClientMsg::Ping) => return pong(st, tx).await,
         Ok(ClientMsg::Hello { .. }) | Err(_) => {
             let _ = send(tx, &ServerMsg::Error { message: "expected an op" }).await;
             return false;

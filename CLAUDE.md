@@ -54,15 +54,17 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   server-only commit), and the same into `client-version.txt` beside it (`api::CLIENT_VERSION_FILE`) for the
   servers, so they never look inside HTML. Each `ready` carries the version the server serves now (the self-hosted
   server re-reads `--static`'s file per connection, so a client replaced without a restart is noticed; the
-  Durable Object reads its assets' once when it starts; none in dev). A deploy drops the sockets, so open apps hear it
-  on reconnecting; a phone may leave a dead socket looking open while suspended, so a page back after >= 30 s hidden
-  sends a `ping` (exact text, `api::protocol::PING`; the Durable Object answers by auto-response without waking)
-  and replaces the socket if no `pong` comes within 4 s (`connectForever`; a live socket has missed nothing). The
-  client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
+  Durable Object reads its assets' once when it starts, which is right because a deploy restarts it (assumed, not
+  checked against a real deploy); none in dev). `pong{client}` says it too: a page back after >= 30 s hidden sends
+  a `ping` (`connectForever`), since a socket that stayed open hears of no new client (self-hosted: replaced without
+  a restart), and a phone may leave a dead socket looking open while suspended: no `pong` within 4 s -> a new socket
+  (a live one has missed nothing). The offline-only build has no socket: it fetches `client-version.txt` on coming
+  back instead (`no-store`; the service worker leaves that file alone). The client (`Update.tsx`) then reloads by itself while hidden or within 10 s of coming back
   (unless a field is focused or a textarea has text), else shows "A new version is available" + Reload; it never
   auto-reloads twice for the same version (sessionStorage guard). Browser-checked on a throwaway server (hidden
-  auto-reload, the notice while typing, Reload; with faked visibility: a short absence does nothing, a live socket
-  answers the ping, a dead one is replaced and its `ready` reloads the page). Not yet tried on a real phone.
+  auto-reload, the notice while typing, Reload; with faked visibility: a short absence sends nothing, a live socket's
+  pong keeps it, a dead one is replaced, and a pong naming a client swapped on disk reloads the page). Not yet tried
+  on a real phone, nor the offline-only build's fetch.
 
 ## Dev environment and checks
 - Rust: `rust-toolchain.toml` = `stable` (+ rustfmt, clippy); verified on 1.99.0. `rustfmt.toml` = 120 cols.
@@ -256,7 +258,7 @@ Rust: `crates/normalize/src/lib.rs`).
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
 : `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build, client}` ->
-  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation. Lag -> `error` + reconnect.
+  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
   session/sync/logout.

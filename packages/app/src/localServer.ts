@@ -55,6 +55,7 @@ export function connectLocal(sync: SyncState, index: Promise<TextIndex>, onError
       reply({ type: "ready", seq: db.seq });
       return;
     }
+    if (m.type === "ping") return reply({ type: "pong" });
     const op = m.op;
     withLock(async () => {
       const bad = checkOp(await index, TEXT_ID, op);

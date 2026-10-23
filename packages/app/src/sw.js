@@ -7,7 +7,8 @@
 //                                            content-hashed files never change, so they are served cache-first.
 //                                            Not during activate: the page's requests wait while a worker that
 //                                            controls it is still activating, so a slow download stalled the app
-//   /api/*                                   never touched (sync goes over a WebSocket anyway)
+//   /api/*, client-version.txt               never touched (sync goes over a WebSocket anyway; the version file
+//                                            must say what is served now, never a cached answer)
 const VERSION = "__VERSION__";
 const SHELL_FILES = __SHELL__;
 const TEXT_ID = "__TEXT_ID__";
@@ -51,6 +52,7 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin || url.pathname.includes("/api/")) return;
+  if (url.pathname.endsWith("/client-version.txt")) return;
   if (req.mode === "navigate") e.respondWith(networkFirst(req, SHELL, "./"));
   else if (HASHED.test(url.pathname)) e.respondWith(cacheFirst(req, url.pathname.includes("/text/") ? TEXT : SHELL));
   else e.respondWith(networkFirst(req, url.pathname.includes("/text/") ? TEXT : SHELL));

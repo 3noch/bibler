@@ -16,15 +16,14 @@ import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row
 /** `hello.last_op`: the op of the client's change at `after`, so a server whose space went back (restored from an
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
-export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op };
-/** A heartbeat and its answer, sent as exactly this text (`api::protocol::PING`/`PONG`), outside `ClientMsg`. */
-export const PING = '{"type":"ping"}';
-export const PONG = '{"type":"pong"}';
+export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op } | { type: "ping" };
 /** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
 export type Build = { commit: string; committed_at: string };
 export type ServerMsg =
   | { type: "change"; change: Change }
   | { type: "ready"; seq: number; build?: Build; client?: string }
+  /** The answer to a ping (handled by the socket's owner, not SyncState): the client version served now. */
+  | { type: "pong"; client?: string }
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }
@@ -235,6 +234,8 @@ export class SyncState {
         return true;
       case "error":
         return false;
+      case "pong":
+        return true; // the socket's owner reads it (the served client version)
       case "reset": {
         this.base = new MemRows(msg.rows, msg.changes);
         if (msg.seq < this.seq) this.wentBack = true;

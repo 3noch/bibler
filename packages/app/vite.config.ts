@@ -10,7 +10,8 @@ import { TEXT_ID } from "./src/textId.ts";
  * is also the client's: it changes only when the client does (file names are content hashes), never for a commit
  * that changes only the server. The page reads its own from `<meta name="build-client">` in index.html; the servers
  * read the one they serve from `client-version.txt` (`api::CLIENT_VERSION_FILE`, so they never look inside HTML) and
- * send it in each sync `ready`, so an open app knows when a new client is out. */
+ * send it in each sync `ready` and `pong` (the offline-only build fetches the file), so an open app knows when a new
+ * client is out. */
 function serviceWorker(): Plugin {
   return {
     name: "service-worker",
