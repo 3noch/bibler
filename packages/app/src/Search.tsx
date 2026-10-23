@@ -19,8 +19,10 @@ const PAGE = 50;
 export function Omnibox(props: {
   text: Text;
   store: TagStore;
-  /** Where the reader is ("Psalm 23"), shown when idle. */
+  /** Where the reader is ("Psalm 23"), shown when idle; `shortLabel` ("Ps 23") when that doesn't fit, so a long
+   * book name never hides the chapter on a phone. */
   label: string;
+  shortLabel: string;
   /** Book/chapter context for bare references like "3:16". */
   ctx: { book: number; chapter: number };
   chips: Chip[];
@@ -33,6 +35,25 @@ export function Omnibox(props: {
   const [sel, setSel] = createSignal(0);
   const [error, setError] = createSignal<string | null>(null);
   let input!: HTMLInputElement;
+  // The idle label's room and font (read at mount, while idle: focus changes the font), to pick the short label.
+  const [room, setRoom] = createSignal<{ width: number; font: string } | null>(null);
+  const canvas = document.createElement("canvas").getContext("2d");
+  const idleLabel = () => {
+    const r = room();
+    if (!canvas || !r) return props.label;
+    canvas.font = r.font;
+    return canvas.measureText(props.label).width <= r.width ? props.label : props.shortLabel;
+  };
+  onMount(() => {
+    const s = getComputedStyle(input);
+    const pad = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight);
+    const font = s.font;
+    const measure = () => setRoom({ width: input.clientWidth - pad, font });
+    const ro = new ResizeObserver(measure);
+    ro.observe(input);
+    void document.fonts?.ready.then(measure); // the serif may arrive after the first measure
+    onCleanup(() => ro.disconnect());
+  });
 
   const chipLabel = (c: Chip) => (c.kind === "tag" ? (props.store.tagById().get(c.id)?.name ?? "?") : `in ${c.label}`);
 
@@ -116,7 +137,8 @@ export function Omnibox(props: {
         </For>
         <input
           ref={input}
-          value={focused() || props.chips.length ? value() : props.label}
+          value={focused() || props.chips.length ? value() : idleLabel()}
+          title={focused() || props.chips.length ? undefined : props.label}
           aria-label="Go to a passage or search tags"
           placeholder={props.chips.length ? "Add a tag or range…" : "Go to or search…"}
           autocomplete="off"

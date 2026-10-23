@@ -191,6 +191,7 @@ function Main(props: { text: Text; store: TagStore }) {
           text={props.text}
           store={store}
           label={chapterLabel(here())}
+          shortLabel={chapterLabel(here(), "short")}
           ctx={{ book: index.bookOfChapter[here()]!, chapter: here() - index.bookFirstChapter[index.bookOfChapter[here()]!]! + 1 }}
           chips={chips()}
           onChips={(c) => {
