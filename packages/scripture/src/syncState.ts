@@ -17,9 +17,13 @@ import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row
 /** `hello.last_op`: the op of the client's change at `after`, so a server whose space went back (restored from an
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
-export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[]; history?: boolean } | { type: "op"; op: Op } | { type: "ping" } | { type: "history"; entries: HistoryEntry[] };
+export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[]; history?: boolean; protocol?: number } | { type: "op"; op: Op } | { type: "ping" } | { type: "history"; entries: HistoryEntry[] };
 /** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
 export type Build = { commit: string; committed_at: string };
+/** This client's sync protocol version (`hello.protocol`): a server below which it's too old says `outdated`.
+ *  Raise it with a change that clients from before it can't live with (see crates/api/src/protocol.rs). */
+export const PROTOCOL = 1;
+
 export type ServerMsg =
   | { type: "change"; change: Change }
   | { type: "ready"; seq: number; build?: Build; client?: string }
@@ -31,6 +35,8 @@ export type ServerMsg =
   | { type: "ack"; op_id: string; seq: number }
   | { type: "reject"; op_id: string; code: string; message: string }
   | { type: "error"; message: string }
+  /** This client's protocol is too old (handled by the socket's owner, not SyncState): the client version served. */
+  | { type: "outdated"; client?: string }
   /** Replace the confirmed state wholesale (the log can't be replayed: the server pruned it, or its space is behind
    *  this client or has a different change at `after`, or the browser-local store in offline-only builds). `applied` = which of the hello's `pending` ops are
    *  already in `rows` (dropped silently); the rest are rebased onto it. Undo steps whose changes aren't in
@@ -192,7 +198,7 @@ export class SyncState {
     this.send = send;
     this.status = "syncing";
     this.helloPending = new Set(this.pending.map((o) => o.op_id));
-    send({ type: "hello", after: this.seq, last_op: this.lastOp, pending: [...this.helloPending], history: true });
+    send({ type: "hello", after: this.seq, last_op: this.lastOp, pending: [...this.helloPending], history: true, protocol: PROTOCOL });
     this.changed();
   }
 
@@ -240,6 +246,7 @@ export class SyncState {
         return false;
       case "pong":
       case "history":
+      case "outdated":
         return true; // the socket's owner reads them (the served client version; reading history)
       case "reset": {
         this.base = new MemRows(msg.rows, msg.changes);

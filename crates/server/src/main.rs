@@ -73,6 +73,7 @@ fn parse_args() -> Result<Args, String> {
             google: google()?,
             public_url,
             retention_ms,
+            min_client_protocol: api::protocol::MIN_CLIENT_PROTOCOL,
         },
         tls,
         http_redirect: redirect,

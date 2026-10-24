@@ -303,7 +303,16 @@ Rust: `crates/normalize/src/lib.rs`).
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
 : `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build, client}` ->
-  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`; `history{entries}` both ways (reading history; only if `hello.history`). Clients ignore message types they don't know, so a server may add one. Lag -> `error` + reconnect.
+  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`; `history{entries}` both ways (reading history; only if `hello.history`). Clients ignore message types they don't know, so a server may add one; a change old clients can't live
+  with raises `api::protocol::MIN_CLIENT_PROTOCOL` (now 0; the client sends `hello.protocol` = `PROTOCOL` in
+  syncState.ts, 1): older clients get `outdated{client}` and stop connecting, then reload (or show "Reload to sync").
+  **Clients don't hammer** (2026-10-24, after an old-client loop nearly used QA's daily Worker limit): reconnects back
+  off with jitter (1 s doubling to 30 s), reset only by a connection that lasted 30 s; after 5 short connections in
+  a row the client stops and shows "Not syncing · Retry" (also retried on coming back to the page after 30 s); the
+  group list is refetched on reconnect at most once a minute unless the server sent `error` or refused the socket.
+  Browser-checked (flapping, Retry, outdated with and without auto-reload). Not done: server-side rate limits (a WAF
+  rule on `/api/*` per IP once production has its domain, as blocked requests then don't reach the Worker; Workers'
+  rate-limit binding per owner for sockets, ops and anonymous sessions). Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
   session/sync/logout.

@@ -28,6 +28,7 @@ fn app() -> axum::Router {
         google: None,
         public_url: None,
         retention_ms: space::RETENTION_MS,
+        min_client_protocol: api::protocol::MIN_CLIENT_PROTOCOL,
     })
     .unwrap()
 }
@@ -94,6 +95,7 @@ async fn dev_mode_without_static_dir() {
         google: None,
         public_url: None,
         retention_ms: space::RETENTION_MS,
+        min_client_protocol: api::protocol::MIN_CLIENT_PROTOCOL,
     })
     .unwrap();
     let (status, _, body) = get(&app, "/", false).await;

@@ -40,6 +40,7 @@ fn config(name: &str) -> Config {
         google: None,
         public_url: None,
         retention_ms: space::RETENTION_MS,
+        min_client_protocol: api::protocol::MIN_CLIENT_PROTOCOL,
     }
 }
 
@@ -595,6 +596,24 @@ async fn ready_says_which_client_is_served_now() {
     assert_eq!(ready().await["client"], "bbbb");
     open.send(json!({"type": "ping"})).await;
     assert_eq!(open.recv().await, json!({"type": "pong", "client": "bbbb"}));
+}
+
+#[tokio::test]
+async fn a_client_below_the_minimum_protocol_is_told_it_is_outdated() {
+    let mut cfg = config("outdated");
+    cfg.min_client_protocol = 2;
+    let srv = start(&cfg).await;
+    let cookie = session(&srv).await;
+    for hello in [json!({"type": "hello", "after": 0}), json!({"type": "hello", "after": 0, "protocol": 1})] {
+        let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+        c.send(hello).await;
+        assert_eq!(c.recv().await, json!({"type": "outdated"}));
+        let end = tokio::time::timeout(Duration::from_secs(3), c.0.next()).await.expect("timed out");
+        assert!(matches!(end, None | Some(Ok(Message::Close(_)) | Err(_))), "then closed: {end:?}");
+    }
+    let mut c = connect(&srv, Some(&cookie), None).await.unwrap();
+    c.send(json!({"type": "hello", "after": 0, "protocol": 2})).await;
+    assert_eq!(c.recv().await["type"], "ready");
 }
 
 #[tokio::test]

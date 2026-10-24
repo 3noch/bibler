@@ -68,6 +68,7 @@ async fn start(name: &str) -> Srv {
         google: Some(google),
         public_url: None,
         retention_ms: space::RETENTION_MS,
+        min_client_protocol: api::protocol::MIN_CLIENT_PROTOCOL,
     };
     let app = router(&cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

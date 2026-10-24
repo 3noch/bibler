@@ -71,6 +71,8 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .sync::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #5aa469; }
 .sync[data-status="syncing"]::before { background: #d4a72c; }
 .sync[data-status="offline"]::before { background: var(--faint); }
+.sync.stalled { border: none; background: none; font: inherit; font-size: 0.8rem; color: var(--muted); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.sync.stalled::before { background: #c0563f; }
 
 /* ---------------------------------------------------------------- reading */
 .page {

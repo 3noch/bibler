@@ -171,8 +171,14 @@ interface Opened {
   keyOf: (k: string) => string;
   /** Replace the reading history (`urgent`: send it now, e.g. a jump, rather than throttled). */
   setHistory: (entries: HistoryEntry[], urgent: boolean) => void;
+  /** Connect again after the connection gave up (`stalled`). */
+  retry: () => void;
   close: () => void;
 }
+
+/** The group list is fetched again on a reconnect at most this often, unless the server may have changed our role
+ *  (`connectForever`'s `suspect`). */
+const GROUPS_REFRESH_MS = 60_000;
 
 /** `textIndex` (a text's index, or null if there is no such text) checks ops in the offline-only build (its
  *  in-browser server does what the server would). */
@@ -212,6 +218,8 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
    *  no request of its own). */
   const [serverBuild, setServerBuild] = createSignal<Build | null>(null);
   const [serverClient, setServerClient] = createSignal<string | null>(null);
+  /** The open space's connection stopped trying by itself (see `connectForever`). */
+  const [stalled, setStalled] = createSignal<Stall | null>(null);
   const [members, setMembers] = createSignal<Member[]>([]);
   /** The open space's reading history (gone entries included: see `liveHistory`). */
   const [historyList, setHistoryList] = createSignal<HistoryEntry[]>([]);
@@ -274,7 +282,7 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     const sync = new SyncState(owner, ulid, Date.now, snap);
     const outbox = read<Outbox>(localStorage, keyOf(OUTBOX_KEY));
     if (outbox?.owner === owner) sync.adopt(outbox.ops);
-    const opened: Opened = { space, owner, sync, keyOf, setHistory: () => {}, close: () => {} };
+    const opened: Opened = { space, owner, sync, keyOf, setHistory: () => {}, retry: () => {}, close: () => {} };
     sync.onNotice(notify);
     sync.onChange(() => {
       setVersion((v) => v + 1);
@@ -362,18 +370,24 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     publishHistory();
 
     const connection = LOCAL_ONLY
-      ? (connectLocal(sync, textIndex, notify), { send: () => false, close: () => {} })
+      ? (connectLocal(sync, textIndex, notify), { send: () => false, retry: () => {}, close: () => {} })
       : connectForever(
           sync,
           space,
-          () => void refreshGroups(),
+          (suspect) => {
+            if (suspect || performance.now() - groupsAt >= GROUPS_REFRESH_MS) void refreshGroups();
+          },
           (m) => {
             if (m.build) setServerBuild(m.build);
             if (m.client) setServerClient(m.client);
           },
           () => (reconciled = false),
           onHistory,
+          (why) => {
+            if (!closed) setStalled(why);
+          },
         );
+    opened.retry = connection.retry;
     opened.close = () => {
       flushHistory();
       closed = true;
@@ -397,8 +411,11 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     storageSet(hiddenKeyOf(current().space), next.size ? JSON.stringify([...next]) : null);
   };
 
+  /** When the group list was last fetched. */
+  let groupsAt = -Infinity;
   const refreshGroups = async () => {
     if (LOCAL_ONLY) return;
+    groupsAt = performance.now();
     try {
       const list = (await groupsApi<{ groups: GroupSummary[] }>("GET", "/groups")).groups;
       setGroupList(list);
@@ -440,6 +457,7 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     storageSet(SPACE_KEY, id);
     batch(() => {
       setRole(roleIn(id));
+      setStalled(null);
       setMembers([]);
       setHiddenSet(loadHidden(id));
       setCurrent(next);
@@ -592,6 +610,9 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     serverBuild,
     /** The client version the server serves now (`<meta name="build-client">`; none in dev). */
     serverClient,
+    /** Why the connection stopped trying by itself, or null (see `connectForever`). */
+    stalled,
+    retry: () => current().retry(),
     /** The groups you belong to. */
     groups: groupList,
     /** The open group's members (empty in your own space). */
@@ -681,27 +702,43 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
  *  says the client version served now, and a new socket unless the pong comes within PONG_MS. */
 const RESUME_CHECK_MS = 30_000;
 const PONG_MS = 4000;
-/** A connection that lasted this long resets the reconnect backoff. Not `ready` itself: a socket that a client
- *  drops right after `ready` (a message it can't handle) would otherwise reconnect every second forever. */
+/** A connection that lasted this long resets the reconnect backoff and the count of short ones. Not `ready` itself:
+ *  a socket that a client drops right after `ready` (a message it can't handle) would otherwise reconnect every
+ *  second forever. */
 const STABLE_MS = 30_000;
+const MAX_DELAY_MS = 30_000;
+/** Connections in a row that opened but closed within STABLE_MS before the client gives up (a server or client bug,
+ *  not a bad network: a socket that can't open at all just backs off). The user can retry. */
+const MAX_SHORT = 5;
 
-/** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online or the page
- *  comes back to a dead socket (a live one has missed nothing). `onOpen` runs on each connection (a group refreshes
- *  the role, which may have changed); `onServer` gets each `ready` and `pong` (the server's build, and the client
- *  version served now: `Update.tsx`); `onHistory` gets `history` messages, `onReady` runs once each connection's
- *  replay is done. Returns `send` (a message, once ready; false if not sent) and `close` (for good: switching
- *  spaces). */
+/** Why a connection stopped trying by itself: it kept closing soon after opening, or the server says this client is
+ *  too old (`outdated`: it should reload). */
+export type Stall = "flapping" | "outdated";
+
+/** Keep a WebSocket open: reconnect with backoff (jittered, so a deploy's dropped sockets don't all come back in
+ *  the same second), and immediately when the browser comes back online or the page comes back to a dead socket (a
+ *  live one has missed nothing). It stops trying (`onStall`) after MAX_SHORT short connections in a row or an
+ *  `outdated`, until `retry` (or, for flapping, coming back to the page after a while).
+ *  `onOpen` runs on each connection (a group refreshes the role, which may have changed: `suspect` after the server
+ *  said `error`, e.g. a kick, or refused the socket); `onServer` gets each `ready`, `pong` and `outdated` (the
+ *  server's build, and the client version served now: `Update.tsx`); `onHistory` gets `history` messages, `onReady`
+ *  runs once each connection's replay is done. Returns `send` (a message, once ready; false if not sent), `retry`
+ *  and `close` (for good: switching spaces). */
 function connectForever(
   sync: SyncState,
   space: string | null,
-  onOpen: () => void,
+  onOpen: (suspect: boolean) => void,
   onServer: (m: { build?: Build; client?: string }) => void,
   onReady: () => void,
   onHistory: (entries: HistoryEntry[]) => void,
-): { send: (m: ClientMsg) => boolean; close: () => void } {
+  onStall: (why: Stall | null) => void,
+): { send: (m: ClientMsg) => boolean; retry: () => void; close: () => void } {
   let delay = 1000;
-  /** When the current socket's replay was done. */
-  let readyAt: number | null = null;
+  /** Connections in a row that opened and closed within STABLE_MS. */
+  let short = 0;
+  let stalled: Stall | null = null;
+  /** The server said `error` on this socket (it may have kicked us). */
+  let suspect = false;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
   let closed = false;
@@ -709,18 +746,26 @@ function connectForever(
   let pongTimer: number | undefined;
   /** The current socket's replay is done (messages other than hello may go). */
   let ready = false;
+  const stall = (why: Stall) => {
+    stalled = why;
+    clearTimeout(timer);
+    onStall(why);
+  };
   const open = () => {
     clearTimeout(timer);
-    if (ws || closed) return;
+    if (ws || closed || stalled) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const query = space ? `?space=${encodeURIComponent(space)}` : "";
     const sock = new WebSocket(`${proto}://${location.host}/api/sync${query}`);
     ws = sock;
     ready = false;
+    let openedAt: number | null = null;
     sock.onopen = () => {
       if (closed || ws !== sock) return sock.close();
+      openedAt = performance.now();
       sync.connected((m) => sock.send(JSON.stringify(m)));
-      onOpen();
+      onOpen(suspect);
+      suspect = false;
     };
     sock.onmessage = (e) => {
       if (closed || ws !== sock) return;
@@ -730,10 +775,13 @@ function connectForever(
         return onServer(msg);
       }
       if (msg.type === "history") return onHistory(msg.entries);
-      if (msg.type === "ready") {
-        readyAt = performance.now();
+      if (msg.type === "outdated") {
         onServer(msg);
+        stall("outdated");
+        return sock.close();
       }
+      if (msg.type === "error") suspect = true;
+      if (msg.type === "ready") onServer(msg);
       if (!sync.receive(msg)) return sock.close();
       if (msg.type === "ready") {
         ready = true;
@@ -746,12 +794,18 @@ function connectForever(
       ready = false;
       clearTimeout(pongTimer);
       if (closed) return;
-      if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
       sync.disconnected();
-      if (readyAt !== null && performance.now() - readyAt >= STABLE_MS) delay = 1000;
-      readyAt = null;
-      timer = window.setTimeout(open, delay);
-      delay = Math.min(delay * 2, 30_000);
+      if (stalled) return;
+      if (openedAt === null) {
+        if (space && !e.wasClean) onOpen(true); // refused? (removed from the group)
+      } else if (performance.now() - openedAt >= STABLE_MS) {
+        short = 0;
+        delay = 1000;
+      } else if (++short >= MAX_SHORT) {
+        return stall("flapping");
+      }
+      timer = window.setTimeout(open, delay * (0.5 + Math.random() / 2));
+      delay = Math.min(delay * 2, MAX_DELAY_MS);
     };
   };
   /** Give up on the current socket (its close may never come) and connect again now. */
@@ -767,6 +821,13 @@ function connectForever(
     delay = 1000;
     open();
   };
+  const retry = () => {
+    if (closed) return;
+    stalled = null;
+    short = 0;
+    onStall(null);
+    replace();
+  };
   const online = () => {
     delay = 1000;
     if (!ws) open();
@@ -779,6 +840,8 @@ function connectForever(
     const away = hiddenAt === null ? 0 : performance.now() - hiddenAt;
     hiddenAt = null;
     if (closed || away < RESUME_CHECK_MS) return;
+    if (stalled === "flapping") return retry(); // one more round, now that the user is back
+    if (stalled) return;
     if (ws?.readyState !== WebSocket.OPEN) return replace();
     ws.send(JSON.stringify({ type: "ping" } satisfies ClientMsg));
     clearTimeout(pongTimer);
@@ -800,5 +863,5 @@ function connectForever(
     document.removeEventListener("visibilitychange", onVisibility);
     ws?.close();
   };
-  return { send, close };
+  return { send, retry, close };
 }

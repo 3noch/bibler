@@ -563,12 +563,34 @@ function SyncDot(props: { store: TagStore }) {
         return `Offline — ${n ? `${n} change${n === 1 ? "" : "s"} saved on this device` : "changes are saved on this device"}`;
     }
   };
+  const stalled = () => (props.store.mode === "local" ? null : props.store.stalled());
   return (
-    <span class="sync" data-status={props.store.status()} title={title()} aria-label={title()}>
-      <Show when={props.store.status() === "offline"}>
-        <span class="sync-label">Offline{props.store.pendingCount() ? ` · ${props.store.pendingCount()}` : ""}</span>
-      </Show>
-    </span>
+    <Show
+      when={stalled()}
+      fallback={
+        <span class="sync" data-status={props.store.status()} title={title()} aria-label={title()}>
+          <Show when={props.store.status() === "offline"}>
+            <span class="sync-label">Offline{props.store.pendingCount() ? ` · ${props.store.pendingCount()}` : ""}</span>
+          </Show>
+        </span>
+      }
+    >
+      {(why) => (
+        // The connection gave up by itself (store.ts `connectForever`): changes stay on this device meanwhile.
+        <button
+          class="sync stalled"
+          data-status="offline"
+          title={
+            why() === "outdated"
+              ? "This version of the app is out of date. Reload to sync again; your changes are saved on this device."
+              : "The connection kept dropping, so it stopped trying. Your changes are saved on this device."
+          }
+          onClick={() => (why() === "outdated" ? location.reload() : props.store.retry())}
+        >
+          <span class="sync-label">{why() === "outdated" ? "Reload to sync" : "Not syncing · Retry"}</span>
+        </button>
+      )}
+    </Show>
   );
 }
 

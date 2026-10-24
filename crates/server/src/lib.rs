@@ -39,6 +39,8 @@ pub struct Config {
     /// How long changes stay replayable and undoable (`space::RETENTION_MS`); older ones are pruned a little after
     /// each op.
     pub retention_ms: i64,
+    /// Clients below this protocol version are told to reload (`api::protocol::MIN_CLIENT_PROTOCOL`).
+    pub min_client_protocol: u32,
 }
 
 /// Build the app: open the store, load the texts, wire the routes.
@@ -62,6 +64,7 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         google: cfg.google.clone(),
         public_url: cfg.public_url.clone(),
         client_version: cfg.static_dir.as_ref().map(|d| d.join(api::CLIENT_VERSION_FILE)),
+        min_client_protocol: cfg.min_client_protocol,
     });
     let api = Router::new()
         .route("/health", get(health))

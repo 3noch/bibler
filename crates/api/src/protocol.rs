@@ -1,9 +1,10 @@
 //! The sync WebSocket (`GET /api/sync`), JSON text frames:
 //! ```text
-//! client: {"type":"hello","after":seq,"last_op":op_id,"pending":[op_id]}  first message: the last seq the
-//!                                                  client has and that change's op (so a space restored from an
-//!                                                  older backup is noticed), and the ops it holds unconfirmed
-//!                                                  (only used for a reset)
+//! client: {"type":"hello","after":seq,"last_op":op_id,"pending":[op_id],"history":true,"protocol":n}  first
+//!                                                  message: the last seq the client has and that change's op (so a
+//!                                                  space restored from an older backup is noticed), the ops it
+//!                                                  holds unconfirmed (only used for a reset), whether it takes
+//!                                                  `history` messages, and its protocol version
 //!         {"type":"op","op":{op_id,kind,...}}      an ops::Op (idempotent by op_id)
 //!         {"type":"history","entries":[..]}      reading history entries that changed (signed-in members; any
 //!                                                  role), merged into the sender's (`space::put_history`)
@@ -24,14 +25,23 @@
 //!         {"type":"history","entries":[..]}      the member's whole history after `ready` (signed in only), then
 //!                                                  what their other devices change
 //!         {"type":"pong","client":..}             the client version served now (as in `ready`)
+//!         {"type":"outdated","client":..}         instead of anything else, if `protocol` is below
+//!                                                  [`MIN_CLIENT_PROTOCOL`]; then the server closes. The client stops
+//!                                                  connecting and reloads (or offers to)
 //!         {"type":"error","message":..}            then the server closes; the client reconnects with hello
 //! ```
+//! Clients ignore message types they don't know, so a new one needs no new protocol version; a change old clients
+//! can't live with does (raise [`MIN_CLIENT_PROTOCOL`] to the version that copes, so older ones reload).
 
 use ops::{Change, Op, Row};
 use serde::{Deserialize, Serialize};
 
 /// A ping as clients send it: the Durable Object's auto-response matches this exact text.
 pub const PING: &str = r#"{"type":"ping"}"#;
+
+/// Clients that say a lower `hello.protocol` (absent = 0: every client before protocol versions) are told
+/// they're outdated. Servers may be configured higher (tests).
+pub const MIN_CLIENT_PROTOCOL: u32 = 0;
 
 /// History entries considered per message.
 pub const MAX_HISTORY_MSG: usize = 100;
@@ -70,6 +80,8 @@ pub enum ClientMsg {
         /// dropped the socket and reconnected in a loop, so they're sent only to clients that ask.
         #[serde(default)]
         history: bool,
+        #[serde(default)]
+        protocol: u32,
     },
     Op {
         op: Op,
@@ -120,6 +132,11 @@ pub enum ServerMsg<'a> {
         op_id: &'a str,
         code: &'a str,
         message: String,
+    },
+    /// The client's protocol is too old (`MIN_CLIENT_PROTOCOL`): the client version served now, as in `Ready`.
+    Outdated {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client: Option<&'a str>,
     },
     Error {
         message: &'a str,

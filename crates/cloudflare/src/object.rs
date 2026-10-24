@@ -44,6 +44,9 @@ pub struct Space {
     texts: Rc<RefCell<Texts>>,
     /// How long changes stay replayable: `space::RETENTION_MS`, or the `RETENTION_MS` var (tests).
     retention_ms: i64,
+    /// Clients below this protocol version get `outdated`: `api::protocol::MIN_CLIENT_PROTOCOL`, or the
+    /// `MIN_CLIENT_PROTOCOL` var (tests).
+    min_client_protocol: u32,
 }
 
 /// Per-socket state, kept across hibernation. (Independent flags, so not an enum.)
@@ -98,7 +101,12 @@ impl DurableObject for Space {
             Ok(pair) => state.set_websocket_auto_response(&pair),
             Err(e) => worker::console_error!("ping auto-response: {e:?}"),
         }
-        Space { state, env, db, created, texts, retention_ms }
+        let min_client_protocol = env
+            .var("MIN_CLIENT_PROTOCOL")
+            .ok()
+            .and_then(|v| v.to_string().parse().ok())
+            .unwrap_or(api::protocol::MIN_CLIENT_PROTOCOL);
+        Space { state, env, db, created, texts, retention_ms, min_client_protocol }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
@@ -192,7 +200,11 @@ impl DurableObject for Space {
             return close(&ws, "message too large");
         }
         match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
-            (false, Ok(ClientMsg::Hello { after, last_op, mut pending, history })) => {
+            (false, Ok(ClientMsg::Hello { protocol, .. })) if protocol < self.min_client_protocol => {
+                ws.send_with_str(ServerMsg::Outdated { client: client() }.json())?;
+                ws.close(Some(1000), Some("outdated"))
+            }
+            (false, Ok(ClientMsg::Hello { after, last_op, mut pending, history, .. })) => {
                 let mut after = after;
                 let created = self.created.get();
                 // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead. An empty

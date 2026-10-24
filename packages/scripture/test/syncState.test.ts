@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { effect, MemRows, OpError, type Change, type OpIntent, type Row } from "../src/ops.ts";
-import { SyncState, type ClientMsg, type ServerMsg } from "../src/syncState.ts";
+import { PROTOCOL, SyncState, type ClientMsg, type ServerMsg } from "../src/syncState.ts";
 
 const K = "kjv-1769-v1";
 
@@ -414,7 +414,7 @@ test("sync: a client behind the retention window gets a reset; its already-appli
   assert.equal(a.pending.length, 1);
   assert.equal(a.undo.length, 2);
   const again = server.connect(a);
-  assert.deepEqual(again.up[0], { type: "hello", after: 1, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true });
+  assert.deepEqual(again.up[0], { type: "hello", after: 1, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true, protocol: PROTOCOL });
   again.flush();
   converged(server, a);
   assert.deepEqual(notices, [], "the tag already exists because the op was applied, not because of a conflict");
@@ -488,7 +488,7 @@ test("sync: a client ahead of a space restored from an older backup is reset to 
   cb.flush();
   a.submit([createTag("W", "Joy")]); // offline meanwhile
   const again = server.connect(a);
-  assert.deepEqual(again.up[0], { type: "hello", after: 3, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true });
+  assert.deepEqual(again.up[0], { type: "hello", after: 3, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true, protocol: PROTOCOL });
   again.flush();
   cb.flush();
   converged(server, a, b);

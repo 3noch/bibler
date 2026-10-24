@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end tests of the Cloudflare deployment: starts `wrangler dev` on 127.0.0.1 with throwaway state and a
 # fake Google, runs lazy.mjs (first: it counts the Durable Objects that stored anything), sync.mjs, auth.mjs and
-# groups.mjs against it; then restarts it with no retention (every change but the newest is pruned) for
+# groups.mjs against it; then restarts it with no retention (every change but the newest is pruned) and a minimum client protocol of 2 for
 # retention.mjs. Run via `make cloudflare-test` (assets built first).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,5 +36,5 @@ node test/sync.mjs "http://127.0.0.1:$PORT"
 node test/auth.mjs "http://127.0.0.1:$PORT" "$FAKE"
 node test/groups.mjs "http://127.0.0.1:$PORT"
 stop
-serve --var RETENTION_MS:0
+serve --var RETENTION_MS:0 --var MIN_CLIENT_PROTOCOL:2
 node test/retention.mjs "http://127.0.0.1:$PORT"

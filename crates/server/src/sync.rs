@@ -29,6 +29,8 @@ pub struct AppState {
     /// The client's `api::CLIENT_VERSION_FILE` (in `--static`), read at each `ready`, so replacing the client
     /// without a restart is noticed too.
     pub client_version: Option<std::path::PathBuf>,
+    /// Clients below this protocol version get `outdated` (`api::protocol::MIN_CLIENT_PROTOCOL`).
+    pub min_client_protocol: u32,
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -137,6 +139,7 @@ pub async fn sync(
 }
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
+type Rx = futures_util::stream::SplitStream<WebSocket>;
 
 async fn send(tx: &mut Tx, msg: &ServerMsg<'_>) -> bool {
     tx.send(Message::Text(msg.json().into())).await.is_ok()
@@ -239,6 +242,44 @@ async fn reset_if_needed(
     }
 }
 
+/// What a socket's `hello` said.
+struct Hello {
+    after: u64,
+    last_op: Option<String>,
+    pending: Vec<String>,
+    history: bool,
+}
+
+/// Wait for the socket's `hello`, answering pings meanwhile. `None`: the socket should close (it said something
+/// else, went away, or is too old: then it was told `outdated`).
+async fn hello(st: &AppState, rx: &mut Rx, tx: &mut Tx) -> Option<Hello> {
+    loop {
+        match rx.next().await {
+            Some(Ok(Message::Text(t))) => match serde_json::from_str::<ClientMsg>(&t) {
+                Ok(ClientMsg::Hello { protocol, .. }) if protocol < st.min_client_protocol => {
+                    let client = client_version(st).await;
+                    let _ = send(tx, &ServerMsg::Outdated { client: client.as_deref() }).await;
+                    return None;
+                }
+                Ok(ClientMsg::Hello { after, last_op, pending, history, .. }) => {
+                    return Some(Hello { after, last_op, pending, history });
+                }
+                Ok(ClientMsg::Ping) => {
+                    if !pong(st, tx).await {
+                        return None;
+                    }
+                }
+                _ => {
+                    let _ = send(tx, &ServerMsg::Error { message: "expected hello" }).await;
+                    return None;
+                }
+            },
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            _ => return None,
+        }
+    }
+}
+
 async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: String) {
     let (mut tx, mut rx) = socket.split();
     // Subscribe before replaying, so nothing committed in between is missed (duplicates are skipped by seq).
@@ -256,23 +297,10 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     };
-    let (mut last, last_op, mut pending, wants_history) = loop {
-        match rx.next().await {
-            Some(Ok(Message::Text(t))) => match serde_json::from_str::<ClientMsg>(&t) {
-                Ok(ClientMsg::Hello { after, last_op, pending, history }) => break (after, last_op, pending, history),
-                Ok(ClientMsg::Ping) => {
-                    if !pong(&st, &mut tx).await {
-                        return;
-                    }
-                }
-                _ => {
-                    let _ = send(&mut tx, &ServerMsg::Error { message: "expected hello" }).await;
-                    return;
-                }
-            },
-            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-            _ => return,
-        }
+    let Some(Hello { after: mut last, last_op, mut pending, history: wants_history }) =
+        hello(&st, &mut rx, &mut tx).await
+    else {
+        return;
     };
     pending.truncate(MAX_HELLO_PENDING);
     if !reset_if_needed(&st, &space, &mut tx, &mut last, last_op, &pending).await {

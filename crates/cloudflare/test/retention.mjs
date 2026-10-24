@@ -1,6 +1,7 @@
 // Retention under wrangler dev with RETENTION_MS=0 (each op prunes every older change): a client too far behind
 // gets a reset, a re-sent pruned op is still a duplicate, and replay from the pruning point still works. Also a
-// client ahead of its space (restored from a backup) gets a reset.
+// client ahead of its space (restored from a backup) gets a reset. Run with MIN_CLIENT_PROTOCOL=2: an older client
+// is told it's outdated (the others say protocol 2).
 import assert from "node:assert/strict";
 const B = process.argv[2];
 const G = 18 * 2 ** 24 + 8 * 2 ** 16 + 9 * 2 ** 8; // Esther 8:9, word 0
@@ -26,9 +27,17 @@ function connect(hello) {
     }
   };
   const ready = new Promise((r, j) => { ws.onopen = r; ws.onerror = j; })
-    .then(() => ws.send(JSON.stringify({ type: "hello", ...hello })))
+    .then(() => ws.send(JSON.stringify({ type: "hello", protocol: 2, ...hello })))
     .then(() => until((m) => m.type === "ready"));
   return { ws, msgs, until, ready, op: (op) => ws.send(JSON.stringify({ type: "op", op })) };
+}
+
+for (const protocol of [undefined, 1]) {
+  const old = connect({ after: 0, protocol });
+  old.ready.catch(() => {});
+  await old.until((m) => m.type === "outdated");
+  assert.equal(old.msgs.length, 1, "nothing but outdated: " + JSON.stringify(old.msgs));
+  await new Promise((r) => (old.ws.readyState === WebSocket.CLOSED ? r() : old.ws.addEventListener("close", r)));
 }
 
 const a = connect({ after: 0 });
