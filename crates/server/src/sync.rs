@@ -150,11 +150,15 @@ async fn client_version(st: &AppState) -> Option<String> {
 }
 
 /// Reading history is kept for accounts only (an anonymous owner's stays on its device): send an account its whole
-/// history here. Returns whether the owner is an account, or `None` if the socket should close.
-async fn send_history(st: &AppState, space: &str, owner: &str, tx: &mut Tx) -> Option<bool> {
+/// history here (if the client `wants` it: `ClientMsg::Hello`). Returns whether the owner is an account, or `None`
+/// if the socket should close.
+async fn send_history(st: &AppState, space: &str, owner: &str, wants: bool, tx: &mut Tx) -> Option<bool> {
     let (store, o) = (st.store.clone(), owner.to_string());
     if !matches!(blocking(move || store.owner_identity(&o)).await, Ok(Ok(Some(_)))) {
         return Some(false);
+    }
+    if !wants {
+        return Some(true);
     }
     let (store, s, o) = (st.store.clone(), space.to_string(), owner.to_string());
     match blocking(move || store.history(&s, &o)).await {
@@ -252,10 +256,10 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
             return;
         }
     };
-    let (mut last, last_op, mut pending) = loop {
+    let (mut last, last_op, mut pending, wants_history) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => match serde_json::from_str::<ClientMsg>(&t) {
-                Ok(ClientMsg::Hello { after, last_op, pending }) => break (after, last_op, pending),
+                Ok(ClientMsg::Hello { after, last_op, pending, history }) => break (after, last_op, pending, history),
                 Ok(ClientMsg::Ping) => {
                     if !pong(&st, &mut tx).await {
                         return;
@@ -290,7 +294,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
     if !send(&mut tx, &ServerMsg::Ready { seq: last, build: api::build(), client: client.as_deref() }).await {
         return;
     }
-    let Some(account) = send_history(&st, &space, &owner, &mut tx).await else { return };
+    let Some(account) = send_history(&st, &space, &owner, wants_history, &mut tx).await else { return };
     loop {
         tokio::select! {
             msg = rx.next() => match msg {
@@ -310,7 +314,7 @@ async fn run_socket(socket: WebSocket, st: Arc<AppState>, owner: String, space: 
                     }
                 }
                 Ok(Event::History(who, entries)) => {
-                    if who == owner && !send(&mut tx, &ServerMsg::History { entries: &entries }).await {
+                    if who == owner && wants_history && !send(&mut tx, &ServerMsg::History { entries: &entries }).await {
                         return;
                     }
                 }

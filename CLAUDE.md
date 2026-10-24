@@ -79,8 +79,10 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   any role, accounts only (anonymous history stays in the device's localStorage, so read-only visitors still store
   nothing); bounded at `HISTORY_KEEP` (200) rows per member; deleted when a member leaves (`/kick` checks the
   membership). Merge is conflict-free (each part keeps the later; `gone` sticks), spec `fixtures/history.json` in
-  both languages. Sync: `history{entries}` messages on the space's socket; after `ready` the server sends the
-  member's list, the client merges it and sends what the server lacks; then changes go as they happen (a jump at
+  both languages. Sync: `history{entries}` messages on the space's socket, only to clients whose `hello` says `history: true`
+  (2026-10-24: clients from before history dropped the socket on an unknown message and reconnected every 2 s,
+  ~130k Worker requests a day from one tab, nearly the free plan's limit; clients now ignore unknown messages and
+  reset the reconnect backoff only after a connection lasted 30 s); after `ready` the server sends the member's list, the client merges it and sends what the server lacks; then changes go as they happen (a jump at
   once, scrolling at most every 15 s, and on hide); the server passes changes to the member's other sockets only.
   Tested: `crates/space/tests/history.rs`, server `reading_history_syncs_between_an_accounts_devices_only` and
   `a_member_who_leaves_a_group_leaves_no_history_there`, Cloudflare `test/auth.mjs` part 4, TS `history.test.ts`;
@@ -301,7 +303,7 @@ Rust: `crates/normalize/src/lib.rs`).
   Google OAuth helpers, accounts schema + SQL + the sign-in rule (`accounts::sign_in`). Both servers use it; keep
   server-specific code to I/O only.
 : `hello{after, pending}` -> replayed changes (or a `reset`) -> `ready{seq, build, client}` ->
-  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`; `history{entries}` both ways (reading history). Lag -> `error` + reconnect.
+  live changes; `op` -> `ack`/`reject{code}`; the change itself is the confirmation; `ping` -> `pong{client}`; `history{entries}` both ways (reading history; only if `hello.history`). Clients ignore message types they don't know, so a server may add one. Lag -> `error` + reconnect.
 - **Sessions**: `POST /api/session` returns `{owner, account, providers}`, creating an anonymous owner + HttpOnly
   SameSite=Lax cookie (Secure under TLS; only sha256(token) stored) if needed. Same-origin `Origin` required on
   session/sync/logout.

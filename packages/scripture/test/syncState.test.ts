@@ -232,6 +232,15 @@ test("sync: a gap in seq makes the client reconnect", () => {
   assert.equal(a.receive({ type: "change", change }), false);
 });
 
+test("sync: a message type it doesn't know is ignored, not a reason to reconnect", () => {
+  // A client that dropped the socket on `history` (from before reading history) reconnected into it forever.
+  const a = client();
+  let hello: ClientMsg | undefined;
+  a.connected((m) => (hello ??= m));
+  assert.deepEqual(hello && "history" in hello && hello.history, true, "this client asks for history");
+  assert.equal(a.receive({ type: "something_newer" } as unknown as ServerMsg), true);
+});
+
 function rng(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -405,7 +414,7 @@ test("sync: a client behind the retention window gets a reset; its already-appli
   assert.equal(a.pending.length, 1);
   assert.equal(a.undo.length, 2);
   const again = server.connect(a);
-  assert.deepEqual(again.up[0], { type: "hello", after: 1, last_op: a.lastOp, pending: [a.pending[0]!.op_id] });
+  assert.deepEqual(again.up[0], { type: "hello", after: 1, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true });
   again.flush();
   converged(server, a);
   assert.deepEqual(notices, [], "the tag already exists because the op was applied, not because of a conflict");
@@ -479,7 +488,7 @@ test("sync: a client ahead of a space restored from an older backup is reset to 
   cb.flush();
   a.submit([createTag("W", "Joy")]); // offline meanwhile
   const again = server.connect(a);
-  assert.deepEqual(again.up[0], { type: "hello", after: 3, last_op: a.lastOp, pending: [a.pending[0]!.op_id] });
+  assert.deepEqual(again.up[0], { type: "hello", after: 3, last_op: a.lastOp, pending: [a.pending[0]!.op_id], history: true });
   again.flush();
   cb.flush();
   converged(server, a, b);

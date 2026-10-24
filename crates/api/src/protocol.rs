@@ -66,6 +66,10 @@ pub enum ClientMsg {
         last_op: Option<String>,
         #[serde(default)]
         pending: Vec<String>,
+        /// The client takes `history` messages. Clients from before reading history don't, and one that got them
+        /// dropped the socket and reconnected in a loop, so they're sent only to clients that ask.
+        #[serde(default)]
+        history: bool,
     },
     Op {
         op: Op,

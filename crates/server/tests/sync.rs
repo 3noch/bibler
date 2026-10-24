@@ -94,8 +94,9 @@ impl Client {
         let r = tokio::time::timeout(Duration::from_millis(200), self.0.next()).await;
         assert!(r.is_err(), "unexpected message: {r:?}");
     }
+    /// Say hello as the client does (taking `history` messages); returns the replayed changes.
     async fn hello(&mut self, after: u64) -> Vec<Value> {
-        self.send(json!({"type": "hello", "after": after})).await;
+        self.send(json!({"type": "hello", "after": after, "history": true})).await;
         let mut changes = vec![];
         loop {
             let msg = self.recv().await;
@@ -647,6 +648,11 @@ async fn reading_history_syncs_between_an_accounts_devices_only() {
         assert_eq!(c.hello(0).await.len(), 0);
         assert_eq!(c.recv().await, json!({"type": "history", "entries": []}), "the anonymous entry wasn't kept");
     }
+    // A client from before reading history doesn't ask for it, and gets none (one that did dropped the socket and
+    // reconnected forever).
+    let mut old = connect(&srv, Some(&cookie), None).await.unwrap();
+    old.send(json!({"type": "hello", "after": 0})).await;
+    assert_eq!(old.recv().await["type"], "ready");
     a.send(json!({"type": "history", "entries": [entry("h1", T1, 10)]})).await;
     for c in [&mut a, &mut b] {
         assert_eq!(
@@ -659,6 +665,7 @@ async fn reading_history_syncs_between_an_accounts_devices_only() {
     b.send(json!({"type": "history", "entries": [entry("h1", T1 + 5, 5), entry("later", T1, 4_000_000_000_000_000)]}))
         .await;
     a.quiet().await;
+    old.quiet().await;
     let mut again = connect(&srv, Some(&cookie), None).await.unwrap();
     assert_eq!(again.hello(0).await.len(), 0, "history is not a change");
     assert_eq!(again.recv().await, json!({"type": "history", "entries": [entry("h1", T1, 10)]}));

@@ -31,13 +31,14 @@ async function session(cookie) {
   const sc = r.headers.get("set-cookie");
   return { ...(await r.json()), cookie: sc ? sc.split(";")[0] : cookie };
 }
-function sync(cookie, space) {
+/** `hello`: what the client says (today's takes `history` messages). */
+function sync(cookie, space, hello = { history: true }) {
   const q = space ? `?space=${space}` : "";
   const ws = new WebSocket(B.replace("http", "ws") + "/api/sync" + q, { headers: { Cookie: cookie, Origin: B } });
   const msgs = [];
   ws.onmessage = (e) => msgs.push(JSON.parse(e.data));
   const until = async (pred) => { for (let i = 0; i < 100; i++) { const m = msgs.find(pred); if (m) return m; await new Promise((r) => setTimeout(r, 50)); } throw new Error(JSON.stringify(msgs)); };
-  return new Promise((r) => (ws.onopen = () => { ws.send(JSON.stringify({ type: "hello", after: 0 })); r({ ws, msgs, until }); }));
+  return new Promise((r) => (ws.onopen = () => { ws.send(JSON.stringify({ type: "hello", after: 0, ...hello })); r({ ws, msgs, until }); }));
 }
 async function ops(cookie, list, space) {
   const s = await sync(cookie, space);
@@ -149,11 +150,16 @@ assert.ok(!an.msgs.some((m) => m.type === "history"), "anonymous: nothing from t
 an.ws.close();
 const d1 = await sync(s1.cookie), d2 = await sync(s1.cookie);
 for (const d of [d1, d2]) assert.deepEqual((await d.until((m) => m.type === "history")).entries, [], "an account's (empty) history after ready");
+// A client from before reading history doesn't ask for it and gets none (one that did reconnected forever).
+const old = await sync(s1.cookie, undefined, {});
+await old.until((m) => m.type === "ready");
 d1.ws.send(JSON.stringify({ type: "history", entries: [entry("h1", G, 10), entry("future", G, 4e15)] }));
 for (const d of [d1, d2]) {
   await d.until((m) => m.type === "history" && m.entries.length);
   assert.deepEqual(d.msgs.filter((m) => m.type === "history").at(-1).entries, [entry("h1", G, 10)], "both devices hear it; a future time is refused");
 }
+assert.ok(!old.msgs.some((m) => m.type === "history"), "an old client gets no history");
+old.ws.close();
 const d3 = await sync(s1.cookie);
 await d3.until((m) => m.type === "ready");
 assert.ok(!d3.msgs.some((m) => m.type === "change" && m.change.kind === "history"), "not in the change log");

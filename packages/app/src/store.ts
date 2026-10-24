@@ -681,6 +681,9 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
  *  says the client version served now, and a new socket unless the pong comes within PONG_MS. */
 const RESUME_CHECK_MS = 30_000;
 const PONG_MS = 4000;
+/** A connection that lasted this long resets the reconnect backoff. Not `ready` itself: a socket that a client
+ *  drops right after `ready` (a message it can't handle) would otherwise reconnect every second forever. */
+const STABLE_MS = 30_000;
 
 /** Keep a WebSocket open: reconnect with backoff, and immediately when the browser comes back online or the page
  *  comes back to a dead socket (a live one has missed nothing). `onOpen` runs on each connection (a group refreshes
@@ -697,6 +700,8 @@ function connectForever(
   onHistory: (entries: HistoryEntry[]) => void,
 ): { send: (m: ClientMsg) => boolean; close: () => void } {
   let delay = 1000;
+  /** When the current socket's replay was done. */
+  let readyAt: number | null = null;
   let timer: number | undefined;
   let ws: WebSocket | null = null;
   let closed = false;
@@ -726,7 +731,7 @@ function connectForever(
       }
       if (msg.type === "history") return onHistory(msg.entries);
       if (msg.type === "ready") {
-        delay = 1000;
+        readyAt = performance.now();
         onServer(msg);
       }
       if (!sync.receive(msg)) return sock.close();
@@ -743,6 +748,8 @@ function connectForever(
       if (closed) return;
       if (space && !e.wasClean) onOpen(); // refused? (removed from the group)
       sync.disconnected();
+      if (readyAt !== null && performance.now() - readyAt >= STABLE_MS) delay = 1000;
+      readyAt = null;
       timer = window.setTimeout(open, delay);
       delay = Math.min(delay * 2, 30_000);
     };

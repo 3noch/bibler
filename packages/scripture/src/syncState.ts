@@ -17,7 +17,7 @@ import { effect, MemRows, OpError, type Change, type Op, type OpIntent, type Row
 /** `hello.last_op`: the op of the client's change at `after`, so a server whose space went back (restored from an
  *  older backup) notices. `hello.pending`: the unconfirmed ops this client holds, so a `reset` can say which are
  *  already applied. */
-export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[] } | { type: "op"; op: Op } | { type: "ping" } | { type: "history"; entries: HistoryEntry[] };
+export type ClientMsg = { type: "hello"; after: number; last_op?: string | null; pending?: string[]; history?: boolean } | { type: "op"; op: Op } | { type: "ping" } | { type: "history"; entries: HistoryEntry[] };
 /** The commit a server was built from and its time (ISO 8601); empty when it didn't know. Sent in `ready`. */
 export type Build = { commit: string; committed_at: string };
 export type ServerMsg =
@@ -192,7 +192,7 @@ export class SyncState {
     this.send = send;
     this.status = "syncing";
     this.helloPending = new Set(this.pending.map((o) => o.op_id));
-    send({ type: "hello", after: this.seq, last_op: this.lastOp, pending: [...this.helloPending] });
+    send({ type: "hello", after: this.seq, last_op: this.lastOp, pending: [...this.helloPending], history: true });
     this.changed();
   }
 
@@ -258,6 +258,10 @@ export class SyncState {
         this.changed();
         return true;
       }
+      default:
+        // A newer server's message: ignore it. (Dropping the socket would reconnect into the same message forever,
+        // as clients from before reading history did on `history`.)
+        return true;
     }
   }
 

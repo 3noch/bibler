@@ -46,8 +46,9 @@ pub struct Space {
     retention_ms: i64,
 }
 
-/// Per-socket state, kept across hibernation.
+/// Per-socket state, kept across hibernation. (Independent flags, so not an enum.)
 #[derive(Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 struct Socket {
     /// Who is connected (the author of their ops).
     owner: String,
@@ -60,6 +61,9 @@ struct Socket {
     /// A signed-in account: its reading history is kept here (an anonymous one stays on its device).
     #[serde(default)]
     account: bool,
+    /// The client takes `history` messages (`ClientMsg::Hello`).
+    #[serde(default)]
+    history: bool,
 }
 
 // No awaits in the socket handlers is the point: each event is atomic.
@@ -120,7 +124,14 @@ impl DurableObject for Space {
                 let write = role.can_write();
                 let pair = WebSocketPair::new()?;
                 self.state.accept_websocket_with_tags(&pair.server, &[&owner]);
-                pair.server.serialize_attachment(Socket { owner, space, write, ready: false, account })?;
+                pair.server.serialize_attachment(Socket {
+                    owner,
+                    space,
+                    write,
+                    ready: false,
+                    account,
+                    history: false,
+                })?;
                 Response::from_websocket(pair.client)
             }
             "/export" => {
@@ -181,7 +192,7 @@ impl DurableObject for Space {
             return close(&ws, "message too large");
         }
         match (socket.ready, serde_json::from_str::<ClientMsg>(&text)) {
-            (false, Ok(ClientMsg::Hello { after, last_op, mut pending })) => {
+            (false, Ok(ClientMsg::Hello { after, last_op, mut pending, history })) => {
                 let mut after = after;
                 let created = self.created.get();
                 // A replay can't be done or trusted (`space::needs_reset`): send the whole state instead. An empty
@@ -204,7 +215,7 @@ impl DurableObject for Space {
                 }
                 let seq = if created { self.replay(&ws, after)? } else { after };
                 ws.send_with_str(ServerMsg::Ready { seq, build: api::build(), client: client() }.json())?;
-                if socket.account {
+                if socket.account && history {
                     let entries = if created {
                         space::history(&self.db, &socket.owner).map_err(worker::Error::RustError)?
                     } else {
@@ -213,6 +224,7 @@ impl DurableObject for Space {
                     ws.send_with_str(ServerMsg::History { entries: &entries }.json())?;
                 }
                 socket.ready = true;
+                socket.history = history;
                 ws.serialize_attachment(socket)
             }
             (true, Ok(ClientMsg::Op { op })) => self.op(&ws, &socket, &op),
@@ -323,7 +335,7 @@ impl Space {
         }
         let json = ServerMsg::History { entries: &changed }.json();
         for ws in self.state.get_websockets_with_tag(&socket.owner) {
-            if ws.deserialize_attachment::<Socket>().ok().flatten().is_some_and(|s| s.ready) {
+            if ws.deserialize_attachment::<Socket>().ok().flatten().is_some_and(|s| s.ready && s.history) {
                 let _ = ws.send_with_str(&json);
             }
         }
