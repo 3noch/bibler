@@ -56,10 +56,13 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
     if let Some(old) = cfg.migrate_from.as_deref().filter(|_| !cfg.data.exists()) {
         migrate(old, &cfg.data)?;
     }
+    let loaded = texts::load(&cfg.text_dir)?;
+    let limited: Arc<Vec<String>> = Arc::new(loaded.limited.keys().cloned().collect());
     let state = Arc::new(sync::AppState {
         store: Arc::new(store::SqliteStore::open(&cfg.data, listener)?.retention(cfg.retention_ms)),
         hub,
-        texts: texts::load(&cfg.text_dir)?,
+        texts: loaded.texts,
+        limited: loaded.limited,
         secure_cookies: cfg.secure_cookies,
         google: cfg.google.clone(),
         public_url: cfg.public_url.clone(),
@@ -74,12 +77,16 @@ pub fn router(cfg: &Config) -> Result<Router, String> {
         .route("/groups", any(groups::groups))
         .route("/groups/{*rest}", any(groups::groups))
         .route("/join", post(groups::groups))
+        .route("/text/{id}/page", get(texts::page))
         .route("/auth/google", get(auth::google_start))
         .route("/auth/google/callback", get(auth::google_callback))
         .fallback(|| async { (StatusCode::NOT_FOUND, "no such API route") })
         .with_state(state);
 
-    let app = Router::new().nest("/api", api).nest_service("/text", ServeDir::new(&cfg.text_dir));
+    let text = Router::new()
+        .fallback_service(ServeDir::new(&cfg.text_dir))
+        .layer(middleware::from_fn(move |req, next| texts::guard(limited.clone(), req, next)));
+    let app = Router::new().nest("/api", api).nest("/text", text);
     let app = match &cfg.static_dir {
         // Unknown paths get index.html so client-side routes survive a reload.
         // Except under /assets: an index.html answer to a missing (old) bundle would be marked immutable.

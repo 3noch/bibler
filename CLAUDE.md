@@ -63,6 +63,15 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   painting in the BSB (server and in-browser server accept it; the KJV doesn't show it), both texts cached, eviction,
   stale-file cleanup; links with and without a translation (fresh tab, followed in an open tab, Back), the badge
   giving way before the chapter name shortens. Not yet: tags across translations, a real phone.
+  **Licensed texts** (2026-11-01, designed with the user around the ESV API's terms: at most 500 verses or half a
+  book shown or kept at once, which even excludes all of Jude on one page): a text may declare `limits` in
+  text-build's `SOURCES`; it is read a page at a time (a chapter, or equal parts of the 6 chapters over their book's
+  cap, plus a context verse each side so tags across a boundary show), pages come from the server
+  (`/api/text/<id>/page`, checked by `api::pages` on both servers; book files never served), nothing is kept for
+  offline. `bsb-restricted-v1` ("BSB-R") is the BSB under those limits, to try it before any API key exists.
+  Details: docs/text-format.md. Research behind it: public APIs (ESV: caching = display = 500 verses/half a book;
+  API.Bible: cache refreshed every 30 days, no display cap, FUMS reporting, per-translation licenses) are for quoting,
+  so real readers of copyrighted texts likely need publisher agreements.
 - **Reading history** (2026-10-23; an automatic bookmark per reading track, for reading plans with several daily
   portions): an entry = where a jump landed (`anchor`) + where scrolling from there got to (`last`), each with its
   time; the later orders the list. Jumps = the omnibox, a clicked place, the contents, a link (`[ ]` chapter steps

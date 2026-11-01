@@ -378,7 +378,7 @@ fn client() -> Option<&'static str> {
 }
 
 /// A static asset's bytes.
-async fn asset(env: &Env, path: &str) -> Result<Vec<u8>> {
+pub(crate) async fn asset(env: &Env, path: &str) -> Result<Vec<u8>> {
     let mut res = env.assets("ASSETS")?.fetch(format!("https://assets.local/{path}"), None).await?;
     if res.status_code() != 200 {
         return Err(worker::Error::RustError(format!("{path}: HTTP {}", res.status_code())));
@@ -390,18 +390,24 @@ async fn asset(env: &Env, path: &str) -> Result<Vec<u8>> {
 #[derive(serde::Deserialize)]
 struct TextEntry {
     id: String,
+    /// Set for a text its license limits (`api::pages`).
+    #[serde(default)]
+    limits: Option<api::pages::Limits>,
 }
 
 /// The texts listed in `/text/texts.json` (written by text-build), read from the static assets.
-async fn load_texts(env: &Env) -> Result<Texts> {
+pub(crate) async fn load_texts(env: &Env) -> Result<Texts> {
     let get = |path: String| async move { asset(env, &format!("text/{path}")).await };
     let entries: Vec<TextEntry> = serde_json::from_slice(&get("texts.json".into()).await?)?;
     let mut texts = Texts::default();
-    for id in entries.iter().map(|e| &e.id).filter(|id| api::check::valid_id(id)) {
+    for (id, limits) in entries.iter().map(|e| (&e.id, e.limits)).filter(|(id, _)| api::check::valid_id(id)) {
         let manifest: serde_json::Value = serde_json::from_slice(&get(format!("{id}/manifest.json")).await?)?;
         let index = manifest["index"].as_str().unwrap_or_default();
         let bytes = get(format!("{id}/{index}")).await?;
         texts.add_index(id, &bytes).map_err(worker::Error::RustError)?;
+        if let Some(limits) = limits {
+            texts.set_limits(id, limits);
+        }
     }
     Ok(texts)
 }

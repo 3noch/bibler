@@ -25,7 +25,10 @@ command = "worker-build --release"
 directory = "../../build/cloudflare/assets"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/api/*"]
+# A text its license limits (text-build `limits`) is read a page at a time through /api/text/<id>/page; its
+# directory runs the Worker too, which serves only its manifest and index (never its book files). One line per such
+# text.
+run_worker_first = ["/api/*", "/text/bsb-restricted-v1/*"]
 
 # Accounts: owners, sessions, identities (schema: api::accounts::SCHEMA, created on first use).
 # Before the first production deploy: `wrangler d1 create bible-tags-accounts` and put its id here.

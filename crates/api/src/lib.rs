@@ -7,6 +7,7 @@ pub mod accounts;
 pub mod check;
 pub mod google;
 pub mod groups;
+pub mod pages;
 pub mod protocol;
 pub mod session;
 

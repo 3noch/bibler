@@ -111,3 +111,24 @@ async fn http_redirects_to_https() {
     assert_eq!(res.status(), StatusCode::PERMANENT_REDIRECT);
     assert_eq!(res.headers()[header::LOCATION], "https://example.org:8443/john/3?x=1");
 }
+
+#[tokio::test]
+async fn a_limited_text_is_served_a_page_at_a_time() {
+    let app = app();
+    // Its book files are never served as files; its manifest and index (no words) are.
+    let (status, _, _) = get(&app, "/text/lim/02-GEN.0123456789abcdef.json", false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(get(&app, "/text/lim/manifest.json", false).await.0, StatusCode::OK);
+    assert_eq!(get(&app, "/text/lim/index.0123456789abcdef.bin", false).await.0, StatusCode::OK);
+    // 2 of its 4 verses at once (slots 3, 4: verses 3 and 4), not 3; and a text that isn't limited has no pages.
+    let (status, headers, body) = get(&app, "/api/text/lim/page?from=3&to=4", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    let page: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(page["books"][0]["words"], serde_json::json!(["e", "f", "g", "h"]));
+    assert_eq!(page["books"][0]["notes"][0]["text"], "a note on 1:3");
+    assert_eq!(get(&app, "/api/text/lim/page?from=2&to=4", false).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(get(&app, "/api/text/lim/page?from=4&to=3", false).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(get(&app, "/api/text/t1/page?from=0&to=1", false).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(get(&app, "/text/t1/02-GEN.0123456789abcdef.json", false).await.0, StatusCode::OK, "t1 is served whole");
+}

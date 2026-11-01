@@ -148,6 +148,18 @@ client offers and the Cloudflare Worker loads (the self-hosted server reads ever
 `manifest.json` (not hashed; the entry point): `text_id`, `abbr`, `name`, `rights`, source info, `index` file name, `book_shift` (24), and for
 each book its code, id, first word's ordinal, names, chapter count, token count and file name.
 
+## Texts a license limits (2026-11-01)
+
+A `Source` may carry `limits: {verses, book_percent}` (the ESV API's terms: 500 verses or half a book, whichever is
+less, may be shown or kept on a device at once). Its `manifest.json` and `texts.json` entry carry them. Such a text
+is never served whole: both servers serve its manifest and index (no words) but not its book files, and hand out
+pages through `GET /api/text/<id>/page?from=<slot>&to=<slot>` (`api::pages`): slots `from..=to` sliced from the book
+files in the same JSON format (`first_ord`/`first_slot` the page's, runs clipped to it, anchored things filtered),
+`no-store`, refused (403) unless the page's verses (slots with words) are within `book_percent` of each book it
+touches and `verses` in all. The client cuts each chapter into pages that fit with a context verse on either side
+(`packages/scripture` `limits.ts`: `chunksOf`, `pageSlots`, `fits`). `bsb-restricted-v1` is the BSB built under
+the ESV's limits, to try this before any licensed text exists.
+
 ## Golden checks
 
 Each text's `fixtures/text/<text_id>.golden.json` is **per book** (so adding a book only appends entries): code, id, chapters,

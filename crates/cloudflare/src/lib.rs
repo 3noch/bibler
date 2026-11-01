@@ -9,6 +9,9 @@
 //! *    /api/groups..., POST /api/join   groups (api::groups)
 //! POST /api/logout
 //! GET  /api/auth/google[/callback]   Sign in with Google (api::google)
+//! GET  /api/text/<id>/page?from=&to= a page of a text its license limits (api::pages)
+//! GET  /text/<limited id>/*           only its manifest and index (wrangler.toml routes these here); never its
+//!                                    book files, which the page route reads from the assets itself
 //! ```
 
 mod object;
@@ -42,6 +45,8 @@ async fn route(req: Request, env: &Env) -> Result<Response> {
         (Method::Get, "/api/auth/google/callback") => google_callback(&req, env).await,
         (_, "/api/join") => groups(req, env).await,
         (_, p) if p == "/api/groups" || p.starts_with("/api/groups/") => groups(req, env).await,
+        (Method::Get, p) if p.starts_with("/api/text/") && p.ends_with("/page") => page(&req, env).await,
+        (Method::Get, p) if p.starts_with("/text/") => limited_text_file(req, env).await,
         _ => Response::error("no such API route", 404),
     }
 }
@@ -430,4 +435,58 @@ async fn sign_in(req: &Request, env: &Env, identity: &Identity) -> Result<String
         db.prepare(sql::DELETE_SESSION).bind(&[js(&token_hash(&t))])?.run().await?;
     }
     create_session(&db, &owner, now).await
+}
+
+thread_local! {
+    /// The texts and their limits, loaded once per isolate (`object::load_texts`).
+    static TEXTS: std::cell::RefCell<Option<std::rc::Rc<api::check::Texts>>> = const { std::cell::RefCell::new(None) };
+}
+
+async fn texts(env: &Env) -> Result<std::rc::Rc<api::check::Texts>> {
+    if let Some(t) = TEXTS.with(|t| t.borrow().clone()) {
+        return Ok(t);
+    }
+    let t = std::rc::Rc::new(object::load_texts(env).await?);
+    TEXTS.with(|c| *c.borrow_mut() = Some(t.clone()));
+    Ok(t)
+}
+
+/// `GET /api/text/<id>/page?from=<slot>&to=<slot>`: slots `from..=to` of a limited text, as `{books: [book file
+/// parts]}`, if they fit its limits (`api::pages`); `no-store`, since a device may keep only what it shows.
+async fn page(req: &Request, env: &Env) -> Result<Response> {
+    let path = req.path();
+    let id = path.trim_start_matches("/api/text/").trim_end_matches("/page");
+    let url = req.url()?;
+    let arg = |k: &str| url.query_pairs().find(|(n, _)| n == k).and_then(|(_, v)| v.parse::<usize>().ok());
+    let (Some(from), Some(to)) = (arg("from"), arg("to")) else { return Response::error("bad range", 400) };
+    let texts = texts(env).await?;
+    let parts = match texts.page(id, from, to) {
+        Ok(parts) => parts,
+        Err(e) => {
+            let (status, message) = e.status();
+            return Response::error(message, status);
+        }
+    };
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&object::asset(env, &format!("text/{id}/manifest.json")).await?)?;
+    let mut books = vec![];
+    for p in &parts {
+        let file = manifest["books"][p.book]["file"].as_str().unwrap_or_default();
+        let book: serde_json::Value = serde_json::from_slice(&object::asset(env, &format!("text/{id}/{file}")).await?)?;
+        books.push(api::pages::slice_book(&book, p));
+    }
+    let res = Response::from_json(&serde_json::json!({ "books": books }))?;
+    res.headers().set("cache-control", "no-store")?;
+    Ok(res)
+}
+
+/// A file of a limited text's directory (wrangler.toml's `run_worker_first` sends them here): its manifest and
+/// index hold no words and are served; its book files are not.
+async fn limited_text_file(req: Request, env: &Env) -> Result<Response> {
+    let path = req.path();
+    let file = path.rsplit('/').next().unwrap_or_default();
+    if file == "manifest.json" || file.starts_with("index.") {
+        return env.assets("ASSETS")?.fetch_request(req).await;
+    }
+    Response::error("not found", 404)
 }

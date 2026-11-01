@@ -20,6 +20,8 @@ pub struct AppState {
     pub store: Arc<dyn Store>,
     pub hub: Arc<Hub>,
     pub texts: Texts,
+    /// Each limited text's book files (`texts::page`).
+    pub limited: std::collections::HashMap<String, Vec<std::path::PathBuf>>,
     /// Mark the session cookie `Secure` (when serving TLS).
     pub secure_cookies: bool,
     /// Sign in with Google, if configured.

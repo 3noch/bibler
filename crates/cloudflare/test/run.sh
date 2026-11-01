@@ -33,6 +33,7 @@ stop() {
 serve
 node test/lazy.mjs "http://127.0.0.1:$PORT" "$STATE"
 node test/sync.mjs "http://127.0.0.1:$PORT"
+node test/pages.mjs "http://127.0.0.1:$PORT"
 node test/auth.mjs "http://127.0.0.1:$PORT" "$FAKE"
 node test/groups.mjs "http://127.0.0.1:$PORT"
 stop

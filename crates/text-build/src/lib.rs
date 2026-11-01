@@ -21,6 +21,18 @@ pub struct Source {
     pub origin: &'static str,
     /// Shown to readers: the license or copyright line.
     pub rights: &'static str,
+    /// What its license lets readers see and keep at once, if it limits that (copyrighted texts licensed through an
+    /// API: docs/text-format.md). Such a text is read a page at a time from the server, never downloaded whole.
+    pub limits: Option<Limits>,
+}
+
+/// A license's limits on how much of a text may be shown (and kept on a device) at once: at most `verses` verses,
+/// and at most `book_percent` percent of any one book's verses (the ESV API's terms: 500 verses or half a book,
+/// whichever is less). Verses are counted as slots, titles included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Limits {
+    pub verses: u32,
+    pub book_percent: u32,
 }
 
 pub const KJV: Source = Source {
@@ -30,6 +42,7 @@ pub const KJV: Source = Source {
     name: "King James Version",
     origin: "eBible.org eng-kjv2006 USFM (2026-09-26), see data/source/eng-kjv2006/SOURCE.md",
     rights: "The 1769 Oxford text. Public domain (outside the UK); text courtesy of CrossWire and eBible.org.",
+    limits: None,
 };
 
 pub const BSB: Source = Source {
@@ -39,10 +52,24 @@ pub const BSB: Source = Source {
     name: "Berean Standard Bible",
     origin: "eBible.org engbsb USFM (2026-10-20), see data/source/engbsb/SOURCE.md",
     rights: "Public domain; text courtesy of BSB Publishing and eBible.org.",
+    limits: None,
+};
+
+/// The BSB again, served as if it were licensed through an API with the ESV's terms: a test of reading a text a page
+/// at a time before any real licensed text is added (2026-11-01). Its tokens are the BSB's.
+pub const BSB_RESTRICTED: Source = Source {
+    id: "bsb-restricted-v1",
+    dir: "engbsb",
+    abbr: "BSB-R",
+    name: "Berean Standard Bible (licensed-text test)",
+    origin: BSB.origin,
+    rights: "Public domain; text courtesy of BSB Publishing and eBible.org. Shown here under the limits a licensed \
+             translation would have (500 verses or half a book at a time), to test reading one.",
+    limits: Some(Limits { verses: 500, book_percent: 50 }),
 };
 
 /// Every text, the default first.
-pub const SOURCES: &[Source] = &[KJV, BSB];
+pub const SOURCES: &[Source] = &[KJV, BSB, BSB_RESTRICTED];
 
 /// The default text's id.
 pub const TEXT_ID: &str = KJV.id;
@@ -929,6 +956,8 @@ pub struct Manifest {
     pub abbr: String,
     pub name: String,
     pub rights: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<Limits>,
     pub source: String,
     pub index: String,
     pub book_shift: u32,
@@ -996,6 +1025,7 @@ pub fn write_artifacts(t: &Text, src: &Source, out: &Path) -> Result<Manifest, S
         abbr: src.abbr.to_string(),
         name: src.name.to_string(),
         rights: src.rights.to_string(),
+        limits: src.limits,
         source: src.origin.to_string(),
         index: index_name,
         book_shift: BOOK_SHIFT,
@@ -1039,6 +1069,8 @@ pub struct CatalogEntry {
     pub abbr: String,
     pub name: String,
     pub rights: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<Limits>,
 }
 
 /// Write `<dir>/texts.json` listing every `<dir>/<text_id>/manifest.json`, in [`SOURCES`] order (then by id).
@@ -1051,7 +1083,7 @@ pub fn write_catalog(dir: &Path) -> Result<Vec<CatalogEntry>, String> {
         let path = entry.map_err(|e| e.to_string())?.path().join("manifest.json");
         let Ok(raw) = fs::read_to_string(&path) else { continue };
         let m: Manifest = serde_json::from_str(&raw).map_err(|e| format!("{}: {e}", path.display()))?;
-        texts.push(CatalogEntry { id: m.text_id, abbr: m.abbr, name: m.name, rights: m.rights });
+        texts.push(CatalogEntry { id: m.text_id, abbr: m.abbr, name: m.name, rights: m.rights, limits: m.limits });
     }
     let rank = |id: &str| SOURCES.iter().position(|s| s.id == id).unwrap_or(SOURCES.len());
     texts.sort_by(|a, b| (rank(&a.id), &a.id).cmp(&(rank(&b.id), &b.id)));

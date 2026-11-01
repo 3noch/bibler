@@ -1,13 +1,15 @@
 //! Checks on an op before it reaches `space::apply`: id shapes and that tagging ends are real words. The server
 //! never trusts client ordinals.
 
+use crate::pages::{Limits, PageError, PagePart};
 use ops::{Intent, Op};
 use std::collections::HashMap;
 
-/// Known texts, each from its BTIX index.
+/// Known texts, each from its BTIX index, and the limits of those a license limits (`crate::pages`).
 #[derive(Debug, Default, Clone)]
 pub struct Texts {
     texts: HashMap<String, Index>,
+    limits: HashMap<String, Limits>,
 }
 
 /// What `check` needs from an index: each book's slots, and each slot's first ordinal and word count.
@@ -30,6 +32,59 @@ impl Texts {
         let index = parse(index).ok_or_else(|| format!("{text_id}: malformed index"))?;
         self.texts.insert(text_id.to_string(), index);
         Ok(())
+    }
+
+    /// Mark a text as limited by its license: read a page at a time (`page`), never served whole.
+    pub fn set_limits(&mut self, text_id: &str, limits: Limits) {
+        self.limits.insert(text_id.to_string(), limits);
+    }
+
+    /// The text's limits, if its license limits it.
+    #[must_use]
+    pub fn limits(&self, text_id: &str) -> Option<Limits> {
+        self.limits.get(text_id).copied()
+    }
+
+    /// The parts of each book that slots `from..=to` of a limited text cover, if they may be shown at once: within
+    /// the cap of every book they touch and of the whole (the client's `fits`, packages/scripture limits.ts).
+    ///
+    /// # Errors
+    /// Unknown or not limited text, a bad range, or more than its limits allow.
+    pub fn page(&self, text_id: &str, from: usize, to: usize) -> Result<Vec<PagePart>, PageError> {
+        let index = self.texts.get(text_id).ok_or(PageError::UnknownText)?;
+        let limits = self.limits(text_id).ok_or(PageError::NotLimited)?;
+        if from > to || to >= index.slot_words.len() {
+            return Err(PageError::BadRange);
+        }
+        let verses = |lo: usize, hi: usize| index.slot_words[lo..hi].iter().filter(|&&w| w > 0).count();
+        let mut parts = vec![];
+        let mut total = 0;
+        for (book, &(_, lo, hi, end)) in index.books.iter().enumerate() {
+            let (a, b) = (from.max(lo), to.min(hi - 1));
+            if a > b {
+                continue;
+            }
+            let n = verses(a, b + 1);
+            let share = verses(lo, hi) * limits.book_percent as usize / 100;
+            if n > share.min(limits.verses as usize) {
+                return Err(PageError::OverLimits);
+            }
+            total += n;
+            let words = |x: usize, y: usize| index.slot_words[x..y].iter().map(|&w| usize::from(w)).sum::<usize>();
+            parts.push(PagePart {
+                book,
+                from_slot: a,
+                to_slot: b,
+                first_word: words(lo, a),
+                words: words(a, b + 1),
+                start_ord: index.verse_start[a],
+                end_ord: if b + 1 == hi { end } else { index.verse_start[b + 1] },
+            });
+        }
+        if total > limits.verses as usize {
+            return Err(PageError::OverLimits);
+        }
+        Ok(parts)
     }
 
     /// Check a tagging interval: a known text, `start < end`, `start` is a word, and `end` is a word of the same
@@ -168,5 +223,70 @@ mod tests {
         assert!(!ok(at(1, 0), next(2)), "or up to the next book's end");
         assert!(t.check("other", at(1, 0), at(1, 1)).is_err());
         assert!(super::parse(&[]).is_none());
+    }
+
+    #[test]
+    fn a_page_of_a_limited_text_fits_its_limits() {
+        use crate::pages::{Limits, PageError, PagePart};
+        let mut t = texts();
+        assert_eq!(t.page("t", 1, 2), Err(PageError::NotLimited), "not limited: served whole");
+        assert_eq!(t.page("x", 1, 2), Err(PageError::UnknownText));
+        // Book 2 has 2 verses (slots 1, 2; slot 0 is an empty title), book 3 one (slot 4).
+        t.set_limits("t", Limits { verses: 2, book_percent: 100 });
+        let book2 = PagePart {
+            book: 0,
+            from_slot: 0,
+            to_slot: 2,
+            first_word: 0,
+            words: 5,
+            start_ord: 2 << 24 | 1 << 16 | 1 << 8,
+            end_ord: 2 << 24 | 1 << 16 | 2 << 8 | 2,
+        };
+        assert_eq!(t.page("t", 0, 2), Ok(vec![book2.clone()]), "the empty title doesn't count");
+        assert_eq!(t.page("t", 2, 4).map(|p| p.len()), Ok(2), "across books: a part of each");
+        assert_eq!(t.page("t", 0, 4), Err(PageError::OverLimits), "3 verses in all");
+        assert_eq!(t.page("t", 2, 1), Err(PageError::BadRange));
+        assert_eq!(t.page("t", 0, 5), Err(PageError::BadRange));
+        t.set_limits("t", Limits { verses: 500, book_percent: 50 });
+        assert_eq!(t.page("t", 1, 1).map(|p| p[0].words), Ok(3), "1 of book 2's 2 verses");
+        assert_eq!(t.page("t", 1, 2), Err(PageError::OverLimits), "both of them");
+        assert_eq!(t.page("t", 4, 4), Err(PageError::OverLimits), "half of 1 verse is none");
+        let p = t.page("t", 2, 2).unwrap().remove(0);
+        assert_eq!((p.first_word, p.words, p.end_ord), (3, 2, 2 << 24 | 1 << 16 | 2 << 8 | 2), "1:2: the book's end");
+    }
+
+    #[test]
+    fn a_book_file_sliced_to_a_page_keeps_what_is_anchored_inside() {
+        use crate::pages::{slice_book, PagePart};
+        let at = |v: u32, w: u32| u64::from(2u32 << 24 | 1 << 16 | v << 8 | w);
+        let book = serde_json::json!({
+            "book": "GEN", "id": 2, "first_ord": at(1, 0), "first_slot": 0,
+            "words": ["a", "b", "c", "d", "e"],
+            "italic": [[at(1, 1), at(2, 1)]], "divine_name": [], "words_of_jesus": [[at(1, 0), at(1, 1)]],
+            "joined": [at(1, 2)], "pilcrow": [1, 2], "breaks": [[at(1, 0), "p"], [at(2, 0), "q1"]],
+            "headings": [{"at": at(2, 0), "pos": "before", "kind": "s1", "text": "H"}],
+            "notes": [{"after": at(1, 2), "ref": "1.1", "text": "n"}, {"after": at(2, 1), "ref": "1.2", "text": "m"}],
+        });
+        #[allow(clippy::cast_possible_truncation)]
+        let part = PagePart {
+            book: 0,
+            from_slot: 2,
+            to_slot: 2,
+            first_word: 3,
+            words: 2,
+            start_ord: at(2, 0) as u32,
+            end_ord: at(2, 2) as u32,
+        };
+        let page = slice_book(&book, &part);
+        assert_eq!(page["words"], serde_json::json!(["d", "e"]));
+        assert_eq!(page["first_ord"], at(2, 0));
+        assert_eq!(page["first_slot"], 2);
+        assert_eq!(page["italic"], serde_json::json!([[at(2, 0), at(2, 1)]]), "a run clipped to the page");
+        assert_eq!(page["words_of_jesus"], serde_json::json!([]), "a run outside it dropped");
+        assert_eq!(page["joined"], serde_json::json!([]));
+        assert_eq!(page["pilcrow"], serde_json::json!([2]));
+        assert_eq!(page["breaks"], serde_json::json!([[at(2, 0), "q1"]]));
+        assert_eq!(page["headings"][0]["text"], "H");
+        assert_eq!(page["notes"], serde_json::json!([{"after": at(2, 1), "ref": "1.2", "text": "m"}]));
     }
 }
