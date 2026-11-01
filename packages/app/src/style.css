@@ -51,6 +51,16 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   border-bottom: 1px solid var(--line);
 }
 .location, .omnibox { position: relative; flex: 1; min-width: 0; max-width: 26rem; }
+/* Back after a jump: a small bubble under the search bar (App.tsx), lined up with it, for a few seconds. */
+.back-chip {
+  position: absolute; top: calc(100% + 6px); left: calc(max(12px, env(safe-area-inset-left, 0px)) + 44px);
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; max-width: calc(100% - 80px); padding: 0 12px 0 8px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow);
+  color: var(--ink); font-size: 0.85rem; white-space: nowrap; animation: fade-in 0.15s ease-out;
+}
+.back-chip span { overflow: hidden; text-overflow: ellipsis; }
+.back-chip svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
+
 .location input {
   width: 100%; height: 36px; padding: 0 12px; border-radius: 10px;
   border: 1px solid transparent; background: transparent;

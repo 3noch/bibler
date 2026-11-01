@@ -14,13 +14,19 @@
   translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
+- **Back** without browser buttons (2026-10-31, the user's design; an installed app has none): for 6 s after each step
+  (a jump of the user's own, or Back/Forward; not the recent places a fresh launch adds, `trail.i > trail.seeded`; not
+  after a reload) a small bubble under the search bar, "← John 3", goes back (with the panel that was open there); it
+  then goes away entirely (the user found a lingering arrow annoying). After that, the search bar's empty-box list
+  offers "← Back to John 3" first (whenever Back leads anywhere, seeded steps too), and the menu has Back/Forward.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): its header holds
   what is seldom needed, as icons (2026-10-31: the user wants the list for what people need most of the time): Close,
   then **Back/Forward** (2026-10-31: this tab's jumps, like the browser's buttons, which an installed app lacks; greyed
   out when there's no step, labelled "Back to Romans 8"/"Forward to John 3:16"; App keeps `trail` = each step's entry
   plus the current index, which every step's state also carries as `{entry, i}`, in sessionStorage, since the browser
   says neither whether a step exists nor where it goes; links followed in an open tab and a fresh launch's seeded steps
-  are steps too), **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
+  are steps too; each step also remembers the panel that was open when it was left (`trail.ui`: Nearby, a tag's
+  sheet, the tag list, search chips), and Back/Forward reopen it with the place), **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
   translation they were made in), recent reading (collapsed; see below), contents. **Text font and size**

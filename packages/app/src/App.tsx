@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
+import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { BOOKS, describeChanges, formatInterval, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
 import { chooseText, DEFAULT_TEXT, findText, hashOf, keepOffline, loadCatalog, loadText, splitHash, textId, type Text, type TextInfo } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
@@ -9,11 +9,13 @@ import { TagsSheet } from "./Tags.tsx";
 import { Menu } from "./Menu.tsx";
 import { SpaceButton, SpacesCard } from "./Groups.tsx";
 import { UpdateNotice } from "./Update.tsx";
-import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
+import { BackIcon, BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
 import { ulid } from "./ulid.ts";
 
 /** This tab's reading-history entry (App's `reading`). */
 const READING_KEY = "bible-tags/reading/v1";
+/** How long the back bubble shows after a step. */
+const BACK_BUBBLE_MS = 6000;
 /** This tab's browser history steps (App's `trail`). */
 const TRAIL_KEY = "bible-tags/trail/v1";
 /** The entries of this tab's browser history steps (each jump is one), and which step is current: `i` is also in
@@ -21,6 +23,18 @@ const TRAIL_KEY = "bible-tags/trail/v1";
 interface Trail {
   ids: string[];
   i: number;
+  /** The last step a fresh launch made from the recent entries (`seedBack`): the top bar's Back shows only after
+   *  it, i.e. after a jump of the user's own. */
+  seeded?: number;
+  /** Each step's open panel, saved when leaving it, so Back and Forward bring it back with the place. */
+  ui?: (Panels | null)[];
+}
+/** Which panel was open (App's panel signals). */
+interface Panels {
+  near: { tags: string[]; pos: number } | null;
+  sheet: string | null;
+  tags: boolean;
+  chips: Chip[];
 }
 const sessionGet = (k: string) => {
   try {
@@ -139,16 +153,37 @@ function Main(props: {
     setTrailSignal(t);
     sessionSet(TRAIL_KEY, JSON.stringify(t));
   };
-  /** Make `id` this step's entry, or a new step's after it (`push`: Forward steps are dropped, as the browser does). */
+  const panels = (): Panels => ({ near: near(), sheet: sheetTag(), tags: tagsOpen(), chips: chips() });
+  /** The trail with this step's panels saved: it is being left. */
+  const leaving = (t: Trail): Trail => {
+    const ui = [...(t.ui ?? [])];
+    if (t.i >= 0) ui[t.i] = panels();
+    return { ...t, ui };
+  };
+  /** A new step after this one (Forward steps are dropped, as the browser does), its entry not known yet. */
+  const advance = (t: Trail): Trail => {
+    const left = leaving(t);
+    return { ...left, ids: t.ids.slice(0, t.i + 1), ui: left.ui!.slice(0, t.i + 1), i: t.i + 1 };
+  };
+  /** Make `id` this step's entry, or a new step's after it (`push`). */
   const setEntry = (id: string, push: boolean) => {
     setReading(id);
     sessionSet(READING_KEY, id);
-    const t = trail();
-    const i = push ? t.i + 1 : Math.max(t.i, 0);
-    const ids = push ? t.ids.slice(0, i) : [...t.ids];
-    ids[i] = id;
-    setTrail({ ids, i });
-    (push ? history.pushState : history.replaceState).call(history, { entry: id, i }, "", location.hash);
+    const t = push ? advance(trail()) : { ...trail(), i: Math.max(trail().i, 0) };
+    const ids = [...t.ids];
+    ids[t.i] = id;
+    setTrail({ ...t, ids });
+    (push ? history.pushState : history.replaceState).call(history, { entry: id, i: t.i }, "", location.hash);
+  };
+  /** Reopen a step's panels as they were when it was left (none if it had none). */
+  const restore = (p: Panels | null | undefined) => {
+    if (!p) return;
+    batch(() => {
+      setChips(p.chips);
+      setNear(p.near);
+      setSheetTag(p.sheet && store.tagById().has(p.sheet) ? p.sheet : null);
+      setTagsOpen(p.tags);
+    });
   };
   /** Opened without a place to go (the app, a group): follow the newest entry, also when the server's list
    *  arrives, until the user goes somewhere themselves. */
@@ -183,7 +218,11 @@ function Main(props: {
   let popped: string | null = null;
   const onPop = (ev: PopStateEvent) => {
     const { entry: id, i } = (ev.state ?? {}) as { entry?: string; i?: number };
-    if (typeof i === "number") setTrail({ ids: trail().ids, i });
+    if (typeof i === "number") {
+      const t = leaving(trail());
+      setTrail({ ...t, i });
+      restore(t.ui?.[i]);
+    }
     const e = id && liveHistory(store.history()).find((x) => x.id === id);
     if (!e) return;
     popped = location.hash;
@@ -194,8 +233,7 @@ function Main(props: {
   const onHash = () => {
     if (location.hash === popped) return void (popped = null);
     // The browser made a new step for it (dropping any Forward ones): the jump below fills it in.
-    const t = trail();
-    setTrail({ ids: t.ids.slice(0, t.i + 1), i: t.i + 1 });
+    setTrail(advance(trail()));
     const named = splitHash(location.hash).text;
     const other = named && findText(props.texts, named);
     if (other && other.id !== props.text.id) return props.onText(other.id, "link"); // the new reader goes there
@@ -208,8 +246,25 @@ function Main(props: {
     const older = live.slice(1, 10).reverse();
     older.forEach((e, i) => (i === 0 ? history.replaceState : history.pushState).call(history, { entry: e.id, i }, "", hashFor(e)));
     if (older.length) history.pushState({ entry: live[0]!.id, i: older.length }, "", hashFor(live[0]!));
-    if (live.length) setTrail({ ids: [...older.map((e) => e.id), live[0]!.id], i: older.length });
+    if (live.length) setTrail({ ids: [...older.map((e) => e.id), live[0]!.id], i: older.length, seeded: older.length });
   };
+  const backTo = () => placeOf(trail().ids[trail().i - 1]);
+  const backTitle = () => (backTo() ? `Back to ${backTo()}` : "Back");
+  /** The back bubble shows for BACK_BUBBLE_MS after each step (not after a reload). */
+  const [backShown, setBackShown] = createSignal(false);
+  let backTimer = 0;
+  createEffect(
+    on(
+      () => trail().i,
+      () => {
+        clearTimeout(backTimer);
+        setBackShown(true);
+        backTimer = window.setTimeout(() => setBackShown(false), BACK_BUBBLE_MS);
+      },
+      { defer: true },
+    ),
+  );
+  onCleanup(() => clearTimeout(backTimer));
   /** Where a step's entry got to ("John 3:16"; at a chapter's start, the chapter), for Back/Forward's labels. */
   const placeOf = (id: string | undefined) => {
     const e = id && liveHistory(store.history()).find((x) => x.id === id);
@@ -407,6 +462,17 @@ function Main(props: {
         <button class="icon" classList={{ on: menuOpen() }} onClick={() => setMenuOpen((o) => !o)} title="Menu" aria-label="Menu" aria-expanded={menuOpen()}>
           <MenuIcon />
         </button>
+        {/* For a few seconds after a step (a jump of your own, or Back/Forward; not the recent places a fresh launch
+            adds): a bubble under the search bar back to where you were, with the panel that was open there. After
+            that, Back is the search bar's first suggestion (and in the menu). */}
+        <Show when={backShown() && trail().i > (trail().seeded ?? 0)}>
+          <button class="back-chip" onClick={() => history.back()} title={backTitle()} aria-label={backTitle()}>
+            <BackIcon />
+            <Show when={backTo()}>
+              <span>{backTo()}</span>
+            </Show>
+          </button>
+        </Show>
         <Omnibox
           text={props.text}
           store={store}
@@ -422,6 +488,8 @@ function Main(props: {
           onGo={goRef}
           badge={props.text.info.abbr}
           badgeTitle={`${props.text.info.name} (menu: Translation)`}
+          back={trail().i > 0 ? (backTo() ?? "") : undefined}
+          onBack={() => history.back()}
         />
         <div class="actions">
           <Show when={store.mode === "local"} fallback={<SyncDot store={store} />}>

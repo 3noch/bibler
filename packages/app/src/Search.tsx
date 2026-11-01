@@ -11,6 +11,7 @@ import { CloseIcon, NextIcon, PrevIcon, SearchIcon } from "./icons.tsx";
 export type Chip = { kind: "tag"; id: string } | { kind: "scope"; label: string; intervals: Interval[] };
 
 type Suggestion =
+  | { kind: "back"; label: string }
   | { kind: "go"; label: string; ref: string }
   | { kind: "chip"; label: string; hint: string; chip: Chip; color?: string };
 
@@ -31,6 +32,9 @@ export function Omnibox(props: {
   /** The translation's abbreviation, shown at rest when there is room, and its name. */
   badge?: string;
   badgeTitle?: string;
+  /** Where Back goes ("John 3"; "" if not known), offered first in the empty box; absent: nowhere. */
+  back?: string;
+  onBack: () => void;
 }) {
   const { index } = props.text;
   const [focused, setFocused] = createSignal(false);
@@ -80,7 +84,11 @@ export function Omnibox(props: {
         .filter((t) => !chosen.has(t.id))
         .slice(0, 6)
         .map((t): Suggestion => ({ kind: "chip", label: t.name, hint: "tag", chip: { kind: "tag", id: t.id }, color: t.color }));
-    if (!q) return focused() ? tagSugs([...props.store.palette(), ...props.store.tags().filter((t) => !props.store.palette().includes(t))]) : [];
+    if (!q) {
+      if (!focused()) return [];
+      const back: Suggestion[] = props.back !== undefined && !props.chips.length ? [{ kind: "back", label: props.back ? `Back to ${props.back}` : "Back" }] : [];
+      return [...back, ...tagSugs([...props.store.palette(), ...props.store.tags().filter((t) => !props.store.palette().includes(t))])];
+    }
     const out: Suggestion[] = [];
     const ql = q.toLowerCase();
     const tags = props.store
@@ -107,6 +115,11 @@ export function Omnibox(props: {
       const err = value().trim() ? props.onGo(value()) : null;
       setError(err);
       if (!err) input.blur();
+      return;
+    }
+    if (s.kind === "back") {
+      input.blur();
+      props.onBack();
       return;
     }
     if (s.kind === "go") {
@@ -207,11 +220,11 @@ export function Omnibox(props: {
                   apply(s);
                 }}
               >
-                <Show when={s.kind === "chip" && s.color} fallback={<span class="sug-icon">{s.kind === "go" ? "→" : "⌕"}</span>}>
+                <Show when={s.kind === "chip" && s.color} fallback={<span class="sug-icon">{s.kind === "back" ? "←" : s.kind === "go" ? "→" : "⌕"}</span>}>
                   <span class="swatch" style={{ "--c": (s as { color: string }).color }} />
                 </Show>
                 <span class="sug-label">{s.label}</span>
-                <span class="sug-hint">{s.kind === "go" ? "" : (s as { hint: string }).hint}</span>
+                <span class="sug-hint">{s.kind === "chip" ? s.hint : ""}</span>
               </li>
             )}
           </For>
