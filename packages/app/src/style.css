@@ -75,20 +75,22 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .sync.stalled::before { background: #c0563f; }
 
 /* ---------------------------------------------------------------- reading */
+/* The reader's font and size are the user's (`reading.ts`: --read-font, --read-scale); the width grows with the size
+   so lines keep about as many words. */
 .page {
-  max-width: 38rem; margin: 0 auto;
+  max-width: calc(38rem * var(--read-scale, 1)); margin: 0 auto;
   padding: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px) 20px calc(120px + env(safe-area-inset-bottom, 0px));
 }
 .chapter, .verse, .heading { scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
 .edge { height: 40vh; }
 .book-head { text-align: center; margin: 3.5rem 0 1rem; }
-.book-head h1 { margin: 0; font: 600 2rem/1.2 var(--serif); letter-spacing: 0.02em; font-variant: small-caps; }
-.book-head p { margin: 0.4rem 0 0; color: var(--muted); font: italic 0.95rem var(--serif); }
+.book-head h1 { margin: 0; font: 600 calc(2rem * var(--read-scale, 1))/1.2 var(--read-font, var(--serif)); letter-spacing: 0.02em; font-variant: small-caps; }
+.book-head p { margin: 0.4rem 0 0; color: var(--muted); font: italic calc(0.95rem * var(--read-scale, 1)) var(--read-font, var(--serif)); }
 .chapter-head {
   margin: 2.5rem 0 0.6rem; text-align: center;
-  font: 400 1.6rem var(--serif); color: var(--muted);
+  font: 400 calc(1.6rem * var(--read-scale, 1)) var(--read-font, var(--serif)); color: var(--muted);
 }
-.text { font-family: var(--serif); font-size: 1.18rem; line-height: 1.85; }
+.text { font-family: var(--read-font, var(--serif)); font-size: calc(1.18rem * var(--read-scale, 1)); line-height: 1.85; }
 .bible.painting .text { cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-x pan-y pinch-zoom; }
 .vn { font: 600 0.6em var(--sans); color: var(--faint); margin-right: 0.2em; vertical-align: 0.5em; line-height: 0; }
 .verse.title { display: block; font-style: italic; color: var(--muted); margin-bottom: 0.4rem; }
@@ -102,12 +104,12 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .indent.li2 { width: 2em; }
 .indent.qr, .indent.pc { width: 3em; }
 .heading { display: block; margin: 1.2rem 0 0.2rem; font-variant: small-caps; letter-spacing: 0.04em; color: var(--muted); }
-.heading.subscription { margin-top: 1rem; font-variant: normal; font-style: italic; font-size: 0.95rem; }
+.heading.subscription { margin-top: 1rem; font-variant: normal; font-style: italic; font-size: 0.8em; }
 /* A subsection or a speaker (Song of Songs); parallel passages; a book of Psalms and its range. */
 .heading.s2 { margin-top: 0.8rem; font-variant: normal; font-style: italic; letter-spacing: 0; }
-.heading.r { margin-top: 0; font: italic 0.85rem var(--sans); font-variant: normal; letter-spacing: 0; }
-.heading.ms1 { margin-top: 1.6rem; text-align: center; font-size: 1.1rem; }
-.heading.mr { margin-top: 0; text-align: center; font: italic 0.85rem var(--sans); font-variant: normal; letter-spacing: 0; }
+.heading.r { margin-top: 0; font: italic 0.72em var(--sans); font-variant: normal; letter-spacing: 0; }
+.heading.ms1 { margin-top: 1.6rem; text-align: center; font-size: 0.93em; }
+.heading.mr { margin-top: 0; text-align: center; font: italic 0.72em var(--sans); font-variant: normal; letter-spacing: 0; }
 .heading + .heading.r, .heading + .heading.mr, .heading + .heading.s2 { margin-top: 0; }
 .pilcrow { color: var(--faint); }
 .note { font-size: 0.6em; color: var(--faint); cursor: help; }
@@ -406,7 +408,12 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
   border-radius: 0 16px 16px 0; animation: slide-right 0.18s ease-out;
 }
 @keyframes slide-right { from { transform: translateX(-16px); opacity: 0; } }
-.menu-head { display: flex; align-items: center; height: var(--bar); margin-top: -6px; }
+.menu-head { display: flex; align-items: center; justify-content: space-between; height: var(--bar); margin-top: -6px; }
+.menu-head .icon { color: var(--muted); }
+.menu-head .icon:disabled { opacity: 0.35; }
+.menu-tools { display: flex; align-items: center; gap: 2px; }
+.text-icon { font: 600 1rem var(--serif); }
+.text-icon[aria-pressed="true"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .menu-section { padding: 8px 0; border-top: 1px solid var(--line); }
 .menu-head + .menu-section { border-top: 0; }
 .menu-row {
@@ -418,8 +425,22 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .menu-label { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-label .muted { font-size: 0.8rem; }
 .version { padding: 24px 10px 8px; font: 0.72rem var(--sans); color: var(--muted); opacity: 0.75; user-select: text; }
-.undo-row { display: flex; gap: 4px; }
-.undo-row .menu-row { flex: 1; }
+.reading { display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 12px; }
+.choices { display: flex; gap: 6px; }
+.choices button {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; padding: 6px 4px;
+  border: 1px solid var(--line); border-radius: 10px; color: var(--ink); font-size: 0.75rem;
+}
+.choices button .sample { font-size: 1.25rem; line-height: 1.2; }
+.choices button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.choices button:not([aria-pressed="true"]):hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.size-row { display: flex; align-items: center; gap: 6px; }
+.size-row button { display: grid; place-items: center; width: 44px; height: 40px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); }
+.size-row button:disabled { opacity: 0.4; }
+.size-row .small { font: 0.85rem var(--serif); }
+.size-row .large { font: 1.3rem var(--serif); }
+.size-value { flex: 1; height: 40px; border-radius: 10px; color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.size-value:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .contents h3 { margin: 10px 10px 4px; font: 600 0.75rem var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .contents ul { list-style: none; margin: 0; padding: 0; }
 .book-row {

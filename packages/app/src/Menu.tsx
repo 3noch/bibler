@@ -1,11 +1,13 @@
-// The menu (top-left button): account, space, undo/redo, help, the translation, recent reading (history.ts) and the
-// contents (books -> chapters), in a drawer so the top bar fits a phone.
+// The menu (top-left button), a drawer so the top bar fits a phone. Its header holds the things seldom needed as
+// icons: undo/redo, the text's font and size (reading.ts; "Aa" opens them under the header) and help. Below it:
+// account, space, the translation, recent reading (history.ts) and the contents (books -> chapters).
 import { createSignal, For, Show } from "solid-js";
 import { BOOKS, formatInterval, type HistoryEntry, type TextIndex } from "@bible-tags/scripture";
 import type { TagStore } from "./store.ts";
 import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
+import { FONTS, SIZES, font, resetSize, setFont, size, stepSize } from "./reading.ts";
 import { CheckIcon, CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
 
 export function Menu(props: {
@@ -24,9 +26,12 @@ export function Menu(props: {
   onText: (id: string) => void;
   onSpaces: () => void;
   onHelp: () => void;
+  /** Change how the text looks, keeping the verse at the top. */
+  onReading: (change: () => void) => void;
   onClose: () => void;
 }) {
   const s = props.store;
+  const [reading, setReading] = createSignal(false);
   return (
     <>
       <div class="scrim" onClick={props.onClose} />
@@ -35,7 +40,31 @@ export function Menu(props: {
           <button class="icon" onClick={props.onClose} aria-label="Close menu">
             <CloseIcon />
           </button>
+          <div class="menu-tools">
+            <button class="icon" disabled={!s.canUndo()} onClick={() => s.undo()} aria-label="Undo" title="Undo (⌘Z)">
+              <UndoIcon />
+            </button>
+            <button class="icon" disabled={!s.canRedo()} onClick={() => s.redo()} aria-label="Redo" title="Redo (⇧⌘Z)">
+              <RedoIcon />
+            </button>
+            <button
+              class="icon text-icon"
+              aria-pressed={reading()}
+              aria-expanded={reading()}
+              onClick={() => setReading(!reading())}
+              aria-label="Text font and size"
+              title="Text font and size"
+            >
+              Aa
+            </button>
+            <button class="icon" onClick={props.onHelp} aria-label="Help" title="Help">
+              <HelpIcon />
+            </button>
+          </div>
         </div>
+        <Show when={reading()}>
+          <Reading onReading={props.onReading} />
+        </Show>
         <AccountSection store={s} />
         <Show when={s.mode === "server"}>
           <section class="menu-section">
@@ -49,20 +78,6 @@ export function Menu(props: {
             </button>
           </section>
         </Show>
-        <section class="menu-section undo-row">
-          <button class="menu-row" disabled={!s.canUndo()} onClick={() => s.undo()} title="Undo (⌘Z)">
-            <UndoIcon /> Undo
-          </button>
-          <button class="menu-row" disabled={!s.canRedo()} onClick={() => s.redo()} title="Redo (⇧⌘Z)">
-            <RedoIcon /> Redo
-          </button>
-        </section>
-        <section class="menu-section">
-          <button class="menu-row" onClick={props.onHelp}>
-            <HelpIcon />
-            <span class="menu-label">Help</span>
-          </button>
-        </section>
         <Texts texts={props.texts} text={props.text} onText={props.onText} />
         <Recent index={props.index} recent={props.recent} reading={props.reading} onResume={props.onResume} />
         <Contents index={props.index} here={props.here} onChapter={props.onChapter} />
@@ -124,6 +139,38 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
         <p class="muted texts-note">Tags show in the translation they were made in.</p>
       </Show>
     </nav>
+  );
+}
+
+/** The text's font and size (this device's: reading.ts). */
+function Reading(props: { onReading: (change: () => void) => void }) {
+  const percent = () => `${Math.round(SIZES[size()]! * 100)}%`;
+  return (
+    <section class="menu-section reading" aria-label="Text font and size">
+      <div class="choices" role="group" aria-label="Font">
+        <For each={FONTS}>
+          {(f) => (
+            <button aria-pressed={font() === f.id} onClick={() => props.onReading(() => setFont(f.id))}>
+              <span class="sample" style={{ "font-family": f.stack }}>
+                Aa
+              </span>
+              {f.name}
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="size-row" role="group" aria-label="Text size">
+        <button disabled={size() === 0} onClick={() => props.onReading(() => stepSize(-1))} aria-label="Smaller text">
+          <span class="small">A</span>
+        </button>
+        <button class="size-value" onClick={() => props.onReading(resetSize)} title="Back to 100%" aria-label={`Text size ${percent()}; reset`}>
+          {percent()}
+        </button>
+        <button disabled={size() === SIZES.length - 1} onClick={() => props.onReading(() => stepSize(1))} aria-label="Larger text">
+          <span class="large">A</span>
+        </button>
+      </div>
+    </section>
   );
 }
 

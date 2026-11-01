@@ -14,12 +14,23 @@
   translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
-- Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): account (sign in,
-  or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card), undo/redo,
-  help, translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
-  translation they were made in), recent reading (collapsed; the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
-  ago; choosing one goes back to where it left off), contents (Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
-  books go straight there; choosing closes the menu), and at the very bottom (seen only by scrolling there) a faded version stamp (`Version.tsx`: the app's commit from index.html's meta tags and the server's from the last sync `ready`).
+- Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): its header holds
+  what is seldom needed, as icons (2026-10-31: the user wants the list for what people need most of the time): Close,
+  then Undo, Redo, **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
+  or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
+  translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
+  translation they were made in), recent reading (collapsed; see below), contents. **Text font and size**
+  (2026-10-31, `reading.ts`: font Serif/Book/Sans, all system stacks
+  so nothing downloads; size 80-190% in steps, the percentage resets to 100%; per device in localStorage
+  `bible-tags/reading/v1`, decided with the user: not per account, group or translation, since the right size
+  depends on the screen; applied as `--read-font`/`--read-scale` on the root, used only by the reader's styles, and
+  the page width scales with the size so lines keep their length; a change keeps the verse at the top, also across
+  quick repeated clicks). Recent reading lists the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
+  ago; choosing one goes back to where it left off. Contents: Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
+  books go straight there; choosing closes the menu. At the very bottom (seen only by scrolling there) a faded version stamp (`Version.tsx`: the app's commit from index.html's meta tags and the server's from the last sync `ready`).
+- Deferred (2026-10-31; the user will use the app and see whether it's needed): a quicker undo on phones, where the
+  menu is two taps away. A dock button was ruled out (with many tags a phone's dock is already full); the favored idea
+  is a "↶ Undo" pill above the dock after a paint/erase that fades ~6 s after the last change.
 - Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user

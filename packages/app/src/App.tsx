@@ -188,6 +188,9 @@ function Main(props: {
   };
   /** The verse at the top of the reader, from `Bible`. */
   let topVerse: () => number | null = () => null;
+  /** The verse a font or size change is keeping at the top, while it may not be there yet. */
+  let readingTop: number | null = null;
+  let readingTimer = 0;
   onMount(() => {
     const mine = liveHistory(store.history()).find((e) => e.id === reading());
     if (typeof props.start === "number") goTo(chapterOf(props.start), null, props.start); // another text, same place
@@ -427,6 +430,17 @@ function Main(props: {
             setMenuOpen(false);
             setSpacesOpen(false);
             setHelp(true);
+          }}
+          onReading={(change) => {
+            // The verse at the top stays there (the menu stays open, to try another size). A second change soon
+            // after keeps the same verse: the first one's scroll back to it may not have happened yet.
+            const top = readingTop ?? topVerse();
+            change();
+            if (top === null) return;
+            readingTop = top;
+            clearTimeout(readingTimer);
+            readingTimer = window.setTimeout(() => (readingTop = null), 600);
+            goTo(chapterOf(top), null, top);
           }}
           onClose={() => setMenuOpen(false)}
         />
