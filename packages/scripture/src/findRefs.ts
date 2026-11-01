@@ -21,8 +21,12 @@ const NUM = String.raw`\d{1,3}`;
 const VERSE = String.raw`\s*:\s*${NUM}`;
 const DASH = String.raw`\s*[-–—]\s*`;
 const TAIL = String.raw`${NUM}(?:${VERSE})?(?:${DASH}${NUM}(?:${VERSE})?)?(?:\s*,\s*${NUM}(?:${DASH}${NUM})?)*`;
-/** A book phrase, then a chapter (and more): a candidate for `parseRef`. Not inside a word or number. */
-const CANDIDATE = new RegExp(String.raw`(?<![\p{L}\p{N}])(${BOOK})\s*(${TAIL})(?![\p{L}\p{N}]|\s*:\s*\d)`, "gu");
+/** A book phrase, then a chapter (and more): a candidate for `parseRef`. Not inside a word or number, and not right
+ *  after a book number: when "1 Jn 1:19" fails (1 John 1 has 10 verses), "Jn 1:19" must not be tried in its place. */
+const CANDIDATE = new RegExp(
+  String.raw`(?<![\p{L}\p{N}])(?<!(?:^|[^\p{L}\p{N}])${ORDINAL})(${BOOK})\s*(${TAIL})(?![\p{L}\p{N}]|\s*:\s*\d)`,
+  "gu",
+);
 
 /** Book names spelled out (not abbreviations): a name, its ref form ("Psalm"), or a long alias ("Song of Songs"). */
 const NAMES = new Set(

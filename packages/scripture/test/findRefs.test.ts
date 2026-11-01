@@ -19,6 +19,7 @@ test("findRefs: references in prose become links", () => {
   assert.deepEqual(links("John 3:16–4:2"), ["John 3:16–4:2 -> John 3:16–4:2"]);
   assert.deepEqual(links("Jude 5"), ["Jude 5 -> Jude 5"]);
   assert.deepEqual(links("II Kings 2:11"), ["II Kings 2:11 -> 2 Kings 2:11"]);
+  assert.deepEqual(links("1 Jn 1:9 and 1Jn 4:8"), ["1 Jn 1:9 -> 1 John 1:9", "1Jn 4:8 -> 1 John 4:8"]);
 });
 
 test("findRefs: each reference in a list is its own link", () => {
@@ -39,6 +40,8 @@ test("findRefs: no typos, no ambiguity, nothing out of range, nothing bare", () 
   assert.deepEqual(links("Jhon 3:16"), [], "a typo the location field would forgive");
   assert.deepEqual(links("Jon 1:1"), [], "Jonah or John");
   assert.deepEqual(links("John 30:1"), [], "no such chapter");
+  assert.deepEqual(links("1 Jn 1:19"), [], "1 John 1 has 10 verses; not John 1:19 instead");
+  assert.deepEqual(links("II Kings 30:1 and III John 9"), ["III John 9 -> 3 John 9"]);
   assert.deepEqual(links("John 3:16, 99"), [], "a list with a verse that doesn't exist: none of it, rather than a guess");
   assert.deepEqual(links("verse 3:16 here"), [], "no book");
   assert.deepEqual(links("Romans"), [], "a book alone");
