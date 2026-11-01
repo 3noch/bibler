@@ -426,6 +426,7 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .menu-head .icon { color: var(--muted); }
 .menu-head .icon:disabled { opacity: 0.35; }
 .menu-tools { display: flex; align-items: center; gap: 2px; }
+.menu-tools-gap { width: 10px; }
 .text-icon { font: 600 1rem var(--serif); }
 .text-icon[aria-pressed="true"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .menu-section { padding: 8px 0; border-top: 1px solid var(--line); }

@@ -26,9 +26,11 @@ SERVE_DATA := --data build/serve-data $(if $(wildcard build/serve.db),--migrate-
 .PHONY: dev dev-server dev-client serve build client server text test test-rust test-ts check fmt nix clean node-check pages pages-serve \
   cloudflare-assets cloudflare-dev cloudflare-deploy cloudflare-qa cloudflare-test
 
+# Ctrl-C (or either process ending) stops both. The trap clears itself first: `kill 0` signals this shell too, and a
+# trap that ran again on that TERM recursed until bash 5 crashed (a segfault that left the server or Vite running).
 dev: $(TEXT) node_modules/.installed
 	@echo "==> http://localhost:5173  (API/text served by the Rust dev server on $(SERVER_ADDR))"
-	@trap 'kill 0' INT TERM EXIT; \
+	@trap 'trap - INT TERM EXIT; kill 0' INT TERM EXIT; \
 	  cargo run -q -p server -- --addr $(SERVER_ADDR) --text build/text $(DEV_DATA) & \
 	  BACKEND=http://$(SERVER_ADDR) $(NPM) run -w @bible-tags/app dev & \
 	  wait

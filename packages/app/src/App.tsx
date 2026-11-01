@@ -14,11 +14,27 @@ import { ulid } from "./ulid.ts";
 
 /** This tab's reading-history entry (App's `reading`). */
 const READING_KEY = "bible-tags/reading/v1";
+/** This tab's browser history steps (App's `trail`). */
+const TRAIL_KEY = "bible-tags/trail/v1";
+/** The entries of this tab's browser history steps (each jump is one), and which step is current: `i` is also in
+ *  each step's state ({entry, i}). The browser won't say whether Back or Forward lead anywhere, or where. */
+interface Trail {
+  ids: string[];
+  i: number;
+}
 const sessionGet = (k: string) => {
   try {
     return sessionStorage.getItem(k);
   } catch {
     return null;
+  }
+};
+const sessionTrail = (): Trail => {
+  try {
+    const t = JSON.parse(sessionGet(TRAIL_KEY) ?? "null") as Trail | null;
+    return t && Array.isArray(t.ids) && typeof t.i === "number" ? t : { ids: [], i: -1 };
+  } catch {
+    return { ids: [], i: -1 };
   }
 };
 const sessionSet = (k: string, v: string | null) => {
@@ -118,10 +134,21 @@ function Main(props: {
   // step whose Back returns to where the previous entry left off. Stepping chapters ([ ]) is reading on.
   /** This tab's entry (sessionStorage: a reload resumes it). */
   const [reading, setReading] = createSignal<string | null>(sessionGet(READING_KEY));
+  const [trail, setTrailSignal] = createSignal<Trail>(sessionTrail());
+  const setTrail = (t: Trail) => {
+    setTrailSignal(t);
+    sessionSet(TRAIL_KEY, JSON.stringify(t));
+  };
+  /** Make `id` this step's entry, or a new step's after it (`push`: Forward steps are dropped, as the browser does). */
   const setEntry = (id: string, push: boolean) => {
     setReading(id);
     sessionSet(READING_KEY, id);
-    (push ? history.pushState : history.replaceState).call(history, { entry: id }, "", location.hash);
+    const t = trail();
+    const i = push ? t.i + 1 : Math.max(t.i, 0);
+    const ids = push ? t.ids.slice(0, i) : [...t.ids];
+    ids[i] = id;
+    setTrail({ ids, i });
+    (push ? history.pushState : history.replaceState).call(history, { entry: id, i }, "", location.hash);
   };
   /** Opened without a place to go (the app, a group): follow the newest entry, also when the server's list
    *  arrives, until the user goes somewhere themselves. */
@@ -155,17 +182,20 @@ function Main(props: {
   /** Back (or Forward) to a history step: that entry, where it left off now. The hash change that follows is it. */
   let popped: string | null = null;
   const onPop = (ev: PopStateEvent) => {
-    const id = (ev.state as { entry?: string } | null)?.entry;
+    const { entry: id, i } = (ev.state ?? {}) as { entry?: string; i?: number };
+    if (typeof i === "number") setTrail({ ids: trail().ids, i });
     const e = id && liveHistory(store.history()).find((x) => x.id === id);
     if (!e) return;
     popped = location.hash;
     following = false;
     resume(e, false);
-    history.replaceState({ entry: e.id }, "", location.hash);
   };
   // A typed or followed link (#/Ref) in an open tab; its browser history step exists already.
   const onHash = () => {
     if (location.hash === popped) return void (popped = null);
+    // The browser made a new step for it (dropping any Forward ones): the jump below fills it in.
+    const t = trail();
+    setTrail({ ids: t.ids.slice(0, t.i + 1), i: t.i + 1 });
     const named = splitHash(location.hash).text;
     const other = named && findText(props.texts, named);
     if (other && other.id !== props.text.id) return props.onText(other.id, "link"); // the new reader goes there
@@ -176,8 +206,17 @@ function Main(props: {
   const seedBack = (live: HistoryEntry[]) => {
     if (history.state !== null) return;
     const older = live.slice(1, 10).reverse();
-    older.forEach((e, i) => (i === 0 ? history.replaceState : history.pushState).call(history, { entry: e.id }, "", hashFor(e)));
-    if (older.length) history.pushState({ entry: live[0]!.id }, "", hashFor(live[0]!));
+    older.forEach((e, i) => (i === 0 ? history.replaceState : history.pushState).call(history, { entry: e.id, i }, "", hashFor(e)));
+    if (older.length) history.pushState({ entry: live[0]!.id, i: older.length }, "", hashFor(live[0]!));
+    if (live.length) setTrail({ ids: [...older.map((e) => e.id), live[0]!.id], i: older.length });
+  };
+  /** Where a step's entry got to ("John 3:16"; at a chapter's start, the chapter), for Back/Forward's labels. */
+  const placeOf = (id: string | undefined) => {
+    const e = id && liveHistory(store.history()).find((x) => x.id === id);
+    if (!e) return undefined;
+    const slot = index.slotOf(e.last.ord);
+    if (index.locateSlot(slot).verse <= 1) return chapterLabel(chapterOf(e.last.ord));
+    return formatInterval(index, [index.verseStart[slot]!, index.slotEnd(slot)]);
   };
   const resumeNewest = () => {
     const newest = liveHistory(store.history())[0];
@@ -425,6 +464,16 @@ function Main(props: {
             setMenuOpen(false);
             setHelp(false);
             setSpacesOpen(true);
+          }}
+          back={trail().i > 0 ? { to: placeOf(trail().ids[trail().i - 1]) } : null}
+          forward={trail().i < trail().ids.length - 1 ? { to: placeOf(trail().ids[trail().i + 1]) } : null}
+          onBack={() => {
+            setMenuOpen(false);
+            history.back();
+          }}
+          onForward={() => {
+            setMenuOpen(false);
+            history.forward();
           }}
           onHelp={() => {
             setMenuOpen(false);

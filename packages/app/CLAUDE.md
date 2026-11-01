@@ -16,7 +16,11 @@
   side panel, no help text.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): its header holds
   what is seldom needed, as icons (2026-10-31: the user wants the list for what people need most of the time): Close,
-  then **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
+  then **Back/Forward** (2026-10-31: this tab's jumps, like the browser's buttons, which an installed app lacks; greyed
+  out when there's no step, labelled "Back to Romans 8"/"Forward to John 3:16"; App keeps `trail` = each step's entry
+  plus the current index, which every step's state also carries as `{entry, i}`, in sessionStorage, since the browser
+  says neither whether a step exists nor where it goes; links followed in an open tab and a fresh launch's seeded steps
+  are steps too), **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
   translation they were made in), recent reading (collapsed; see below), contents. **Text font and size**

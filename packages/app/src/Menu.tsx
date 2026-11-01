@@ -1,5 +1,6 @@
 // The menu (top-left button), a drawer so the top bar fits a phone. Its header holds the things seldom needed as
-// icons: the text's font and size (reading.ts; "Aa" opens them under the header) and help. Below it:
+// icons: Back/Forward (this tab's jumps, as the browser's buttons; an installed app has none), the text's font and
+// size (reading.ts; "Aa" opens them under the header) and help. Below it:
 // account, space, the translation, recent reading (history.ts) and the contents (books -> chapters).
 import { createSignal, For, Show } from "solid-js";
 import { BOOKS, formatInterval, type HistoryEntry, type TextIndex } from "@bible-tags/scripture";
@@ -8,7 +9,7 @@ import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
 import { FONTS, SIZES, font, resetSize, setFont, size, stepSize } from "./reading.ts";
-import { CheckIcon, CloseIcon, GroupIcon, HelpIcon, NextIcon } from "./icons.tsx";
+import { BackIcon, CheckIcon, CloseIcon, ForwardIcon, GroupIcon, HelpIcon, NextIcon } from "./icons.tsx";
 
 export function Menu(props: {
   store: TagStore;
@@ -25,6 +26,11 @@ export function Menu(props: {
   text: TextInfo;
   onText: (id: string) => void;
   onSpaces: () => void;
+  /** Where Back and Forward go (null: nowhere; `to` names the place when known). */
+  back: { to?: string } | null;
+  forward: { to?: string } | null;
+  onBack: () => void;
+  onForward: () => void;
   onHelp: () => void;
   /** Change how the text looks, keeping the verse at the top. */
   onReading: (change: () => void) => void;
@@ -41,6 +47,13 @@ export function Menu(props: {
             <CloseIcon />
           </button>
           <div class="menu-tools">
+            <button class="icon" disabled={!props.back} onClick={props.onBack} aria-label={props.back?.to ? `Back to ${props.back.to}` : "Back"} title={props.back?.to ? `Back to ${props.back.to}` : "Back"}>
+              <BackIcon />
+            </button>
+            <button class="icon" disabled={!props.forward} onClick={props.onForward} aria-label={props.forward?.to ? `Forward to ${props.forward.to}` : "Forward"} title={props.forward?.to ? `Forward to ${props.forward.to}` : "Forward"}>
+              <ForwardIcon />
+            </button>
+            <span class="menu-tools-gap" />
             <button
               class="icon text-icon"
               aria-pressed={reading()}
