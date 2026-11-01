@@ -5,6 +5,7 @@ import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
 import { LinkedText, RefLinks } from "./Comments.tsx";
+import { layout } from "./reading.ts";
 import { NoteOpener, type OpenNote } from "./Verse.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
@@ -85,7 +86,7 @@ export function App() {
   });
   createEffect(() => {
     const t = text();
-    if (t) keepOffline(t.id);
+    if (t && !t.info.limits) keepOffline(t.id); // a limited text is read a page at a time, never kept
   });
   /** Where the reader starts after switching texts: the verse that was at the top, or the link that switched. */
   let start: number | "link" | null = null;
@@ -593,6 +594,7 @@ function Main(props: {
       <main class="page">
         <Bible
           text={props.text}
+          paged={!!props.text.info.limits || layout() === "pages"}
           store={store}
           activeTag={activeTag()}
           eraser={eraser()}

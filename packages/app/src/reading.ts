@@ -2,7 +2,8 @@
 // laptop, and devices have different fonts installed), kept in localStorage, not synced. Applied as CSS variables on
 // the root (`--read-font`, `--read-scale`), which only the reader's styles use: the top bar and menus keep theirs.
 // The fonts are system ones (nothing to download, so offline reading is unchanged); each stack falls back to a
-// close relative where the first choice isn't installed.
+// close relative where the first choice isn't installed. Also the layout: one continuous scroll, or a chapter at a
+// time (pages); a text its license limits is always read in pages (Bible.tsx).
 import { createSignal } from "solid-js";
 
 export interface ReadingFont {
@@ -23,14 +24,16 @@ const DEFAULT_SIZE = SIZES.indexOf(1);
 
 const KEY = "bible-tags/reading/v1";
 
-function load(): { font: string; size: number } {
+export type Layout = "scroll" | "pages";
+
+function load(): { font: string; size: number; layout: Layout } {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) ?? "null") as { font?: unknown; size?: unknown } | null;
+    const v = JSON.parse(localStorage.getItem(KEY) ?? "null") as { font?: unknown; size?: unknown; layout?: unknown } | null;
     const font = FONTS.some((f) => f.id === v?.font) ? (v!.font as string) : FONTS[0]!.id;
     const size = typeof v?.size === "number" && SIZES.includes(v.size) ? SIZES.indexOf(v.size) : DEFAULT_SIZE;
-    return { font, size };
+    return { font, size, layout: v?.layout === "pages" ? "pages" : "scroll" };
   } catch {
-    return { font: FONTS[0]!.id, size: DEFAULT_SIZE };
+    return { font: FONTS[0]!.id, size: DEFAULT_SIZE, layout: "scroll" };
   }
 }
 
@@ -38,14 +41,15 @@ const initial = load();
 const [font, setFontSignal] = createSignal(initial.font);
 /** Index into SIZES. */
 const [size, setSizeSignal] = createSignal(initial.size);
-export { font, size };
+const [layout, setLayoutSignal] = createSignal<Layout>(initial.layout);
+export { font, layout, size };
 
 function apply() {
   const root = document.documentElement.style;
   root.setProperty("--read-font", (FONTS.find((f) => f.id === font()) ?? FONTS[0]!).stack);
   root.setProperty("--read-scale", String(SIZES[size()]));
   try {
-    localStorage.setItem(KEY, JSON.stringify({ font: font(), size: SIZES[size()] }));
+    localStorage.setItem(KEY, JSON.stringify({ font: font(), size: SIZES[size()], layout: layout() }));
   } catch {
     // private mode: this visit only
   }
@@ -60,6 +64,11 @@ export function setFont(id: string) {
 /** Step the size by `by` (clamped to SIZES). */
 export function stepSize(by: number) {
   setSizeSignal(Math.min(SIZES.length - 1, Math.max(0, size() + by)));
+  apply();
+}
+
+export function setLayout(l: Layout) {
+  setLayoutSignal(l);
   apply();
 }
 

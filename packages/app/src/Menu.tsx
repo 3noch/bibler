@@ -8,8 +8,8 @@ import type { TagStore } from "./store.ts";
 import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
-import { FONTS, SIZES, font, resetSize, setFont, size, stepSize } from "./reading.ts";
-import { BackIcon, CheckIcon, CloseIcon, ForwardIcon, GroupIcon, HelpIcon, NextIcon } from "./icons.tsx";
+import { FONTS, SIZES, font, layout, resetSize, setFont, setLayout, size, stepSize } from "./reading.ts";
+import { BackIcon, CheckIcon, CloseIcon, CloudIcon, ForwardIcon, GroupIcon, HelpIcon, NextIcon, OfflineIcon } from "./icons.tsx";
 
 export function Menu(props: {
   store: TagStore;
@@ -70,7 +70,7 @@ export function Menu(props: {
           </div>
         </div>
         <Show when={reading()}>
-          <Reading onReading={props.onReading} />
+          <Reading onReading={props.onReading} limited={!!props.text.limits} />
         </Show>
         <AccountSection store={s} />
         <Show when={s.mode === "server"}>
@@ -138,6 +138,10 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
                     </Show>
                   </span>
                   <span class="muted rights">{t.rights}</span>
+                  <span class="muted text-access">
+                    {t.limits ? <CloudIcon /> : <OfflineIcon />}
+                    {t.limits ? "Online only, a page at a time (its license)" : "Can be read offline"}
+                  </span>
                 </button>
               </li>
             )}
@@ -150,7 +154,7 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
 }
 
 /** The text's font and size (this device's: reading.ts). */
-function Reading(props: { onReading: (change: () => void) => void }) {
+function Reading(props: { onReading: (change: () => void) => void; limited: boolean }) {
   const percent = () => `${Math.round(SIZES[size()]! * 100)}%`;
   return (
     <section class="menu-section reading" aria-label="Text font and size">
@@ -166,6 +170,22 @@ function Reading(props: { onReading: (change: () => void) => void }) {
           )}
         </For>
       </div>
+      <div class="choices layout" role="group" aria-label="Layout">
+        <For each={[["scroll", "Scroll"], ["pages", "Chapter by chapter"]] as const}>
+          {([id, name]) => (
+            <button
+              aria-pressed={(props.limited ? "pages" : layout()) === id}
+              disabled={props.limited}
+              onClick={() => props.onReading(() => setLayout(id))}
+            >
+              {name}
+            </button>
+          )}
+        </For>
+      </div>
+      <Show when={props.limited}>
+        <p class="muted layout-note">This translation is read a page at a time: its license limits how much may show at once.</p>
+      </Show>
       <div class="size-row" role="group" aria-label="Text size">
         <button disabled={size() === 0} onClick={() => props.onReading(() => stepSize(-1))} aria-label="Smaller text">
           <span class="small">A</span>

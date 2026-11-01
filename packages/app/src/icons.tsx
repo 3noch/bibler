@@ -19,6 +19,8 @@ export const CloseIcon = () => <Icon><path d="M18 6 6 18M6 6l12 12" /></Icon>;
 export const PencilIcon = () => <Icon><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></Icon>;
 export const CommentIcon = () => <Icon><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12Z" /></Icon>;
 export const TrashIcon = () => <Icon><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></Icon>;
+export const OfflineIcon = () => <Icon><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Icon>;
+export const CloudIcon = () => <Icon><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4.25 4.25 0 0 1-.5 8.5Z" /></Icon>;
 export const BackIcon = () => <Icon><path d="M19 12H5M12 19l-7-7 7-7" /></Icon>;
 export const ForwardIcon = () => <Icon><path d="M5 12h14M12 5l7 7-7 7" /></Icon>;
 export const PrevIcon = () => <Icon><path d="m15 18-6-6 6-6" /></Icon>;

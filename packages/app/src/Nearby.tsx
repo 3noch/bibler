@@ -173,8 +173,10 @@ export function Snippet(props: {
   onUnhighlight?: () => void;
 }) {
   const { index } = props.text;
+  // A text its license limits shows words only on its pages (a list of places would show too much at once).
+  const limited = !!props.text.info.limits;
   const [bt] = createResource(
-    () => props.iv,
+    () => !limited && props.iv,
     (iv) => loadBook(props.text, index.bookOf(iv[0])),
   );
   const parts = createMemo(() => {
@@ -224,7 +226,7 @@ export function Snippet(props: {
           </span>
         </Show>
       </span>
-      <Show when={parts()} fallback={<span class="snip-text muted">…</span>}>
+      <Show when={parts()} fallback={<span class="snip-text muted">{limited ? "Tap to read it on its page" : "…"}</span>}>
         {(p) => (
           <span class="snip-text" classList={{ long: p().long }}>
             <Show when={p().before}>

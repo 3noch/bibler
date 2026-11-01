@@ -2,9 +2,12 @@
 // JSON from /text/<text_id>/. Files other than the list and the manifests are content-hashed, so the browser cache
 // and the service worker (src/sw.js) keep them forever. Which text is read is chosen per device; the service worker
 // keeps the files of the last few read (KEEP_TEXTS) for offline reading and drops the rest, since a device can't
-// hold every translation we may offer.
+// hold every translation we may offer. A text its license limits (`limits`: docs/text-format.md) is never downloaded
+// or kept: it is read a page at a time from the server (`loadPage`), and isn't offered without one.
 import { createSignal } from "solid-js";
-import { TextIndex, type Interval } from "@bible-tags/scripture";
+import { TextIndex, type Interval, type Limits } from "@bible-tags/scripture";
+
+const LOCAL_ONLY = import.meta.env.VITE_SYNC === "local";
 
 /** The text read until another is chosen. */
 export const DEFAULT_TEXT = "kjv-1769-v2";
@@ -24,6 +27,8 @@ export interface TextInfo {
   name: string;
   /** The license or copyright line, shown with the text. */
   rights: string;
+  /** Set when its license limits how much may be shown at once: read a page at a time, online only. */
+  limits?: Limits;
 }
 
 const storageGet = (k: string) => {
@@ -71,7 +76,8 @@ export const hashOf = (text: TextInfo, ref: string) => `#/${encodeURIComponent(t
 /** The texts on offer. Offline without a cached list: just the one being read. */
 export async function loadCatalog(): Promise<TextInfo[]> {
   try {
-    return (await (await fetchOk(root + "texts.json")).json()) as TextInfo[];
+    const list = (await (await fetchOk(root + "texts.json")).json()) as TextInfo[];
+    return LOCAL_ONLY ? list.filter((t) => !t.limits) : list; // its pages come from a server
   } catch {
     const t = await loadText(textId()).catch(() => null);
     return t ? [t.info] : [];
@@ -111,6 +117,7 @@ interface Manifest {
   abbr: string;
   name: string;
   rights: string;
+  limits?: Limits;
   index: string;
   books: ManifestBook[];
 }
@@ -185,7 +192,7 @@ export function loadText(id: string): Promise<Text> {
     p = (async () => {
       const manifest = (await (await fetchOk(base + "manifest.json")).json()) as Manifest;
       const index = new TextIndex(await (await fetchOk(base + manifest.index)).arrayBuffer());
-      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights };
+      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights, limits: manifest.limits };
       return { id, info, manifest, index };
     })();
     p.catch(() => texts.delete(id));
@@ -213,6 +220,15 @@ export function loadBook(text: Text, book: number): Promise<BookText> {
     books.set(m.code, p);
   }
   return p;
+}
+
+/** Slots `from..to` of a limited text, from the server (which checks its limits), by book index. Not cached: a
+ *  device may keep only what it shows. */
+export async function loadPage(text: Text, from: number, to: number): Promise<Map<number, BookText>> {
+  const res = await fetchOk(`/api/text/${encodeURIComponent(text.id)}/page?from=${from}&to=${to}`);
+  const { books } = (await res.json()) as { books: BookJson[] };
+  const byCode = new Map(text.manifest.books.map((b, i) => [b.code, i]));
+  return new Map(books.map((j) => [byCode.get(j.book)!, toBookText(j, text.index)]));
 }
 
 function toBookText(j: BookJson, index: TextIndex): BookText {

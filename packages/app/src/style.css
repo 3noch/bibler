@@ -471,6 +471,29 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .choices button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .choices button:not([aria-pressed="true"]):hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .size-row { display: flex; align-items: center; gap: 6px; }
+.choices.layout button { min-height: 40px; font-size: 0.85rem; }
+.choices.layout button:disabled { opacity: 0.55; }
+.layout-note { margin: 0; font-size: 0.78rem; }
+.text-access { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; }
+.text-access svg { width: 14px; height: 14px; }
+/* Pages (Bible.tsx `paged`): ‹ previous · next ›, the neighbouring verses dimmed, the license line at the end. */
+.page-nav { display: flex; justify-content: space-between; gap: 8px; margin: 0.8rem 0; font-family: var(--sans); }
+.page-step {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line);
+  border-radius: 999px; color: var(--ink); font-size: 0.9rem;
+}
+.page-step:disabled { visibility: hidden; }
+.page-step:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.chapter.context { opacity: 0.5; }
+.chapter.context .text { margin: 0.4rem 0; }
+.page-rights { margin: 1.5rem 0 0; font: 0.75rem/1.4 var(--sans); color: var(--muted); }
+.pull {
+  position: fixed; left: 50%; bottom: calc(88px + env(safe-area-inset-bottom, 0px)); z-index: 15; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 12px;
+  background: var(--surface); box-shadow: var(--shadow); border: 1px solid var(--line); font: 0.85rem var(--sans);
+}
+.pull.up { bottom: auto; top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 10px); }
+.pull-bar { width: 120px; height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) calc(var(--p) * 100%), var(--line) 0); }
 .size-row button { display: grid; place-items: center; width: 44px; height: 40px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); }
 .size-row button:disabled { opacity: 0.4; }
 .size-row .small { font: 0.85rem var(--serif); }

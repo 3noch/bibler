@@ -14,6 +14,19 @@
   translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
+- **Pages** (2026-11-01; `Bible.tsx` `paged`): a chapter at a time, or the part of one a licensed text's limits allow
+  (`chunksOf`/`pageSlots` in packages/scripture limits.ts), with the verse before and after dimmed (`.chapter.context`,
+  no `data-ch`, skipped by `topVerse`) so tags across the boundary show and can be painted; ‹ › at the top and bottom
+  name the neighbouring pages and are reading on (not jumps); a jump lands on the page holding its target. Pulling on
+  past a page's end (wheel after resting at the edge `PULL_PAUSE_MS`, so a fling's momentum doesn't count; or a touch
+  that starts at the edge) shows "Keep pulling for John 4" and turns the page; the rest of that wheel gesture keeps the
+  new page at its edge. A reading setting under Aa ("Scroll" / "Chapter by chapter", per device) and always on for a
+  limited text, whose pages come from `/api/text/<id>/page` (`loadPage`, never cached), whose license line ends each
+  page, and whose snippets in lists show only the place ("Tap to read it on its page"): showing many places' words
+  at once would break its limits. The menu marks each translation "Can be read offline" or "Online only, a page at a
+  time"; limited texts aren't kept offline and aren't offered in the offline-only build. Browser-checked (BSB-R John 3
+  and Jude's three parts, only manifest/index/page requests, the KJV switched both ways, the wheel pull). Not yet: a
+  real trackpad's momentum or a phone's touch pull.
 - **Back** without browser buttons (2026-10-31, the user's design; an installed app has none): for 6 s after each step
   (a jump of the user's own, or Back/Forward; not the recent places a fresh launch adds, `trail.i > trail.seeded`; not
   after a reload) a small bubble under the search bar, "← John 3", goes back (with the panel that was open there); it
