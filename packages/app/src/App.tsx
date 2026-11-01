@@ -4,7 +4,8 @@ import { chooseText, DEFAULT_TEXT, findText, hashOf, keepOffline, loadCatalog, l
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
-import { RefLinks } from "./Comments.tsx";
+import { LinkedText, RefLinks } from "./Comments.tsx";
+import { NoteOpener, type OpenNote } from "./Verse.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
 import { Menu } from "./Menu.tsx";
@@ -460,6 +461,7 @@ function Main(props: {
   /** A reference in a comment: a jump there (recording the open panel, so Back reopens it); on a phone the panel,
    *  which covers the text, then closes. On a wide screen it is a side drawer and stays. */
   const openRef = (iv: Interval) => {
+    setNote(null);
     goInterval(iv);
     if (matchMedia("(max-width: 560px)").matches) {
       batch(() => {
@@ -471,8 +473,12 @@ function Main(props: {
     }
   };
 
+  /** The translator's note open in a popover (a tapped † in the text). */
+  const [note, setNote] = createSignal<OpenNote | null>(null);
+
   return (
     <RefLinks.Provider value={{ index, href: (iv) => hashOf(props.text.info, formatInterval(index, iv)), go: openRef }}>
+    <NoteOpener.Provider value={setNote}>
       <header class="topbar">
         <button class="icon" classList={{ on: menuOpen() }} onClick={() => setMenuOpen((o) => !o)} title="Menu" aria-label="Menu" aria-expanded={menuOpen()}>
           <MenuIcon />
@@ -693,6 +699,10 @@ function Main(props: {
         <UndoBubble store={store} text={props.text} />
         <UpdateNotice store={store} />
       </div>
+      <Show when={note()} keyed>
+        {(n) => <NotePopover note={n} text={props.text} onClose={() => setNote(null)} />}
+      </Show>
+    </NoteOpener.Provider>
     </RefLinks.Provider>
   );
 }
@@ -773,6 +783,54 @@ function Help(props: { local: boolean; onClose: () => void }) {
           <kbd>⌘Z</kbd> undo
         </dd>
       </dl>
+    </div>
+  );
+}
+
+/** A translator's note (footnote; the KJV's marginal note) by its † marker: the verse, then the text with its
+ *  references as links. Below the marker, or above it if there's no room; closed by a tap elsewhere, Esc or scrolling
+ *  (it would no longer sit by its marker). */
+function NotePopover(props: { note: OpenNote; text: Text; onClose: () => void }) {
+  let el!: HTMLDivElement;
+  const [pos, setPos] = createSignal({ left: 0, top: 0, shown: false });
+  const ix = props.text.index;
+  const slot = ix.slotOf(props.note.ord);
+  const where = formatInterval(ix, [ix.verseStart[slot]!, ix.slotEnd(slot)]);
+  onMount(() => {
+    const r = props.note.rect;
+    const [w, h, gap, margin] = [el.offsetWidth, el.offsetHeight, 6, 12];
+    const left = Math.min(Math.max(margin, r.left + r.width / 2 - w / 2), innerWidth - w - margin);
+    const fitsBelow = r.bottom + gap + h <= innerHeight - margin;
+    setPos({ left, top: fitsBelow || r.top - gap - h < margin ? r.bottom + gap : r.top - gap - h, shown: true });
+    // The tap that opened it is over; a later one outside closes it (on another marker, that one then opens).
+    const away = (e: PointerEvent) => {
+      if (!el.contains(e.target as Node)) props.onClose();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    const scroll = () => props.onClose();
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", key);
+    window.addEventListener("scroll", scroll, { passive: true });
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", away, true);
+      document.removeEventListener("keydown", key);
+      window.removeEventListener("scroll", scroll);
+    });
+  });
+  return (
+    <div
+      ref={el}
+      class="popover note-pop"
+      role="dialog"
+      aria-label={`Note on ${where}`}
+      style={{ left: `${pos().left}px`, top: `${pos().top}px`, visibility: pos().shown ? "visible" : "hidden" }}
+    >
+      <p class="note-where">
+        {where} · {props.text.info.abbr} note
+      </p>
+      <For each={props.note.notes}>{(n) => <LinkedText class="note-text" text={n.text} />}</For>
     </div>
   );
 }

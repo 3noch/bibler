@@ -1,4 +1,4 @@
-import { createMemo, For, Index, type JSX, Show } from "solid-js";
+import { createContext, createMemo, For, Index, type JSX, Show, useContext } from "solid-js";
 import type { Interval, Tagging } from "@bible-tags/scripture";
 import { DIVINE_NAME, ITALIC, JOINED, WORDS_OF_JESUS, type BookText, type Text } from "./text.ts";
 import type { Tag, TagStore } from "./store.ts";
@@ -8,6 +8,14 @@ export interface Stroke {
   b: number;
   erase: boolean;
 }
+
+/** A word's translator's notes (footnotes; the KJV's marginal notes) and where its marker is: App shows them. */
+export interface OpenNote {
+  ord: number;
+  notes: { ref: string; text: string }[];
+  rect: DOMRect;
+}
+export const NoteOpener = createContext<(n: OpenNote) => void>();
 
 export interface VerseProps {
   slot: number;
@@ -69,6 +77,7 @@ export function Verse(props: VerseProps) {
     return out;
   });
 
+  const openNote = useContext(NoteOpener);
   const local = (ord: number) => index.pos(ord) - bt.firstPos;
   /** A space follows the word unless it is the first part of a hyphenated word. */
   const spaced = (ord: number) => !(bt.flags[local(ord)]! & JOINED);
@@ -92,9 +101,17 @@ export function Verse(props: VerseProps) {
           {bt.words[local(ord)]}
         </span>
         <Show when={notes}>
-          <sup class="note" title={notes!.map((n) => n.text).join("\n")}>
+          <button
+            type="button"
+            class="note"
+            aria-label="Translator's note"
+            onClick={(e) => {
+              e.stopPropagation(); // not a tap on the word (which opens the tag panel)
+              openNote?.({ ord, notes: notes!, rect: e.currentTarget.getBoundingClientRect() });
+            }}
+          >
             †
-          </sup>
+          </button>
         </Show>
       </>
     );

@@ -262,6 +262,7 @@ export function Bible(props: Props) {
 
   const onPointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (e) => {
     if (!painting() || e.button !== 0) return;
+    if ((e.target as HTMLElement).closest(".note")) return; // a note marker opens its note, even while painting
     const ord = ordAt(e.clientX, e.clientY);
     if (ord === null) return;
     if (e.pointerType === "touch") {

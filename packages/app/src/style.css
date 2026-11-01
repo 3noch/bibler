@@ -122,7 +122,17 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .heading.mr { margin-top: 0; text-align: center; font: italic 0.72em var(--sans); font-variant: normal; letter-spacing: 0; }
 .heading + .heading.r, .heading + .heading.mr, .heading + .heading.s2 { margin-top: 0; }
 .pilcrow { color: var(--faint); }
-.note { font-size: 0.6em; color: var(--faint); cursor: help; }
+/* A translator's note marker: a button with a tap area bigger than the glyph (App's NotePopover shows the note). */
+.note {
+  position: relative; vertical-align: super; line-height: 0; padding: 0 0.15em; border: 0; background: none;
+  font: inherit; font-size: 0.6em; color: var(--faint); cursor: pointer;
+}
+.note::after { content: ""; position: absolute; inset: -0.9em -0.6em; }
+.note:hover, .note:focus-visible { color: var(--accent); }
+.note-pop { width: max-content; max-width: min(24rem, calc(100vw - 24px)); padding: 10px 14px; }
+.note-where { margin: 0 0 4px; font: 600 0.75rem var(--sans); color: var(--muted); }
+.note-text { margin: 0; font: 0.98rem/1.5 var(--serif); }
+.note-text + .note-text { margin-top: 6px; }
 .seg { border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .w.it { font-style: italic; }
 .w.dn { font-variant: small-caps; text-transform: lowercase; display: inline-block; }

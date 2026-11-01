@@ -107,6 +107,13 @@
   browser (not saved elsewhere, not backed up, not synced; clearing site data erases them). Browser-tested under a
   `/pages/` subpath: no `/api` requests, persistence across reloads, live sync between two tabs, per-tab undo.
   Limits: localStorage (~5 MB) holds everything; IndexedDB and export/import are the natural next steps.
+- **Translator's notes** (2026-10-31; BSB footnotes 4,846, KJV marginal notes 6,959, built by text-build and
+  anchored after a word): the † after the word is a button (an invisible tap area bigger than the glyph) that opens
+  `NotePopover` (App.tsx): the verse, "BSB note", and the text with its references as links (`LinkedText`, shared with
+  comments; 350 BSB notes say "Cited in …"). Below the marker or above if no room; a tap elsewhere, Esc or scrolling
+  closes it; a link in it is a jump like a comment's. Pressing a marker never paints, even while painting. Replaced a
+  hover title, which phones can't show. Browser-checked on both widths. Considered next (user agreed to start with
+  this): notes in the tag panel for the tapped verse; later maybe notes as a read-only publisher "tag" in search.
 - **Comments** (`Comments.tsx`): in Nearby, each "Here" card shows its thread; elsewhere a single tag's snippets
   (Nearby single-tag sections, tag sheet, single-tag search) show a speech-bubble count; the **current** one shows its thread (oldest first, "edited", hover pencil/trash, always
   visible on touch) and an "Add a comment…" box (never autofocused; Enter = newline, ⌘/Ctrl+Enter or Post posts; Esc

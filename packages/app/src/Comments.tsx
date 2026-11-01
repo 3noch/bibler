@@ -13,8 +13,8 @@ const MAX = 10_000;
  *  copied like any), and what a tap does (`go`: a jump, so Back returns to the comment). Provided by App. */
 export const RefLinks = createContext<{ index: TextIndex; href: (iv: Interval) => string; go: (iv: Interval) => void }>();
 
-/** A comment's text, its references as links. */
-function Body(props: { text: string }) {
+/** Text with its scripture references as links (a comment, a translator's note). */
+export function LinkedText(props: { text: string; class: string }) {
   const links = useContext(RefLinks);
   const parts = createMemo(() => {
     if (!links) return [props.text];
@@ -29,7 +29,7 @@ function Body(props: { text: string }) {
     return out;
   });
   return (
-    <p class="comment-body">
+    <p class={props.class}>
       <For each={parts()}>
         {(p) =>
           typeof p === "string" ? (
@@ -136,7 +136,7 @@ function CommentItem(props: { store: TagStore; comment: Comment }) {
         when={editing()}
         fallback={
           <>
-            <Body text={props.comment.body} />
+            <LinkedText class="comment-body" text={props.comment.body} />
             <div class="comment-meta">
               <span>
                 <Show when={author()}>
