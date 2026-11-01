@@ -1,5 +1,5 @@
 // The menu (top-left button), a drawer so the top bar fits a phone. Its header holds the things seldom needed as
-// icons: undo/redo, the text's font and size (reading.ts; "Aa" opens them under the header) and help. Below it:
+// icons: the text's font and size (reading.ts; "Aa" opens them under the header) and help. Below it:
 // account, space, the translation, recent reading (history.ts) and the contents (books -> chapters).
 import { createSignal, For, Show } from "solid-js";
 import { BOOKS, formatInterval, type HistoryEntry, type TextIndex } from "@bible-tags/scripture";
@@ -8,7 +8,7 @@ import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
 import { FONTS, SIZES, font, resetSize, setFont, size, stepSize } from "./reading.ts";
-import { CheckIcon, CloseIcon, GroupIcon, HelpIcon, NextIcon, RedoIcon, UndoIcon } from "./icons.tsx";
+import { CheckIcon, CloseIcon, GroupIcon, HelpIcon, NextIcon } from "./icons.tsx";
 
 export function Menu(props: {
   store: TagStore;
@@ -41,12 +41,6 @@ export function Menu(props: {
             <CloseIcon />
           </button>
           <div class="menu-tools">
-            <button class="icon" disabled={!s.canUndo()} onClick={() => s.undo()} aria-label="Undo" title="Undo (⌘Z)">
-              <UndoIcon />
-            </button>
-            <button class="icon" disabled={!s.canRedo()} onClick={() => s.redo()} aria-label="Redo" title="Redo (⇧⌘Z)">
-              <RedoIcon />
-            </button>
             <button
               class="icon text-icon"
               aria-pressed={reading()}

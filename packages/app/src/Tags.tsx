@@ -4,7 +4,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { MAX_PALETTE } from "@bible-tags/scripture";
 import type { Tag, TagStore } from "./store.ts";
-import { CloseIcon, EyeIcon, EyeOffIcon, PencilIcon, PinIcon, PlusIcon } from "./icons.tsx";
+import { CloseIcon, EyeIcon, EyeOffIcon, PencilIcon, PinIcon, PlusIcon, RedoIcon, UndoIcon } from "./icons.tsx";
 
 export function TagsSheet(props: {
   store: TagStore;
@@ -70,6 +70,17 @@ export function TagsSheet(props: {
             <Show when={hiddenCount()}> · {hiddenCount()} hidden</Show>
           </p>
         </div>
+        {/* Undo and redo live in the dock where it has room; on a phone, here (style.css `.sheet-undo`). */}
+        <Show when={!props.store.readOnly()}>
+          <span class="sheet-undo">
+            <button class="icon" disabled={!props.store.canUndo()} onClick={() => props.store.undo()} aria-label="Undo" title="Undo (⌘Z)">
+              <UndoIcon />
+            </button>
+            <button class="icon" disabled={!props.store.canRedo()} onClick={() => props.store.redo()} aria-label="Redo" title="Redo (⇧⌘Z)">
+              <RedoIcon />
+            </button>
+          </span>
+        </Show>
         <button class="icon" onClick={props.onClose} aria-label="Close">
           <CloseIcon />
         </button>

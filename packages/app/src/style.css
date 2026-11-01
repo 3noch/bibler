@@ -157,6 +157,20 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .well.add, .well.tool { padding: 0 9px; color: var(--muted); }
 .well.add:hover, .well.tool:hover { color: var(--ink); }
 .well.tool.active { color: var(--ink); }
+/* Undo/redo: in the dock where there's room, in the tag list's header on phones (same breakpoint as the well names). */
+.dock-undo { display: contents; }
+.well.tool:disabled { opacity: 0.35; cursor: default; }
+.sheet-undo { display: none; }
+@media (max-width: 560px) {
+  .dock-undo { display: none; }
+  .sheet-undo { display: flex; gap: 2px; }
+  .sheet-undo .icon:disabled { opacity: 0.35; }
+}
+.undo-bubble { gap: 8px; padding-right: 6px; }
+.undo-bubble > span { flex: 1; }
+.undo-bubble button { flex: none; }
+.toast.update .bubble-close { width: 28px; height: 28px; padding: 0; border: 0; margin-left: -4px; }
+.bubble-close svg { width: 16px; height: 16px; }
 .well.adding { padding: 0 4px; }
 .well.adding input { width: 9rem; height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); }
 @media (max-width: 560px) {

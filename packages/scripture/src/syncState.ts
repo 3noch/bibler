@@ -171,6 +171,13 @@ export class SyncState {
     return this.redo.length > 0;
   }
 
+  /** The changes the next undo (or redo) would revert, to say what it does (`describeChanges`: an undo step's
+   *  changes are the action; a redo step's are its reverts, read with `inverse`). */
+  stepChanges(which: "undo" | "redo"): Change[] {
+    const step = (which === "undo" ? this.undo : this.redo).at(-1) ?? [];
+    return step.map((id) => this.view.changes.get(id)).filter((c): c is Change => !!c);
+  }
+
   undoStep(): OpError | null {
     return this.revertStep("undo");
   }

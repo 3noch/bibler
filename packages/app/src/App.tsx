@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { BOOKS, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
+import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
+import { BOOKS, describeChanges, formatInterval, liveHistory, near as samePlace, parseRef, resumeEntry, scrolled, visit, type HistoryEntry, type Interval } from "@bible-tags/scripture";
 import { chooseText, DEFAULT_TEXT, findText, hashOf, keepOffline, loadCatalog, loadText, splitHash, textId, type Text, type TextInfo } from "./text.ts";
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
@@ -9,7 +9,7 @@ import { TagsSheet } from "./Tags.tsx";
 import { Menu } from "./Menu.tsx";
 import { SpaceButton, SpacesCard } from "./Groups.tsx";
 import { UpdateNotice } from "./Update.tsx";
-import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, TagsIcon } from "./icons.tsx";
+import { BrushIcon, CloseIcon, EraserIcon, MenuIcon, PencilIcon, PlusIcon, RedoIcon, TagsIcon, UndoIcon } from "./icons.tsx";
 import { ulid } from "./ulid.ts";
 
 /** This tab's reading-history entry (App's `reading`). */
@@ -558,6 +558,7 @@ function Main(props: {
 
       <div class="toasts" role="status">
         <For each={store.notices()}>{(n) => <p class="toast">{n.text}</p>}</For>
+        <UndoBubble store={store} text={props.text} />
         <UpdateNotice store={store} />
       </div>
     </>
@@ -643,6 +644,55 @@ function Help(props: { local: boolean; onClose: () => void }) {
     </div>
   );
 }
+
+/** What an undo or redo just did ("Undid tagging John 3:16 with “Love”"), for a few seconds; after an undo, with
+ *  Redo (on a phone, the only quick way to redo). Worded when it happens, from the rows as they are then. */
+function UndoBubble(props: { store: TagStore; text: Text }) {
+  const [shown, setShown] = createSignal<{ which: "undo" | "redo"; text: string } | null>(null);
+  let timer = 0;
+  createEffect(
+    on(props.store.lastStep, (st) => {
+      clearTimeout(timer);
+      if (!st) return setShown(null);
+      const rows = untrack(props.store.rows);
+      const what = describeChanges(
+        st.changes,
+        {
+          tagName: (id) => rows.tag(id)?.name,
+          tagging: (id) => rows.tagging(id),
+          place: (textId, iv) => (textId === props.text.info.id ? formatInterval(props.text.index, iv) : undefined),
+        },
+        st.which === "redo",
+      );
+      setShown({ which: st.which, text: `${st.which === "undo" ? "Undid" : "Redid"} ${what}` });
+      timer = window.setTimeout(() => setShown(null), BUBBLE_MS);
+    }),
+  );
+  onCleanup(() => clearTimeout(timer));
+  return (
+    <Show when={shown()}>
+      {(b) => (
+        <p class="toast update undo-bubble">
+          <span>{b().text}</span>
+          <Show when={b().which === "undo" && props.store.canRedo()}>
+            <button onClick={() => props.store.redo()}>Redo</button>
+          </Show>
+          <button
+            class="icon bubble-close"
+            onClick={() => {
+              clearTimeout(timer);
+              setShown(null);
+            }}
+            aria-label="Close"
+          >
+            <CloseIcon />
+          </button>
+        </p>
+      )}
+    </Show>
+  );
+}
+const BUBBLE_MS = 4000;
 
 /** The palette: tag wells, eraser, add. The active well shows a brush (tap again to stop) and an edit button. */
 function Dock(props: {
@@ -840,6 +890,15 @@ function Dock(props: {
         <button class="well tool" classList={{ active: props.eraser }} onMouseDown={keepSelection} onClick={() => (setAdding(false), props.onEraser())} title={props.eraser ? "Eraser — tap to stop" : "Eraser (E)"} aria-label="Eraser" aria-pressed={props.eraser}>
           <EraserIcon />
         </button>
+        {/* Wide screens only; on a phone they're in the tag list (style.css `.dock-undo`). */}
+        <span class="dock-undo">
+          <button class="well tool" disabled={!props.store.canUndo()} onClick={() => props.store.undo()} title="Undo (⌘Z)" aria-label="Undo">
+            <UndoIcon />
+          </button>
+          <button class="well tool" disabled={!props.store.canRedo()} onClick={() => props.store.redo()} title="Redo (⇧⌘Z)" aria-label="Redo">
+            <RedoIcon />
+          </button>
+        </span>
         </Show>
       </div>
     </nav>

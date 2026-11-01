@@ -19,7 +19,7 @@
 // sync server inside the browser (same protocol, same canonical `effect`) and owns the confirmed state, so BASE_KEY
 // is not written. Data then lives only in this browser.
 import { batch, createMemo, createSignal } from "solid-js";
-import { mergeHistory, resolveTagging, sameEntry, SyncState, type Build, type HistoryEntry, type ClientMsg, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
+import { mergeHistory, resolveTagging, sameEntry, SyncState, type Build, type Change, type HistoryEntry, type ClientMsg, type CommentRow, type ServerMsg, type Interval, type Op, type OpIntent, type Snapshot, type TagRow, type TaggingRow, type TextIndex } from "@bible-tags/scripture";
 import { textId } from "./text.ts";
 import { connectLocal, loadLocalDb } from "./localServer.ts";
 import { ulid } from "./ulid.ts";
@@ -218,6 +218,9 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
    *  no request of its own). */
   const [serverBuild, setServerBuild] = createSignal<Build | null>(null);
   const [serverClient, setServerClient] = createSignal<string | null>(null);
+  /** The last undo or redo (`n` counts them), for the bubble that says what it did (`describeChanges`). */
+  const [lastStep, setLastStep] = createSignal<LastStep | null>(null);
+  let steps = 0;
   /** The open space's connection stopped trying by itself (see `connectForever`). */
   const [stalled, setStalled] = createSignal<Stall | null>(null);
   const [members, setMembers] = createSignal<Member[]>([]);
@@ -458,6 +461,7 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     batch(() => {
       setRole(roleIn(id));
       setStalled(null);
+      setLastStep(null);
       setMembers([]);
       setHiddenSet(loadHidden(id));
       setCurrent(next);
@@ -552,6 +556,14 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
     const err = sync().submit(intents);
     if (err) notify(MESSAGES[err.code] ?? `Not applied: ${err.code}`);
     return !err;
+  };
+  /** Undo or redo, remembering what it was for the bubble (a step that can't be done says so itself). */
+  const step = (which: "undo" | "redo") => {
+    const s = sync();
+    const changes = s.stepChanges(which);
+    const err = which === "undo" ? s.undoStep() : s.redoStep();
+    if (!err && changes.length) setLastStep({ n: ++steps, which, changes });
+    return err;
   };
 
   return {
@@ -692,9 +704,20 @@ export async function openTagStore(textIndex: (id: string) => Promise<TextIndex 
       submit([{ kind: "comment_create", id: ulid(), tagging, body, now: Date.now() }]),
     editComment: (id: string, body: string) => submit([{ kind: "comment_update", id, body, now: Date.now() }]),
     deleteComment: (id: string) => submit([{ kind: "comment_delete", id, now: Date.now() }]),
-    undo: () => sync().undoStep(),
-    redo: () => sync().redoStep(),
+    undo: () => step("undo"),
+    redo: () => step("redo"),
+    /** The last undo or redo, while it is news (see `LastStep`). */
+    lastStep,
+    /** Every row in any state (deleted tags keep their names), for describing a step. */
+    rows: () => (version(), sync().view),
   };
+}
+
+/** An undo or redo just done: its changes as the step held them (an undo's are the action, a redo's its reverts). */
+export interface LastStep {
+  n: number;
+  which: "undo" | "redo";
+  changes: Change[];
 }
 
 /** After the page was hidden this long, coming back checks the socket (a phone may have killed it while leaving it

@@ -16,7 +16,7 @@
   side panel, no help text.
 - Menu (`Menu.tsx`, a left drawer; decided 2026-10-14 because the top bar overflowed on phones): its header holds
   what is seldom needed, as icons (2026-10-31: the user wants the list for what people need most of the time): Close,
-  then Undo, Redo, **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
+  then **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
   translation they were made in), recent reading (collapsed; see below), contents. **Text font and size**
@@ -28,9 +28,14 @@
   quick repeated clicks). Recent reading lists the reading history's entries, newest first, as "Genesis 12:3–15:4" + how long
   ago; choosing one goes back to where it left off. Contents: Old/New Testament books; a book opens its chapter grid, the current one starts open; one-chapter
   books go straight there; choosing closes the menu. At the very bottom (seen only by scrolling there) a faded version stamp (`Version.tsx`: the app's commit from index.html's meta tags and the server's from the last sync `ready`).
-- Deferred (2026-10-31; the user will use the app and see whether it's needed): a quicker undo on phones, where the
-  menu is two taps away. A dock button was ruled out (with many tags a phone's dock is already full); the favored idea
-  is a "↶ Undo" pill above the dock after a paint/erase that fades ~6 s after the last change.
+- **Undo/redo** (2026-10-31, the user's design; they had looked like Back/Forward in the menu header): in the dock after
+  the eraser on wide screens; at <= 560px (where well names hide) in the All-tags sheet's header beside Close, since a
+  phone's dock fills up with tags. Hidden for view-only members. Every undo or redo (buttons, ⌘Z, ⇧⌘Z) shows a bubble
+  for 4 s saying what it did ("Undid tagging John 3:16 with “Love”", "Redid creating the tag “Love”", "Undid adding a
+  comment on Romans 8:28"); after an undo it carries Redo (on a phone the quick way to redo), and an × closes it early. Wording:
+  `describeChanges` (packages/scripture `describe.ts`, tested) from the step's changes (`SyncState.stepChanges`,
+  read before reverting; a redo step's changes are reverts, read inverted); a paint that extends a tagging names only
+  the new words; a place in another translation is left out. Considered and deferred: an undo pill after each paint.
 - Dock (bottom pill) = palette: tag wells (names hidden under 560px except the active one), `+`, eraser. The
   active well shows a **brush** (not ✕: the user read ✕ as "delete") and tapping it again stops painting (no
   separate Done button; Esc also stops). The active well also carries a visible **pencil** = edit sheet (the user
