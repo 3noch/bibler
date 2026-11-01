@@ -114,6 +114,10 @@
   closes it; a link in it is a jump like a comment's. Pressing a marker never paints, even while painting. Replaced a
   hover title, which phones can't show. Browser-checked on both widths. Considered next (user agreed to start with
   this): notes in the tag panel for the tapped verse; later maybe notes as a read-only publisher "tag" in search.
+  **Headings link their references** too (2026-10-31): every heading goes through `LinkedText` (inline), so the BSB's
+  parallel-passage lines under gospel and history headings ("(Isaiah 40:1–5; Matthew 3:1–12; Mark 1:1–8; Luke
+  3:1–20)", kind `r`) are links; all 1,324 link every passage (checked against the build). Ordinary titles have no
+  chapter numbers and stay plain. A link pressed while painting doesn't paint.
 - **Comments** (`Comments.tsx`): in Nearby, each "Here" card shows its thread; elsewhere a single tag's snippets
   (Nearby single-tag sections, tag sheet, single-tag search) show a speech-bubble count; the **current** one shows its thread (oldest first, "edited", hover pencil/trash, always
   visible on touch) and an "Add a comment…" box (never autofocused; Enter = newline, ⌘/Ctrl+Enter or Post posts; Esc

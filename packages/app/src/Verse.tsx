@@ -2,6 +2,7 @@ import { createContext, createMemo, For, Index, type JSX, Show, useContext } fro
 import type { Interval, Tagging } from "@bible-tags/scripture";
 import { DIVINE_NAME, ITALIC, JOINED, WORDS_OF_JESUS, type BookText, type Text } from "./text.ts";
 import type { Tag, TagStore } from "./store.ts";
+import { LinkedText } from "./Comments.tsx";
 
 export interface Stroke {
   a: number;
@@ -45,7 +46,7 @@ function before(bt: BookText, ord: number): JSX.Element {
   const indent = kinds?.filter((k) => INDENTED.has(k)).pop();
   return (
     <>
-      <For each={heads ?? []}>{(h) => <span class={`heading ${h.kind}`}>{h.text}</span>}</For>
+      <For each={heads ?? []}>{(h) => <LinkedText inline class={`heading ${h.kind}`} text={h.text} />}</For>
       <Show when={kinds}>{(k) => <span class={k().some((x) => PARAGRAPH.has(x)) ? "para-break" : "line-break"} />}</Show>
       <Show when={indent}>{(i) => <span class={`indent ${i()}`} />}</Show>
     </>
@@ -160,7 +161,7 @@ export function Verse(props: VerseProps) {
           </Index>{" "}
         </span>
       </Show>
-      <For each={ords.flatMap((o) => bt.headingsAfter.get(o) ?? [])}>{(h) => <span class={`heading subscription ${h.kind}`}>{h.text}</span>}</For>
+      <For each={ords.flatMap((o) => bt.headingsAfter.get(o) ?? [])}>{(h) => <LinkedText inline class={`heading subscription ${h.kind}`} text={h.text} />}</For>
     </>
   );
 }

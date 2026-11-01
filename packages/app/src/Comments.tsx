@@ -2,6 +2,7 @@
 // single-tag search). Comments are ops like any edit: optimistic, synced, undoable. Scripture references in a comment
 // show as links (`findRefs`, found when shown; nothing is stored).
 import { createContext, createMemo, createSignal, For, Show, useContext } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { findRefs, type Interval, type TextIndex } from "@bible-tags/scripture";
 import type { Comment, TagStore } from "./store.ts";
 import { PencilIcon, TrashIcon } from "./icons.tsx";
@@ -13,8 +14,9 @@ const MAX = 10_000;
  *  copied like any), and what a tap does (`go`: a jump, so Back returns to the comment). Provided by App. */
 export const RefLinks = createContext<{ index: TextIndex; href: (iv: Interval) => string; go: (iv: Interval) => void }>();
 
-/** Text with its scripture references as links (a comment, a translator's note). */
-export function LinkedText(props: { text: string; class: string }) {
+/** Text with its scripture references as links (a comment, a translator's note, a heading's parallel passages):
+ *  a paragraph, or a span when `inline`. */
+export function LinkedText(props: { text: string; class: string; inline?: boolean }) {
   const links = useContext(RefLinks);
   const parts = createMemo(() => {
     if (!links) return [props.text];
@@ -29,7 +31,7 @@ export function LinkedText(props: { text: string; class: string }) {
     return out;
   });
   return (
-    <p class={props.class}>
+    <Dynamic component={props.inline ? "span" : "p"} class={props.class}>
       <For each={parts()}>
         {(p) =>
           typeof p === "string" ? (
@@ -49,7 +51,7 @@ export function LinkedText(props: { text: string; class: string }) {
           )
         }
       </For>
-    </p>
+    </Dynamic>
   );
 }
 
