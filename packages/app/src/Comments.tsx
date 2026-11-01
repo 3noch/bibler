@@ -1,11 +1,57 @@
 // The comment thread of one tagging: shown under the current snippet of a single tag's list (Nearby, tag sheet,
-// single-tag search). Comments are ops like any edit: optimistic, synced, undoable.
-import { createSignal, For, Show } from "solid-js";
+// single-tag search). Comments are ops like any edit: optimistic, synced, undoable. Scripture references in a comment
+// show as links (`findRefs`, found when shown; nothing is stored).
+import { createContext, createMemo, createSignal, For, Show, useContext } from "solid-js";
+import { findRefs, type Interval, type TextIndex } from "@bible-tags/scripture";
 import type { Comment, TagStore } from "./store.ts";
 import { PencilIcon, TrashIcon } from "./icons.tsx";
 import { memberName } from "./Groups.tsx";
 
 const MAX = 10_000;
+
+/** What a reference in a comment links to: the text being read, its address (`href`, so a link can be opened or
+ *  copied like any), and what a tap does (`go`: a jump, so Back returns to the comment). Provided by App. */
+export const RefLinks = createContext<{ index: TextIndex; href: (iv: Interval) => string; go: (iv: Interval) => void }>();
+
+/** A comment's text, its references as links. */
+function Body(props: { text: string }) {
+  const links = useContext(RefLinks);
+  const parts = createMemo(() => {
+    if (!links) return [props.text];
+    const out: (string | { label: string; interval: Interval })[] = [];
+    let at = 0;
+    for (const r of findRefs(links.index, props.text)) {
+      if (r.start > at) out.push(props.text.slice(at, r.start));
+      out.push({ label: props.text.slice(r.start, r.end), interval: r.interval });
+      at = r.end;
+    }
+    if (at < props.text.length) out.push(props.text.slice(at));
+    return out;
+  });
+  return (
+    <p class="comment-body">
+      <For each={parts()}>
+        {(p) =>
+          typeof p === "string" ? (
+            p
+          ) : (
+            <a
+              class="ref-link"
+              href={links!.href(p.interval)}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // a new tab or window, as usual
+                e.preventDefault();
+                links!.go(p.interval);
+              }}
+            >
+              {p.label}
+            </a>
+          )
+        }
+      </For>
+    </p>
+  );
+}
 
 function when(ms: number): string {
   const d = new Date(ms);
@@ -90,7 +136,7 @@ function CommentItem(props: { store: TagStore; comment: Comment }) {
         when={editing()}
         fallback={
           <>
-            <p class="comment-body">{props.comment.body}</p>
+            <Body text={props.comment.body} />
             <div class="comment-meta">
               <span>
                 <Show when={author()}>

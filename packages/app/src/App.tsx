@@ -4,6 +4,7 @@ import { chooseText, DEFAULT_TEXT, findText, hashOf, keepOffline, loadCatalog, l
 import { intervalOf, openTagStore, type Tag, type TagStore } from "./store.ts";
 import { Bible, type Nav } from "./Bible.tsx";
 import { NearbyPanel } from "./Nearby.tsx";
+import { RefLinks } from "./Comments.tsx";
 import { Omnibox, ResultList, SearchPanel, type Chip } from "./Search.tsx";
 import { TagsSheet } from "./Tags.tsx";
 import { Menu } from "./Menu.tsx";
@@ -456,8 +457,22 @@ function Main(props: {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
+  /** A reference in a comment: a jump there (recording the open panel, so Back reopens it); on a phone the panel,
+   *  which covers the text, then closes. On a wide screen it is a side drawer and stays. */
+  const openRef = (iv: Interval) => {
+    goInterval(iv);
+    if (matchMedia("(max-width: 560px)").matches) {
+      batch(() => {
+        setNear(null);
+        setSheetTag(null);
+        setTagsOpen(false);
+        setChips([]);
+      });
+    }
+  };
+
   return (
-    <>
+    <RefLinks.Provider value={{ index, href: (iv) => hashOf(props.text.info, formatInterval(index, iv)), go: openRef }}>
       <header class="topbar">
         <button class="icon" classList={{ on: menuOpen() }} onClick={() => setMenuOpen((o) => !o)} title="Menu" aria-label="Menu" aria-expanded={menuOpen()}>
           <MenuIcon />
@@ -678,7 +693,7 @@ function Main(props: {
         <UndoBubble store={store} text={props.text} />
         <UpdateNotice store={store} />
       </div>
-    </>
+    </RefLinks.Provider>
   );
 }
 

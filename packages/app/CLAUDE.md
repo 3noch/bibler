@@ -113,6 +113,14 @@
   cancels an edit). Combination rows have no comments. `store.commentsByTagging` follows merge chains. Browser-tested:
   post (focus stays), multi-line, edit, delete, undo of each, merge shows all comments on the survivor and undo splits
   them back, local-only build persists them. Not yet: a marker in the text itself, comments in the Nearby combo rows.
+  **References in comments are links** (2026-10-31; rendering only, decided with the user: nothing stored, cross
+  references and indexing may come later): `findRefs` (packages/scripture, tested and mutation-checked) finds them
+  when a comment is shown, strictly: exact book names/abbreviations only (no typo forgiveness, no ambiguous ones like
+  "Jon"), a chapter after the book, abbreviations capitalized, two-letter ones and lowercase names only with a verse
+  ("Is 53:5", "john 3:16"; not "So 2 of them"), and a candidate the parser warns about is left plain; each item of a
+  list is its own link ("Rom 8:28, 31"). `RefLinks` (Comments.tsx) gets the index, an `href` (so a link opens in a
+  new tab like any) and `go` from App: a jump (so Back returns with the comment's panel open), after which the panel
+  closes on a phone (<= 560px, where it covers the text) and stays on a wide screen. Browser-checked at both widths.
 - **Keep list identity stable** (found while building comments): every edit rebuilds the view, so lists of fresh
   `[start, end]` arrays made Solid's `<For>` remount every snippet (a comment box lost focus mid-post). Use
   `intervalOf(tagging)` (one array per row object) for interval lists; `ResultList` groups with `<Index>`, keys

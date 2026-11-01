@@ -405,6 +405,7 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
 .comment { padding: 6px 0; }
 .comment + .comment { border-top: 1px solid var(--line); }
 .comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; line-height: 1.45; }
+.ref-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .comment-meta { display: flex; align-items: center; justify-content: space-between; min-height: 24px; font-size: 0.75rem; color: var(--muted); }
 .comment-tools { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .comment-tools .icon svg { width: 15px; height: 15px; }
