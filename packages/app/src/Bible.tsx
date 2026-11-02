@@ -47,12 +47,6 @@ const LONG_PRESS_MS = 300;
 /** Scrolling has stopped this long: report the position. */
 const SETTLE_MS = 1000;
 const TOUCH_SLOP_PX = 8;
-/** Pulling past a page's end: wheel delta (px) and touch drag (px) that turn the page; the pause at the edge before
- *  the wheel counts (so a fling's momentum doesn't); how soon an unfinished pull springs back. */
-const PULL_WHEEL_PX = 400;
-const PULL_TOUCH_PX = 110;
-const PULL_PAUSE_MS = 250;
-const PULL_RELEASE_MS = 700;
 const sameRefs = (a: readonly Tagging[], b: readonly Tagging[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** Where to scroll to show a verse at the top: its chapter when it is the first verse there (the number, a book's
@@ -157,7 +151,10 @@ export function Bible(props: Props) {
 
   /** Extend toward any edge that is near the viewport; report the current chapter. */
   const pump = () => {
-    if (props.paged) return reportLocation();
+    if (props.paged) {
+      reportLocation();
+      return measureRunouts();
+    }
     if (!range() || navigating) return;
     const first = root.querySelector("[data-ch]");
     const chs = root.querySelectorAll("[data-ch]");
@@ -302,7 +299,7 @@ export function Bible(props: Props) {
       const verse = nav.top != null && slot > at.chunk.from && root.querySelector(`${own} .verse[data-slot="${slot}"]`);
       if (word) word.scrollIntoView({ block: "center" });
       else if (verse) withHeadings(verse).scrollIntoView({ block: "start" });
-      else window.scrollTo(0, 0);
+      else toPageStart();
       setTarget(nav.target);
       clearTimeout(flashTimer);
       if (nav.target) flashTimer = window.setTimeout(() => setTarget(null), 2500);
@@ -325,100 +322,84 @@ export function Bible(props: Props) {
     const c = chunksOf(index, to.ch, limits)[to.part]!;
     return formatInterval(index, [index.verseStart[c.from]!, index.slotEnd(c.to)]);
   };
-  /** ‹ › : reading on, like the chapter keys (not a jump): the page's top (its end when going back by a pull),
-   *  its first verse as the reading place. */
-  const goPage = async (to: { ch: number; part: number }, atEnd = false) => {
+  /** The page's own top (its top run-out stays above, out of view). */
+  const toPageStart = () => root.querySelector(".page-body")?.scrollIntoView({ block: "start" });
+  const firstVerse = (c: Chunk) => {
+    let s = c.from;
+    while (s < c.to && index.slotWords[s] === 0) s++;
+    return s;
+  };
+  const lastVerse = (c: Chunk) => {
+    let s = c.to;
+    while (s > c.from && index.slotWords[s] === 0) s--;
+    return s;
+  };
+  /** ‹ › : reading on, like the chapter keys (not a jump): the page's top, its first verse as the reading place. */
+  const goPage = async (to: { ch: number; part: number }) => {
     const seq = ++navSeq;
     navigating = true;
     if (!(await showPage(to.ch, to.part, seq))) return;
     requestAnimationFrame(() => {
       if (seq !== navSeq) return;
-      window.scrollTo(0, atEnd ? document.documentElement.scrollHeight : 0);
+      toPageStart();
       navigating = false;
       pinned = true;
       reported = to.ch;
       props.onLocation(to.ch);
-      const c = page()!.chunk;
-      let s = c.from;
-      while (s < c.to && index.slotWords[s] === 0) s++;
-      props.onPosition(index.verseStart[s]!);
+      props.onPosition(index.verseStart[firstVerse(page()!.chunk)]!);
     });
   };
-  // Pulling on past the end of a page (or before its start) goes on to the next (previous) one: a wheel or trackpad
-  // that keeps going after resting at the edge, or a touch that starts at the edge and drags on. A fling that reaches
-  // the edge doesn't count (its momentum would turn pages by accident): the wheel must have paused there first.
-  const [pull, setPull] = createSignal<{ dir: -1 | 1; amount: number } | null>(null);
-  let pullTimer = 0;
-  let lastWheel = 0;
-  let armed = 0;
-  /** A pull just turned the page (and which way): the rest of that wheel gesture keeps the new page at its edge. */
-  let turned: { at: number; dir: -1 | 1 } | null = null;
-  const atEdge = (dir: -1 | 1) =>
-    dir > 0 ? innerHeight + scrollY >= document.documentElement.scrollHeight - 2 : scrollY <= 0;
-  const addPull = (dir: -1 | 1, px: number, perPx: number) => {
+  // Run-outs: a band past each end of the page ("Keep scrolling for John 4") that fills as you scroll into it;
+  // scrolling to its end turns the page. The verse both pages show (this page's last verse is the next one's dimmed
+  // first, and its first the previous one's dimmed last) stays where it was on screen, so the new text appears
+  // where the band was and the eyes needn't find their place again. Ordinary scrolling, no overscroll (which the
+  // browser's pull-to-refresh would take). Only the user's own scrolling turns pages (`pinned` is false), so a page
+  // short enough to show its band at once doesn't turn by itself.
+  const [runout, setRunout] = createSignal<{ dir: -1 | 1; p: number } | null>(null);
+  let topBand: HTMLDivElement | undefined;
+  let bottomBand: HTMLDivElement | undefined;
+  const measureRunouts = () => {
+    if (!props.paged || navigating) return;
+    if (bottomBand?.isConnected) {
+      const r = bottomBand.getBoundingClientRect();
+      const p = (innerHeight - r.top) / r.height;
+      if (p > 0) {
+        if (!pinned && r.bottom <= innerHeight + 1) return void continueTo(1);
+        return setRunout({ dir: 1, p: Math.min(1, p) });
+      }
+    }
+    if (topBand?.isConnected) {
+      const r = topBand.getBoundingClientRect();
+      const p = (r.bottom - barHeight()) / r.height;
+      if (p > 0) {
+        if (!pinned && scrollY <= 0) return void continueTo(-1);
+        return setRunout({ dir: -1, p: Math.min(1, p) });
+      }
+    }
+    setRunout(null);
+  };
+  const continueTo = async (dir: -1 | 1) => {
     const to = neighbor(dir);
-    if (!to || navigating) return setPull(null);
-    const cur = pull();
-    const amount = (cur?.dir === dir ? cur.amount : 0) + px / perPx;
-    clearTimeout(pullTimer);
-    if (amount >= 1) {
-      setPull(null);
-      armed = 0;
-      turned = { at: performance.now(), dir };
-      void goPage(to, dir < 0);
-      return;
-    }
-    setPull({ dir, amount });
-    pullTimer = window.setTimeout(() => setPull(null), PULL_RELEASE_MS); // let go: it springs back
-  };
-  const onWheel = (e: WheelEvent) => {
-    if (!props.paged) return;
-    const now = performance.now();
-    if (turned && now - lastWheel < PULL_PAUSE_MS) {
-      lastWheel = now;
-      const dir = turned.dir; // after the browser has scrolled by this event
-      requestAnimationFrame(() => window.scrollTo(0, dir > 0 ? 0 : document.documentElement.scrollHeight));
-      return;
-    }
-    turned = null;
-    const dir = e.deltaY > 0 ? 1 : -1;
-    if (!atEdge(dir)) armed = 0;
-    else if (armed !== dir && now - lastWheel > PULL_PAUSE_MS) armed = dir;
-    lastWheel = now;
-    if (armed === dir) addPull(dir, Math.abs(e.deltaY), PULL_WHEEL_PX);
-  };
-  let touchY: number | null = null;
-  let touchDir: -1 | 1 = 1;
-  const onTouchStart = (e: TouchEvent) => {
-    touchY = props.paged && e.touches.length === 1 && (atEdge(1) || atEdge(-1)) ? e.touches[0]!.clientY : null;
-  };
-  const onTouchMove = (e: TouchEvent) => {
-    if (touchY === null) return;
-    const dy = touchY - e.touches[0]!.clientY; // > 0: the finger moves up, past the end
-    touchDir = dy > 0 ? 1 : -1;
-    if (!atEdge(touchDir)) return setPull(null);
-    const to = neighbor(touchDir);
-    setPull(to ? { dir: touchDir, amount: Math.min(1, Math.abs(dy) / PULL_TOUCH_PX) } : null);
-  };
-  const onTouchEnd = () => {
-    const p = pull();
-    touchY = null;
-    setPull(null);
-    if (p && p.amount >= 1) void goPage(neighbor(p.dir)!, p.dir < 0);
-  };
-  onMount(() => {
-    window.addEventListener("wheel", onWheel, { passive: true });
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
-    window.addEventListener("touchend", onTouchEnd);
-    onCleanup(() => {
-      window.removeEventListener("wheel", onWheel);
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
-      clearTimeout(pullTimer);
+    const old = page();
+    if (!to || !old || navigating) return;
+    const anchor = dir > 0 ? lastVerse(old.chunk) : firstVerse(old.chunk);
+    const before = root.querySelector(`.verse[data-slot="${anchor}"]`)?.getBoundingClientRect().top;
+    const seq = ++navSeq;
+    navigating = true;
+    setRunout(null);
+    if (!(await showPage(to.ch, to.part, seq))) return;
+    requestAnimationFrame(() => {
+      if (seq !== navSeq) return;
+      const now = root.querySelector(`.verse[data-slot="${anchor}"]`)?.getBoundingClientRect().top;
+      if (now !== undefined && before !== undefined) window.scrollBy(0, now - before);
+      else toPageStart();
+      navigating = false;
+      pinned = true; // until the user scrolls on (a fling's momentum may be cut short by the swap)
+      reported = to.ch;
+      props.onLocation(to.ch);
+      props.onPosition(index.verseStart[firstVerse(page()!.chunk)]!);
     });
-  });
+  };
 
   /** The page's pieces: the context verse before (dimmed), its own slots, the context verse after. */
   const sections = (p: Page) => [
@@ -599,6 +580,15 @@ export function Bible(props: Props) {
         <Show when={page()} keyed>
           {(p) => (
             <>
+              <Show when={neighbor(-1)}>
+                {(to) => (
+                  <div class="runout up" ref={(el) => (topBand = el)}>
+                    <span class="runout-bar" style={{ "--p": String(runout()?.dir === -1 ? runout()!.p : 0) }} />
+                    <span>Keep scrolling up for {pageLabel(to())}</span>
+                  </div>
+                )}
+              </Show>
+              <div class="page-body">
               <PageNav />
               <For each={sections(p)}>
                 {(s) => (
@@ -619,13 +609,12 @@ export function Bible(props: Props) {
               <Show when={limits}>
                 <p class="page-rights">{props.text.info.rights}</p>
               </Show>
-              <Show when={pull()}>
-                {(pl) => (
-                  <div class="pull" classList={{ up: pl().dir < 0 }} aria-hidden="true">
-                    <span>
-                      {pl().amount >= 1 ? "Release for" : "Keep pulling for"} {pageLabel(neighbor(pl().dir)!)}
-                    </span>
-                    <span class="pull-bar" style={{ "--p": String(pl().amount) }} />
+              </div>
+              <Show when={neighbor(1)}>
+                {(to) => (
+                  <div class="runout" ref={(el) => (bottomBand = el)}>
+                    <span>Keep scrolling for {pageLabel(to())}</span>
+                    <span class="runout-bar" style={{ "--p": String(runout()?.dir === 1 ? runout()!.p : 0) }} />
                   </div>
                 )}
               </Show>

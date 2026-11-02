@@ -487,13 +487,16 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .chapter.context { opacity: 0.5; }
 .chapter.context .text { margin: 0.4rem 0; }
 .page-rights { margin: 1.5rem 0 0; font: 0.75rem/1.4 var(--sans); color: var(--muted); }
-.pull {
-  position: fixed; left: 50%; bottom: calc(88px + env(safe-area-inset-bottom, 0px)); z-index: 15; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 12px;
-  background: var(--surface); box-shadow: var(--shadow); border: 1px solid var(--line); font: 0.85rem var(--sans);
+/* The page's own part is at least a screen tall, so a page can open with its top run-out above, out of view. */
+.page-body { min-height: calc(100vh - var(--bar) - 8px); scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 8px); }
+/* Run-outs past each end of a page (Bible.tsx): scrolling through one turns the page. */
+.runout {
+  height: 45vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 10px;
+  padding-top: 2.5rem; font: 0.85rem var(--sans); color: var(--muted);
 }
-.pull.up { bottom: auto; top: calc(var(--bar) + env(safe-area-inset-top, 0px) + 10px); }
-.pull-bar { width: 120px; height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) calc(var(--p) * 100%), var(--line) 0); }
+/* The label sits at the edge nearest the page, so it shows as soon as the band does. */
+.runout.up { justify-content: flex-end; padding: 0 0 2.5rem; }
+.runout-bar { width: 140px; height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) calc(var(--p) * 100%), var(--line) 0); }
 .size-row button { display: grid; place-items: center; width: 44px; height: 40px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); }
 .size-row button:disabled { opacity: 0.4; }
 .size-row .small { font: 0.85rem var(--serif); }
