@@ -47,6 +47,9 @@ const LONG_PRESS_MS = 300;
 /** Scrolling has stopped this long: report the position. */
 const SETTLE_MS = 1000;
 const TOUCH_SLOP_PX = 8;
+/** The seam mark stays this long after a turn, then fades out over MARK_FADE_MS (style.css `.seam-mark`). */
+const MARK_HOLD_MS = 1500;
+const MARK_FADE_MS = 600;
 const sameRefs = (a: readonly Tagging[], b: readonly Tagging[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** Where to scroll to show a verse at the top: its chapter when it is the first verse there (the number, a book's
@@ -156,7 +159,8 @@ export function Bible(props: Props) {
   const pump = () => {
     if (props.paged) {
       reportLocation();
-      return measureRunouts();
+      measureRunouts();
+      return placeMark();
     }
     if (!range() || navigating) return;
     const first = root.querySelector("[data-ch]");
@@ -332,11 +336,6 @@ export function Bible(props: Props) {
     while (s < c.to && index.slotWords[s] === 0) s++;
     return s;
   };
-  const lastVerse = (c: Chunk) => {
-    let s = c.to;
-    while (s > c.from && index.slotWords[s] === 0) s--;
-    return s;
-  };
   /** ‹ › : reading on, like the chapter keys (not a jump): the page's top, its first verse as the reading place. */
   const goPage = async (to: { ch: number; part: number }) => {
     const seq = ++navSeq;
@@ -353,9 +352,9 @@ export function Bible(props: Props) {
     });
   };
   // Run-outs: a band past each end of the page ("Keep scrolling for John 4") that fills as you scroll into it;
-  // scrolling to its end turns the page. The verse both pages show (this page's last verse is the next one's dimmed
-  // first, and its first the previous one's dimmed last) stays where it was on screen, so the new text appears
-  // where the band was and the eyes needn't find their place again. Ordinary scrolling, no overscroll (which the
+  // scrolling to its end turns the page. The verse read next, which both pages show (this page's dimmed neighbour
+  // at that end is the next page's own first verse, or the previous page's last), stays where it was on screen and
+  // carries the seam mark, so the new text appears where the band was and the eyes needn't find their place again. Ordinary scrolling, no overscroll (which the
   // browser's pull-to-refresh would take). Only the user's own scrolling turns pages (`pinned` is false), so a page
   // short enough to show its band at once doesn't turn by itself.
   const [runout, setRunout] = createSignal<{ dir: -1 | 1; p: number } | null>(null);
@@ -364,6 +363,30 @@ export function Bible(props: Props) {
   /** Where the last measure saw the page: only scrolling toward a band (down to the bottom one, up to the top one)
    *  turns the page, never scrolling back away from it. */
   let lastY = scrollY;
+  // The seam mark: a bar in the left margin beside the verse you'll read next across a turn: the dimmed neighbour
+  // verse at this page's end (going down; at its start going up), which is the next page's first (last) verse. It
+  // is on screen when the page turns, and both pages show it in the same place. The mark fades in as you scroll
+  // into the band, stays put through the turn, and fades out MARK_HOLD_MS after, so the eyes can follow it.
+  const [mark, setMark] = createSignal<{ slot: number; p: number } | null>(null);
+  const [markBox, setMarkBox] = createSignal<{ top: number; height: number; left: number } | null>(null);
+  let markHeld = 0;
+  const placeMark = () => {
+    const m = mark();
+    const words = m ? root.querySelectorAll<HTMLElement>(`.verse[data-slot="${m.slot}"] [data-ord]`) : [];
+    const text = words[0]?.closest(".text")?.getBoundingClientRect();
+    if (!text) return setMarkBox(null);
+    const [a, b] = [words[0]!.getBoundingClientRect(), words[words.length - 1]!.getBoundingClientRect()];
+    setMarkBox({ top: a.top, height: b.bottom - a.top, left: text.left });
+  };
+  const holdMark = (slot: number) => {
+    clearTimeout(markHeld);
+    setMark({ slot, p: 1 });
+    markHeld = window.setTimeout(() => {
+      setMark((m) => (m ? { ...m, p: 0 } : null)); // fades out (CSS transition), then goes
+      markHeld = window.setTimeout(() => ((markHeld = 0), setMark(null), placeMark()), MARK_FADE_MS);
+    }, MARK_HOLD_MS);
+  };
+  onCleanup(() => clearTimeout(markHeld));
   const measureRunouts = () => {
     const y = scrollY;
     const down = y > lastY;
@@ -375,6 +398,7 @@ export function Bible(props: Props) {
       const p = (innerHeight - r.top) / r.height;
       if (p > 0) {
         if (!pinned && down && r.bottom <= innerHeight + 1) return void continueTo(1);
+        if (!markHeld) setMark({ slot: page()!.slots[1], p: Math.min(1, p) });
         return setRunout({ dir: 1, p: Math.min(1, p) });
       }
     }
@@ -383,16 +407,20 @@ export function Bible(props: Props) {
       const p = (r.bottom - barHeight()) / r.height;
       if (p > 0) {
         if (!pinned && up && y <= 0) return void continueTo(-1);
+        if (!markHeld) setMark({ slot: page()!.slots[0], p: Math.min(1, p) });
         return setRunout({ dir: -1, p: Math.min(1, p) });
       }
     }
     setRunout(null);
+    if (!markHeld) setMark(null);
   };
   const continueTo = async (dir: -1 | 1) => {
     const to = neighbor(dir);
     const old = page();
     if (!to || !old || navigating) return;
-    const anchor = dir > 0 ? lastVerse(old.chunk) : firstVerse(old.chunk);
+    // The verse read next (this page's dimmed neighbour, the next page's own first) stays where it is on screen and
+    // carries the seam mark; a chapter heading the new page has before it appears above it, not under the eyes.
+    const anchor = dir > 0 ? old.slots[1] : old.slots[0];
     const before = root.querySelector(`.verse[data-slot="${anchor}"]`)?.getBoundingClientRect().top;
     const seq = ++navSeq;
     navigating = true;
@@ -403,6 +431,8 @@ export function Bible(props: Props) {
       const now = root.querySelector(`.verse[data-slot="${anchor}"]`)?.getBoundingClientRect().top;
       if (now !== undefined && before !== undefined) window.scrollBy(0, now - before);
       else toPageStart();
+      holdMark(anchor);
+      placeMark();
       navigating = false;
       pinned = true; // until the user scrolls on (a fling's momentum may be cut short by the swap)
       reported = to.ch;
@@ -623,6 +653,15 @@ export function Bible(props: Props) {
               <PageNav />
               <Show when={limits}>
                 <p class="page-rights">{props.text.info.rights}</p>
+              </Show>
+              <Show when={markBox()}>
+                {(b) => (
+                  <div
+                    class="seam-mark"
+                    aria-hidden="true"
+                    style={{ top: `${b().top}px`, height: `${b().height}px`, left: `${b().left}px`, opacity: String(mark()?.p ?? 0) }}
+                  />
+                )}
               </Show>
               </div>
               <Show when={neighbor(1)}>

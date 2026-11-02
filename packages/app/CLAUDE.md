@@ -21,9 +21,11 @@
   opens with its top band out of view (`.page-body` is at least a screen tall). **Run-outs** (2026-11-01, replacing a
   pull-past-the-end gesture the user tried: the browser's pull-to-refresh took the pull down, and the rubber band kept
   the bar from filling): a band past each end ("Keep scrolling for John 4", a bar filling as it scrolls into view);
-  scrolling to its end turns the page, keeping the verse both pages share (this page's last is the next one's dimmed
-  first) at the same place on screen, so the new text appears where the band was and the eyes needn't move (the
-  user's wish). Ordinary scrolling, no overscroll. Only the user's own scrolling toward a band turns pages
+  scrolling to its end turns the page, keeping the verse read next (this page's dimmed neighbour, the next page's
+  own first) at the same place on screen, so the new text appears where the band was and the eyes needn't move (the
+  user's wish; a chapter heading the new page has before it appears above it). A **seam mark** (2026-11-02, the user
+  still found the turn jarring) marks that verse: a 3 px accent bar in the left margin that fades in with the band,
+  stays through the turn and fades out 1.5 s after (`MARK_HOLD_MS`). Ordinary scrolling, no overscroll. Only the user's own scrolling toward a band turns pages
   (`pinned` false, and down for the bottom one, up for the top one: scrolling back out of a fully shown band once
   turned the page), so a short page showing its band at once doesn't turn by itself. The turn eases in (the user
   found it jarring): the shared verse dims from full strength over 0.5 s, the rest fades in over 0.35 s in place (no
