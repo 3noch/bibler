@@ -494,6 +494,16 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
   height: 45vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 10px;
   padding-top: 2.5rem; font: 0.85rem var(--sans); color: var(--muted);
 }
+/* Page changes ease in (Bible.tsx `via`): after a run-out the verse both pages share only dims, so the eyes keep it,
+   and the rest fades in where it will stay (no movement); other page changes fade the whole page in. */
+.fade-in { animation: page-fade-in 0.35s ease-out; }
+.page-body.fade-in { animation-duration: 0.2s; }
+.chapter.context.dim-in { animation: page-dim 0.5s ease-out; }
+@keyframes page-fade-in { from { opacity: 0; } }
+@keyframes page-dim { from { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in, .chapter.context.dim-in { animation: none; }
+}
 /* The label sits at the edge nearest the page, so it shows as soon as the band does. */
 .runout.up { justify-content: flex-end; padding: 0 0 2.5rem; }
 .runout-bar { width: 140px; height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) calc(var(--p) * 100%), var(--line) 0); }

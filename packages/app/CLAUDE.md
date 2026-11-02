@@ -23,8 +23,12 @@
   the bar from filling): a band past each end ("Keep scrolling for John 4", a bar filling as it scrolls into view);
   scrolling to its end turns the page, keeping the verse both pages share (this page's last is the next one's dimmed
   first) at the same place on screen, so the new text appears where the band was and the eyes needn't move (the
-  user's wish). Ordinary scrolling, no overscroll. Only the user's own scrolling turns pages (`pinned` false), so a
-  short page showing its band at once doesn't turn by itself. A reading setting under Aa ("Scroll" / "Chapter by chapter", per device) and always on for a
+  user's wish). Ordinary scrolling, no overscroll. Only the user's own scrolling toward a band turns pages
+  (`pinned` false, and down for the bottom one, up for the top one: scrolling back out of a fully shown band once
+  turned the page), so a short page showing its band at once doesn't turn by itself. The turn eases in (the user
+  found it jarring): the shared verse dims from full strength over 0.5 s, the rest fades in over 0.35 s in place (no
+  movement, which would undo the eyes staying put); other page changes fade the page in over 0.2 s; none with
+  `prefers-reduced-motion`. A reading setting under Aa ("Scroll" / "Chapter by chapter", per device) and always on for a
   limited text, whose pages come from `/api/text/<id>/page` (`loadPage`, never cached), whose license line ends each
   page, and whose snippets in lists show only the place ("Tap to read it on its page"): showing many places' words
   at once would break its limits. The menu marks each translation "Can be read offline" or "Online only, a page at a

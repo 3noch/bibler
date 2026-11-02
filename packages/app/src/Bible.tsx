@@ -71,6 +71,9 @@ interface Page {
   parts: number;
   chunk: Chunk;
   slots: [number, number];
+  /** Reached by scrolling through a run-out this way: the verse it shares with the last page stays put and only
+   *  dims; the rest fades in. Else the whole page fades in. */
+  via?: -1 | 1;
 }
 
 export function Bible(props: Props) {
@@ -268,7 +271,7 @@ export function Bible(props: Props) {
     }
   };
   /** Load and show chapter `ch`'s page `part`; false if a later navigation took over meanwhile. */
-  const showPage = async (ch: number, part: number, seq: number) => {
+  const showPage = async (ch: number, part: number, seq: number, via?: -1 | 1) => {
     const list = chunksOf(index, ch, limits);
     const chunk = list[part]!;
     const slots = pageSlots(index, chunk);
@@ -279,7 +282,7 @@ export function Bible(props: Props) {
       throw e;
     }
     if (seq !== navSeq) return false;
-    setPage({ ch, part, parts: list.length, chunk, slots });
+    setPage({ ch, part, parts: list.length, chunk, slots, via });
     return true;
   };
   /** The page holding a navigation's target (or verse, or chapter start), then scroll to it as the scroll does. */
@@ -358,13 +361,20 @@ export function Bible(props: Props) {
   const [runout, setRunout] = createSignal<{ dir: -1 | 1; p: number } | null>(null);
   let topBand: HTMLDivElement | undefined;
   let bottomBand: HTMLDivElement | undefined;
+  /** Where the last measure saw the page: only scrolling toward a band (down to the bottom one, up to the top one)
+   *  turns the page, never scrolling back away from it. */
+  let lastY = scrollY;
   const measureRunouts = () => {
+    const y = scrollY;
+    const down = y > lastY;
+    const up = y < lastY;
+    lastY = y;
     if (!props.paged || navigating) return;
     if (bottomBand?.isConnected) {
       const r = bottomBand.getBoundingClientRect();
       const p = (innerHeight - r.top) / r.height;
       if (p > 0) {
-        if (!pinned && r.bottom <= innerHeight + 1) return void continueTo(1);
+        if (!pinned && down && r.bottom <= innerHeight + 1) return void continueTo(1);
         return setRunout({ dir: 1, p: Math.min(1, p) });
       }
     }
@@ -372,7 +382,7 @@ export function Bible(props: Props) {
       const r = topBand.getBoundingClientRect();
       const p = (r.bottom - barHeight()) / r.height;
       if (p > 0) {
-        if (!pinned && scrollY <= 0) return void continueTo(-1);
+        if (!pinned && up && y <= 0) return void continueTo(-1);
         return setRunout({ dir: -1, p: Math.min(1, p) });
       }
     }
@@ -387,7 +397,7 @@ export function Bible(props: Props) {
     const seq = ++navSeq;
     navigating = true;
     setRunout(null);
-    if (!(await showPage(to.ch, to.part, seq))) return;
+    if (!(await showPage(to.ch, to.part, seq, dir))) return;
     requestAnimationFrame(() => {
       if (seq !== navSeq) return;
       const now = root.querySelector(`.verse[data-slot="${anchor}"]`)?.getBoundingClientRect().top;
@@ -403,9 +413,13 @@ export function Bible(props: Props) {
 
   /** The page's pieces: the context verse before (dimmed), its own slots, the context verse after. */
   const sections = (p: Page) => [
-    ...(p.slots[0] < p.chunk.from ? [{ ch: index.chapterOfVerse[p.slots[0]]!, from: p.slots[0], to: p.slots[0], context: true }] : []),
-    { ch: p.ch, from: p.chunk.from, to: p.chunk.to, context: false },
-    ...(p.slots[1] > p.chunk.to ? [{ ch: index.chapterOfVerse[p.slots[1]]!, from: p.slots[1], to: p.slots[1], context: true }] : []),
+    ...(p.slots[0] < p.chunk.from
+      ? [{ ch: index.chapterOfVerse[p.slots[0]]!, from: p.slots[0], to: p.slots[0], context: true, shared: p.via === 1 }]
+      : []),
+    { ch: p.ch, from: p.chunk.from, to: p.chunk.to, context: false, shared: false },
+    ...(p.slots[1] > p.chunk.to
+      ? [{ ch: index.chapterOfVerse[p.slots[1]]!, from: p.slots[1], to: p.slots[1], context: true, shared: p.via === -1 }]
+      : []),
   ];
   const PageNav = () => {
     const prev = () => neighbor(-1);
@@ -588,7 +602,7 @@ export function Bible(props: Props) {
                   </div>
                 )}
               </Show>
-              <div class="page-body">
+              <div class="page-body" classList={{ "fade-in": !p.via }}>
               <PageNav />
               <For each={sections(p)}>
                 {(s) => (
@@ -597,6 +611,7 @@ export function Bible(props: Props) {
                     from={s.from}
                     to={s.to}
                     context={s.context}
+                    motion={p.via ? (s.shared ? "dim" : "in") : undefined}
                     bt={books.get(index.bookOfChapter[s.ch]!)!}
                     text={props.text}
                     store={props.store}
@@ -633,6 +648,8 @@ function Chapter(props: {
   from?: number;
   to?: number;
   context?: boolean;
+  /** After a run-out: fade in, or (the verse shared with the last page) dim from full strength. */
+  motion?: "in" | "dim";
   bt: BookText;
   text: Text;
   store: TagStore;
@@ -666,7 +683,11 @@ function Chapter(props: {
   });
 
   return (
-    <section class="chapter" classList={{ context: !!props.context }} data-ch={props.context ? undefined : props.ch}>
+    <section
+      class="chapter"
+      classList={{ context: !!props.context, "fade-in": props.motion === "in", "dim-in": props.motion === "dim" }}
+      data-ch={props.context ? undefined : props.ch}
+    >
       <Show when={heads && number === 1}>
         <header class="book-head">
           <h1>{info.name}</h1>
