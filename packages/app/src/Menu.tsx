@@ -8,7 +8,7 @@ import type { TagStore } from "./store.ts";
 import type { TextInfo } from "./text.ts";
 import { AccountSection } from "./Account.tsx";
 import { Version } from "./Version.tsx";
-import { FONTS, SIZES, font, layout, resetSize, setFont, setLayout, size, stepSize } from "./reading.ts";
+import { FONTS, SIZES, awake, font, layout, resetSize, setAwake, setFont, setLayout, size, stepSize } from "./reading.ts";
 import { BackIcon, CheckIcon, CloseIcon, CloudIcon, ForwardIcon, GroupIcon, HelpIcon, NextIcon, OfflineIcon } from "./icons.tsx";
 
 export function Menu(props: {
@@ -197,6 +197,12 @@ function Reading(props: { onReading: (change: () => void) => void; limited: bool
           <span class="large">A</span>
         </button>
       </div>
+      <Show when={"wakeLock" in navigator}>
+        <label class="awake-row">
+          <input type="checkbox" checked={awake()} onChange={(e) => setAwake(e.currentTarget.checked)} />
+          Keep the screen on while reading
+        </label>
+      </Show>
     </section>
   );
 }

@@ -1,8 +1,12 @@
 import { render } from "solid-js/web";
 import { App } from "./App.tsx";
 import "./style.css";
+import { keepAwakeWhileReading } from "./wake.ts";
 
-render(() => <App />, document.getElementById("root")!);
+render(() => {
+  keepAwakeWhileReading();
+  return <App />;
+}, document.getElementById("root")!);
 
 // Installable app + offline reading (src/sw.js). Not in dev: a cache would fight hot reload.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {

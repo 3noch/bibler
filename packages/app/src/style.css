@@ -474,6 +474,7 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .choices.layout button { min-height: 40px; font-size: 0.85rem; }
 .choices.layout button:disabled { opacity: 0.55; }
 .layout-note { margin: 0; font-size: 0.78rem; }
+.awake-row { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 0.85rem; color: var(--ink); cursor: pointer; }
 .text-access { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; }
 .text-access svg { width: 14px; height: 14px; }
 /* Pages (Bible.tsx `paged`): ‹ previous · next ›, the neighbouring verses dimmed, the license line at the end. */

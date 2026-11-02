@@ -14,6 +14,11 @@
   translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
+- **Screen kept on while reading** (2026-11-02, the user's ask; `wake.ts`): the Screen Wake Lock API (Chrome, Edge,
+  Safari 16.4+), held while the page is visible, let go 5 min after the last scroll/tap/key so a phone put down still
+  sleeps, taken again by the next one (the browser drops it when the page is hidden; coming back retakes it). Aa ->
+  "Keep the screen on while reading" (per device, on by default; hidden where unsupported). Browser-checked: the
+  switch takes and gives up the lock, and taps while it's off ask for none. Not yet: a phone.
 - **Pages** (2026-11-01; `Bible.tsx` `paged`): a chapter at a time, or the part of one a licensed text's limits allow
   (`chunksOf`/`pageSlots` in packages/scripture limits.ts), with the verse before and after dimmed (`.chapter.context`,
   no `data-ch`, skipped by `topVerse`) so tags across the boundary show and can be painted; ‹ › at the top and bottom
