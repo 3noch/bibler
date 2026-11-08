@@ -61,7 +61,8 @@
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
   translation they were made in; a row's button covers it (`.text-pick::after`) so links can sit inside it: web
-  addresses in a rights line, and the abbreviation of a text with a `link` (the NET's, to netbible.org)), recent reading (collapsed; see below), contents. **Text font and size**
+  addresses in a rights line, and the abbreviation of a text with a `link` (the NET's, to netbible.org); a text with `no_notes` says "Without the
+  translators’ notes (its license)"), recent reading (collapsed; see below), contents. **Text font and size**
   (2026-10-31, `reading.ts`: font Serif/Book/Sans, all system stacks
   so nothing downloads; size 80-190% in steps, the percentage resets to 100%; per device in localStorage
   `bible-tags/reading/v1`, decided with the user: not per account, group or translation, since the right size

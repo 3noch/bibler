@@ -1088,6 +1088,9 @@ pub struct Manifest {
     pub limits: Option<Limits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// Its notes are left out (`Source.notes` false), so the menu can say so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_notes: bool,
     pub source: String,
     pub index: String,
     pub book_shift: u32,
@@ -1158,6 +1161,7 @@ pub fn write_artifacts(t: &Text, src: &Source, out: &Path) -> Result<Manifest, S
         rights: src.rights.to_string(),
         limits: src.limits,
         link: src.link.map(String::from),
+        no_notes: !src.notes,
         source: src.origin.to_string(),
         index: index_name,
         book_shift: BOOK_SHIFT,
@@ -1205,6 +1209,9 @@ pub struct CatalogEntry {
     pub limits: Option<Limits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// Its notes are left out (`Source.notes` false), so the menu can say so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_notes: bool,
 }
 
 /// Write `<dir>/texts.json` listing every `<dir>/<text_id>/manifest.json`, in [`SOURCES`] order (then by id).
@@ -1224,6 +1231,7 @@ pub fn write_catalog(dir: &Path) -> Result<Vec<CatalogEntry>, String> {
             rights: m.rights,
             limits: m.limits,
             link: m.link,
+            no_notes: m.no_notes,
         });
     }
     let rank = |id: &str| SOURCES.iter().position(|s| s.id == id).unwrap_or(SOURCES.len());

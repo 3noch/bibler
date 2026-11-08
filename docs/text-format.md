@@ -168,7 +168,8 @@ client offers and the Cloudflare Worker loads (the self-hosted server reads ever
 `manifest.json` (not hashed; the entry point): `text_id`, `abbr`, `name`, `rights`, source info, `index` file name, `book_shift` (24), and for
 each book its code, id, first word's ordinal, names, chapter count, token count and file name. Both may carry
 `limits` (below) and `link`: the publisher's page the translation's name must link to (the NET's terms: "NET"
-hyperlinked to netbible.org), so the reader always shows that text's abbreviation at the top, linked there.
+hyperlinked to netbible.org), so the reader always shows that text's abbreviation at the top, linked there; and
+`no_notes: true` when its notes are left out (`Source.notes` false), which the menu says.
 
 ## Texts a license limits (2026-11-01)
 

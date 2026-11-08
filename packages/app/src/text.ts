@@ -32,6 +32,8 @@ export interface TextInfo {
   /** The publisher's page its name must link to (the NET's terms); such a text always shows its abbreviation at the
    *  top of the reader, linked there. */
   link?: string;
+  /** Its translators' notes are left out (the NET's license excludes them). */
+  no_notes?: boolean;
 }
 
 const storageGet = (k: string) => {
@@ -122,6 +124,7 @@ interface Manifest {
   rights: string;
   limits?: Limits;
   link?: string;
+  no_notes?: boolean;
   index: string;
   books: ManifestBook[];
 }
@@ -196,7 +199,7 @@ export function loadText(id: string): Promise<Text> {
     p = (async () => {
       const manifest = (await (await fetchOk(base + "manifest.json")).json()) as Manifest;
       const index = new TextIndex(await (await fetchOk(base + manifest.index)).arrayBuffer());
-      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights, limits: manifest.limits, link: manifest.link };
+      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights, limits: manifest.limits, link: manifest.link, no_notes: manifest.no_notes };
       return { id, info, manifest, index };
     })();
     p.catch(() => texts.delete(id));

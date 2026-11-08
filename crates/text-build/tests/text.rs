@@ -269,6 +269,7 @@ fn net_notes_are_left_out() {
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["link"], "https://netbible.org");
+    assert_eq!(manifest["no_notes"], true, "so the menu can say so");
 }
 
 /// The BSB has the KJV's slots: the same verses (by address) in the same chapters, empty where it omits one.
