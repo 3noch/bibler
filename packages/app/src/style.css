@@ -542,12 +542,16 @@ button.primary:disabled { opacity: 0.45; cursor: default; }
 .texts ul { list-style: none; margin: 0; padding: 0 0 4px; }
 .texts .menu-row[aria-expanded="true"] svg { transform: rotate(90deg); }
 .text-row {
-  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px 8px 22px; border-radius: 10px;
-  text-align: left; font-family: var(--serif); font-size: 1.02rem;
+  position: relative; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px 8px 22px;
+  border-radius: 10px; text-align: left; font-family: var(--serif); font-size: 1.02rem;
 }
+.text-pick { all: unset; cursor: pointer; }
+.text-pick::after { content: ""; position: absolute; inset: 0; border-radius: 10px; }
+.text-pick:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+.text-row a { position: relative; z-index: 1; color: var(--accent); }
 .text-row .muted { font: 0.8rem var(--sans); }
 .text-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.text-row.current .text-name { font-weight: 600; }
+.text-row.current .text-pick { font-weight: 600; }
 .text-name { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .text-reading { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font: 600 0.75rem var(--sans); color: var(--accent); }
 .text-reading svg { width: 14px; height: 14px; align-self: center; }

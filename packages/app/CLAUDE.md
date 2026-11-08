@@ -13,7 +13,8 @@
   it is styled as a field with a magnifier, outline and `/` hint because a bare label didn't read as editable; the
   translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins;
   except for a text with a `link` (the NET, whose terms require "NET" shown, linked to netbible.org): its
-  abbreviation always shows, as that link in a new tab, and the chapter name shortens instead), sync
+  abbreviation always shows, as that link in a new tab, and the chapter name shortens instead; browser-checked
+  2026-11-07 with a narrowed field: "1 Thess 5" + NET), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
 - **Screen kept on while reading** (2026-11-02, the user's ask; `wake.ts`): the Screen Wake Lock API (Chrome, Edge,
@@ -59,7 +60,8 @@
   sheet, the tag list, search chips), and Back/Forward reopen it with the place), **Aa** (opens the text's font and size under the header) and Help. Below: account (sign in,
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
-  translation they were made in), recent reading (collapsed; see below), contents. **Text font and size**
+  translation they were made in; a row's button covers it (`.text-pick::after`) so links can sit inside it: web
+  addresses in a rights line, and the abbreviation of a text with a `link` (the NET's, to netbible.org)), recent reading (collapsed; see below), contents. **Text font and size**
   (2026-10-31, `reading.ts`: font Serif/Book/Sans, all system stacks
   so nothing downloads; size 80-190% in steps, the percentage resets to 100%; per device in localStorage
   `bible-tags/reading/v1`, decided with the user: not per account, group or translation, since the right size

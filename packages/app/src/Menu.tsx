@@ -127,22 +127,32 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
         <ul>
           <For each={props.texts}>
             {(t) => (
-              <li>
-                <button class="text-row" classList={{ current: t.id === props.text.id }} aria-current={t.id === props.text.id} onClick={() => props.onText(t.id)}>
-                  <span class="text-name">
-                    {t.name} <span class="muted">{t.abbr}</span>
-                    <Show when={t.id === props.text.id}>
-                      <span class="text-reading">
-                        <CheckIcon /> Reading
-                      </span>
-                    </Show>
-                  </span>
-                  <span class="muted rights">{t.rights}</span>
-                  <span class="muted text-access">
-                    {t.limits ? <CloudIcon /> : <OfflineIcon />}
-                    {t.limits ? "Online only, a page at a time (its license)" : "Can be read offline"}
-                  </span>
-                </button>
+              // The row chooses the text (its button covers it: `.text-pick::after`); links in it sit above that.
+              <li class="text-row" classList={{ current: t.id === props.text.id }}>
+                <span class="text-name">
+                  <button class="text-pick" aria-current={t.id === props.text.id} onClick={() => props.onText(t.id)}>
+                    {t.name}
+                  </button>
+                  <Show when={t.link} fallback={<span class="muted">{t.abbr}</span>}>
+                    {(href) => (
+                      <a class="muted" href={href()} target="_blank" rel="noopener">
+                        {t.abbr}
+                      </a>
+                    )}
+                  </Show>
+                  <Show when={t.id === props.text.id}>
+                    <span class="text-reading">
+                      <CheckIcon /> Reading
+                    </span>
+                  </Show>
+                </span>
+                <span class="muted rights">
+                  <WithLinks text={t.rights} />
+                </span>
+                <span class="muted text-access">
+                  {t.limits ? <CloudIcon /> : <OfflineIcon />}
+                  {t.limits ? "Online only, a page at a time (its license)" : "Can be read offline"}
+                </span>
               </li>
             )}
           </For>
@@ -150,6 +160,24 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
         <p class="muted texts-note">Tags show in the translation they were made in.</p>
       </Show>
     </nav>
+  );
+}
+
+/** `text` with its web addresses as links (a rights line's "https://netbible.com"). */
+function WithLinks(props: { text: string }) {
+  const parts = () => props.text.split(/(https?:\/\/[^\s,;)]+)/);
+  return (
+    <For each={parts()}>
+      {(p, i) =>
+        i() % 2 ? (
+          <a href={p} target="_blank" rel="noopener">
+            {p.replace(/^https?:\/\//, "")}
+          </a>
+        ) : (
+          p
+        )
+      }
+    </For>
   );
 }
 
