@@ -24,6 +24,27 @@ pub struct Source {
     /// What its license lets readers see and keep at once, if it limits that (copyrighted texts licensed through an
     /// API: docs/text-format.md). Such a text is read a page at a time from the server, never downloaded whole.
     pub limits: Option<Limits>,
+    /// Whether its notes are published. The NET's license excludes its translators' notes, so they are found (their
+    /// places are known) but left out of the book files.
+    pub notes: bool,
+    /// The publisher's page that the translation's name must link to wherever it is shown (the NET's terms: "NET"
+    /// hyperlinked to netbible.org in an app with internet access). A text with one always shows its abbreviation
+    /// at the top of the reader.
+    pub link: Option<&'static str>,
+    /// Corrections to the source, applied as it is read (the vendored files stay verbatim; see [`Fix`]).
+    pub fixes: &'static [Fix],
+}
+
+/// A correction to a mistake in a source file: in the file whose name starts with `file`, the text `from`, which
+/// must occur exactly once (else the build fails, so a refreshed source can't silently skip or misapply it), becomes
+/// `to`.
+#[derive(Debug, Clone, Copy)]
+pub struct Fix {
+    pub file: &'static str,
+    pub from: &'static str,
+    pub to: &'static str,
+    /// Why, for the record.
+    pub why: &'static str,
 }
 
 /// A license's limits on how much of a text may be shown (and kept on a device) at once: at most `verses` verses,
@@ -43,6 +64,9 @@ pub const KJV: Source = Source {
     origin: "eBible.org eng-kjv2006 USFM (2026-09-26), see data/source/eng-kjv2006/SOURCE.md",
     rights: "The 1769 Oxford text. Public domain (outside the UK); text courtesy of CrossWire and eBible.org.",
     limits: None,
+    notes: true,
+    link: None,
+    fixes: &[],
 };
 
 pub const BSB: Source = Source {
@@ -53,6 +77,9 @@ pub const BSB: Source = Source {
     origin: "eBible.org engbsb USFM (2026-10-20), see data/source/engbsb/SOURCE.md",
     rights: "Public domain; text courtesy of BSB Publishing and eBible.org.",
     limits: None,
+    notes: true,
+    link: None,
+    fixes: &[],
 };
 
 /// The BSB again, served as if it were licensed through an API with the ESV's terms: a test of reading a text a page
@@ -66,10 +93,36 @@ pub const BSB_RESTRICTED: Source = Source {
     rights: "Public domain; text courtesy of BSB Publishing and eBible.org. Shown here under the limits a licensed \
              translation would have (500 verses or half a book at a time), to test reading one.",
     limits: Some(Limits { verses: 500, book_percent: 50 }),
+    notes: true,
+    link: None,
+    fixes: &[],
+};
+
+/// The NET Bible (2026-11-07). Copyrighted, but its non-commercial terms let the text be quoted whole without
+/// permission (netbible.com/copyright, reviewed by the user): with the acknowledgement below, "NET" shown with it
+/// (linked to netbible.org in an app with internet access), and **without the translators' notes**.
+pub const NET: Source = Source {
+    id: "net-2026-v1",
+    dir: "engnet",
+    abbr: "NET",
+    name: "NET Bible",
+    origin: "eBible.org engnet USFM (2026-10-30), see data/source/engnet/SOURCE.md",
+    rights: "The Scriptures quoted are from the NET Bible® https://netbible.com copyright ©1996, 2019 used with \
+             permission from Biblical Studies Press, L.L.C. All rights reserved",
+    limits: None,
+    notes: false,
+    link: Some("https://netbible.org"),
+    fixes: &[Fix {
+        file: "22-ECC",
+        from: "\\w Pleasure|strong=\"H8057\"\\w* \\w I|",
+        to: "\\w Pleasure|strong=\"H8057\"\\w*\n\\p \\w I|",
+        why: "the heading before Ecclesiastes 2:1 runs on into the verse (`\\s1 Futility of Self-Indulgent Pleasure I \
+              thought to myself,`): the verse's first words, which the NET prints after the heading",
+    }],
 };
 
 /// Every text, the default first.
-pub const SOURCES: &[Source] = &[KJV, BSB, BSB_RESTRICTED];
+pub const SOURCES: &[Source] = &[KJV, BSB, NET, BSB_RESTRICTED];
 
 /// The default text's id.
 pub const TEXT_ID: &str = KJV.id;
@@ -317,6 +370,9 @@ struct Styles {
     wj: u32,
     tl: u32,
     it: u32,
+    /// Styles that set no flag but must balance: bold (`\bd`) and quoted text (`\qt`, the NET's Old Testament
+    /// quotations in the New).
+    other: u32,
 }
 
 impl Styles {
@@ -335,6 +391,11 @@ struct Builder {
     pending_breaks: Vec<String>,
     /// (kind, text)
     pending_headings: Vec<(String, String)>,
+    /// A `\v` line with no text (the NET's `\v 15` then `\p The Israelite foremen …`): its words must come from
+    /// the lines after it, before the next verse, chapter or book.
+    verse_awaits_words: bool,
+    /// Opening punctuation waiting for the next word (see `tokenize`).
+    lead: String,
 }
 
 impl Builder {
@@ -380,7 +441,16 @@ impl Builder {
         Ok(())
     }
 
+    /// Fails if the verse just ended was a `\v` line with no text and no line after it gave it any.
+    fn end_verse(&mut self) -> Result<(), String> {
+        if std::mem::take(&mut self.verse_awaits_words) && !self.slot_has_tokens() {
+            return Err(format!("{}: empty verse", self.here()));
+        }
+        Ok(())
+    }
+
     fn start_chapter(&mut self, n: u32) -> Result<(), String> {
+        self.end_verse()?;
         if n != self.chapter + 1 {
             return Err(format!("{}: chapter {n} out of sequence", self.here()));
         }
@@ -402,6 +472,7 @@ impl Builder {
     }
 
     fn start_verse(&mut self, n: u32) -> Result<(), String> {
+        self.end_verse()?;
         let Some(prev) = self.verse else {
             return Err(format!("{}: verse {n} before any chapter", self.here()));
         };
@@ -431,8 +502,11 @@ impl Builder {
             .split_once("\\fr ")
             .and_then(|(_, r)| r.split_once("\\ft ").map(|(r, _)| r.trim().to_string()))
             .ok_or_else(|| format!("{here}: footnote without \\fr/\\ft: {body:?}"))?;
+        // The NET labels its notes and the translations they cite (`\\fr 43:13 \\fl Translator's Note \\ft …
+        // (so \\fl KJV\\ft , \\+fl NASB\\ft )`): the label isn't part of the reference.
+        let reference = reference.split_once("\\fl ").map_or(reference.clone(), |(r, _)| r.trim().to_string());
         let ft = body.split_once("\\ft ").map(|(_, t)| t).unwrap_or_default();
-        if ft.contains("\\f") {
+        if ft.replace("\\+fl ", "").replace("\\fl ", "").replace("\\ft ", "").contains("\\f") {
             return Err(format!("{here}: unexpected footnote marker in footnote: {body:?}"));
         }
         self.text.notes.push(Note { after, reference, text: plain(ft) });
@@ -468,7 +542,7 @@ impl Builder {
         // next space belongs to the word before the note.
         let mut after_note = false;
         // Punctuation that opens a verse on its own (`... for this reason`, BSB Ephesians 3:14) joins the next word.
-        let mut lead = String::new();
+        let mut lead = std::mem::take(&mut self.lead);
         let mut chars = s.char_indices().peekable();
 
         let flush = |t: &mut Text,
@@ -485,7 +559,22 @@ impl Builder {
                 let in_slot = t.slot_first_word.last().is_some_and(|&f| (f as usize) < t.words.len());
                 match t.words.last_mut() {
                     Some(prev) if after_note && in_slot => prev.push_str(cur),
+                    // A spaced dash inside a verse (`land – and`, the NET) stays with the word before it, space
+                    // and all, so the verse reads as printed and a dash is never a word of its own.
+                    Some(prev) if in_slot && cur.chars().all(|c| matches!(c, '–' | '—')) => {
+                        prev.push(' ');
+                        prev.push_str(cur);
+                    }
+                    // One opening a verse (NET Leviticus 4:10 `– just as`) goes with the next word, keeping its space.
+                    _ if !in_slot && lead.is_empty() && cur.chars().all(|c| matches!(c, '–' | '—')) => {
+                        lead.push_str(cur);
+                        lead.push(' ');
+                    }
                     _ if !in_slot && lead.is_empty() => lead.push_str(cur),
+                    // The NET's export leaves spaces inside punctuation (`happened )`, `‘ Man`, `fulfilled : “`):
+                    // opening marks join the next word and closing ones the word before, as printed.
+                    _ if cur.chars().all(|c| matches!(c, '“' | '‘' | '(' | '[')) => lead.push_str(cur),
+                    Some(prev) if in_slot && cur.chars().all(|c| "”’)],.:;?!*".contains(c)) => prev.push_str(cur),
                     _ => return Err(format!("{here}: punctuation-only token {cur:?}")),
                 }
                 cur.clear();
@@ -532,10 +621,12 @@ impl Builder {
 
                 let counter = match base {
                     "add" => Some(&mut st.add),
-                    "nd" => Some(&mut st.nd),
+                    // `\sc`, small capitals: the NET's "sovereign \sc Lord\sc*", a divine name like `\nd`.
+                    "nd" | "sc" => Some(&mut st.nd),
                     "wj" => Some(&mut st.wj),
                     "tl" => Some(&mut st.tl),
                     "it" => Some(&mut st.it),
+                    "bd" | "qt" => Some(&mut st.other),
                     "w" => None,
                     _ => return Err(format!("{here}: unexpected marker \\{name}{}", if closing { "*" } else { "" })),
                 };
@@ -597,10 +688,10 @@ impl Builder {
             return Err(format!("{here}: hyphen at the end of a verse"));
         }
         flush(&mut self.text, &mut cur, &mut cur_flags, &mut cur_letter, after_note, &mut lead)?;
-        if !lead.is_empty() {
-            return Err(format!("{here}: punctuation-only token {lead:?}"));
-        }
-        if st.add + st.nd + st.wj + st.tl + st.it != 0 {
+        // An opening mark at the end of a line goes with the next word, even in the next verse (the NET's `\p (`
+        // ending 2 Kings 14:14 opens verse 15).
+        self.lead = lead;
+        if st.add + st.nd + st.wj + st.tl + st.it + st.other != 0 {
             return Err(format!("{here}: unclosed character style"));
         }
         Ok(())
@@ -638,13 +729,20 @@ impl Builder {
                 let (num, body) = rest.split_once(' ').unwrap_or((rest, ""));
                 let n = num.parse().map_err(|_| format!("{}: bad verse {num:?}", self.here()))?;
                 self.start_verse(n)?;
-                self.add_words(body)?;
-                if !self.slot_has_tokens() {
-                    return Err(format!("{}: empty verse", self.here()));
+                if omitted(body) {
+                    // The NET marks a verse it leaves out with a note in its place (`\v 21 \f + \fr 17:21 \ft
+                    // [[EMPTY]]\f*`): an empty slot, like a verse number the BSB skips, and no note.
+                } else if body.trim().is_empty() {
+                    self.verse_awaits_words = true;
+                } else {
+                    self.add_words(body)?;
+                    if !self.slot_has_tokens() {
+                        return Err(format!("{}: empty verse", self.here()));
+                    }
                 }
             }
             // Paragraphs and poetry lines; text after the marker continues the current verse.
-            "\\p" | "\\m" | "\\pmo" | "\\pc" | "\\b" | "\\q1" | "\\q2" | "\\qr" | "\\li1" | "\\li2" => {
+            "\\p" | "\\m" | "\\pmo" | "\\pc" | "\\pi1" | "\\b" | "\\q1" | "\\q2" | "\\qr" | "\\li1" | "\\li2" => {
                 self.pending_breaks.push(marker[1..].to_string());
                 if !rest.is_empty() {
                     if self.verse.is_none_or(|v| v == 0) {
@@ -653,8 +751,11 @@ impl Builder {
                     self.add_words(rest)?;
                 }
             }
-            "\\s1" | "\\s2" | "\\r" | "\\ms1" | "\\mr" | "\\qa" => {
-                self.pending_headings.push((marker[1..].to_string(), plain(rest)));
+            "\\s1" | "\\s2" | "\\r" | "\\ms1" | "\\ms2" | "\\mr" | "\\qa" => {
+                // An empty one (the NET's `\\s1` before "Book 1" of the Psalms) shows nothing.
+                if !plain(rest).is_empty() {
+                    self.pending_headings.push((marker[1..].to_string(), plain(rest)));
+                }
             }
             _ => return Err(format!("{}: unexpected line marker {marker}", self.here())),
         }
@@ -662,6 +763,18 @@ impl Builder {
     }
 
     fn finish_book(&mut self) -> Result<(), String> {
+        self.end_verse()?;
+        if !self.lead.is_empty() {
+            return Err(format!("{}: punctuation-only token {:?}", self.here(), self.lead));
+        }
+        // An omitted verse that would end the book (the NET's placeholder for 2 Corinthians 13:14; its 13:13 is the
+        // KJV's 13:14) isn't kept as a slot: an empty slot starts where the next verse does, and here none follows.
+        while self.verse.is_some_and(|v| v > 0) && !self.slot_has_tokens() {
+            self.text.verse_start.pop();
+            self.text.slot_first_word.pop();
+            self.text.chapter_of_verse.pop();
+            self.verse = self.verse.map(|v| v - 1);
+        }
         if !self.pending_breaks.is_empty() {
             return Err(format!("{}: trailing breaks {:?}", self.book_code, self.pending_breaks));
         }
@@ -679,6 +792,13 @@ impl Builder {
         b.tokens = tokens - b.first_word;
         Ok(())
     }
+}
+
+/// Whether a verse's text is only the NET's placeholder note for a verse the translation leaves out.
+fn omitted(body: &str) -> bool {
+    body.trim().strip_prefix("\\f + \\fr ").and_then(|r| r.strip_suffix("\\f*")).is_some_and(|r| {
+        r.split_once(" \\ft ").is_some_and(|(reference, note)| !reference.contains('\\') && note.trim() == "[[EMPTY]]")
+    })
 }
 
 /// Strip simple character markers (`\tl`, `\add`, …) and word attributes (`\w The|strong="H2142"\w*`) from
@@ -716,7 +836,7 @@ pub fn source_files(src: &Path) -> Result<Vec<PathBuf>, String> {
 /// # Errors
 /// On unreadable files and on anything in the source the spec does not cover (unknown markers, verse or chapter
 /// numbering gaps, punctuation-only tokens, …): a source surprise must stop the build, not shift ordinals.
-pub fn build(src: &Path) -> Result<Text, String> {
+pub fn build(src: &Path, fixes: &[Fix]) -> Result<Text, String> {
     let mut b = Builder {
         text: Text::default(),
         book_code: String::new(),
@@ -724,11 +844,19 @@ pub fn build(src: &Path) -> Result<Text, String> {
         verse: None,
         pending_breaks: vec![],
         pending_headings: vec![],
+        verse_awaits_words: false,
+        lead: String::new(),
     };
 
     for path in source_files(src)? {
-        let raw = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut raw = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let stem = path.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+        for fix in fixes.iter().filter(|f| stem.starts_with(f.file)) {
+            if raw.matches(fix.from).count() != 1 {
+                return Err(format!("{stem}: a fix no longer matches exactly once: {:?} ({})", fix.from, fix.why));
+            }
+            raw = raw.replacen(fix.from, fix.to, 1);
+        }
         b.book_code.clear();
         b.chapter = 0;
         b.verse = None;
@@ -958,6 +1086,8 @@ pub struct Manifest {
     pub rights: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<Limits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     pub source: String,
     pub index: String,
     pub book_shift: u32,
@@ -1001,7 +1131,8 @@ pub fn write_artifacts(t: &Text, src: &Source, out: &Path) -> Result<Manifest, S
             pilcrow: t.pilcrow.iter().copied().filter(|s| slots.contains(s)).collect(),
             breaks: t.breaks.iter().filter(|(o, _)| ords.contains(o)).collect(),
             headings: t.headings.iter().filter(|h| ords.contains(&h.at)).collect(),
-            notes: t.notes.iter().filter(|n| ords.contains(&n.after)).collect(),
+            // Left out when its license excludes them (the NET); their places are still in `t.notes`.
+            notes: t.notes.iter().filter(|n| src.notes && ords.contains(&n.after)).collect(),
         };
         let bytes = serde_json::to_vec(&file).map_err(|e| e.to_string())?;
         let name = hashed_name(&b.file_key, "json", &bytes);
@@ -1026,6 +1157,7 @@ pub fn write_artifacts(t: &Text, src: &Source, out: &Path) -> Result<Manifest, S
         name: src.name.to_string(),
         rights: src.rights.to_string(),
         limits: src.limits,
+        link: src.link.map(String::from),
         source: src.origin.to_string(),
         index: index_name,
         book_shift: BOOK_SHIFT,
@@ -1071,6 +1203,8 @@ pub struct CatalogEntry {
     pub rights: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<Limits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// Write `<dir>/texts.json` listing every `<dir>/<text_id>/manifest.json`, in [`SOURCES`] order (then by id).
@@ -1083,7 +1217,14 @@ pub fn write_catalog(dir: &Path) -> Result<Vec<CatalogEntry>, String> {
         let path = entry.map_err(|e| e.to_string())?.path().join("manifest.json");
         let Ok(raw) = fs::read_to_string(&path) else { continue };
         let m: Manifest = serde_json::from_str(&raw).map_err(|e| format!("{}: {e}", path.display()))?;
-        texts.push(CatalogEntry { id: m.text_id, abbr: m.abbr, name: m.name, rights: m.rights, limits: m.limits });
+        texts.push(CatalogEntry {
+            id: m.text_id,
+            abbr: m.abbr,
+            name: m.name,
+            rights: m.rights,
+            limits: m.limits,
+            link: m.link,
+        });
     }
     let rank = |id: &str| SOURCES.iter().position(|s| s.id == id).unwrap_or(SOURCES.len());
     texts.sort_by(|a, b| (rank(&a.id), &a.id).cmp(&(rank(&b.id), &b.id)));

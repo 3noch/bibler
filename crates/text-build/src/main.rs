@@ -43,7 +43,7 @@ fn run() -> Result<(), String> {
     }
 
     for src in ids {
-        let text = build(&sources.join(src.dir)).map_err(|e| format!("{}: {e}", src.id))?;
+        let text = build(&sources.join(src.dir), src.fixes).map_err(|e| format!("{}: {e}", src.id))?;
         let g = golden(&text, src.id);
         let gp = fixtures.join(format!("{}.golden.json", src.id));
         if write_golden {

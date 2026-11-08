@@ -32,6 +32,9 @@ export function Omnibox(props: {
   /** The translation's abbreviation, shown at rest when there is room, and its name. */
   badge?: string;
   badgeTitle?: string;
+  /** Set when the badge must always show, as a link there (a text whose terms say so: the NET's "NET" linked to
+   *  netbible.org); the chapter's name gives way to it instead. */
+  badgeLink?: string;
   /** Where Back goes ("John 3"; "" if not known), offered first in the empty box; absent: nowhere. */
   back?: string;
   onBack: () => void;
@@ -48,17 +51,19 @@ export function Omnibox(props: {
   // change the answer.
   const [room, setRoom] = createSignal<{ width: number; font: string; badge: number } | null>(null);
   const canvas = document.createElement("canvas").getContext("2d");
-  /** The chapter's full name with the badge if both fit, else the full name alone, else the short one. */
+  /** The chapter's full name with the badge if both fit, else the full name alone, else the short one. A badge that
+   *  must show (`badgeLink`) stays, beside the full name if both fit, else the short one. */
   const idle = createMemo(() => {
     const r = room();
     if (!canvas || !r) return { label: props.label, badge: false };
     canvas.font = r.font;
     const w = canvas.measureText(props.label).width;
     if (props.badge && w + r.badge <= r.width) return { label: props.label, badge: true };
+    if (props.badgeLink) return { label: props.shortLabel, badge: true };
     return { label: w <= r.width ? props.label : props.shortLabel, badge: false };
   });
   const idleLabel = () => idle().label;
-  const showBadge = () => !focused() && !props.chips.length && idle().badge;
+  const showBadge = () => (!!props.badgeLink && !!props.badge) || (!focused() && !props.chips.length && idle().badge);
   const GAP = 4; // .omni-field's
   onMount(() => {
     const s = getComputedStyle(input);
@@ -196,9 +201,27 @@ export function Omnibox(props: {
           }}
         />
         <Show when={showBadge()}>
-          <span class="omni-badge" title={props.badgeTitle}>
-            {props.badge}
-          </span>
+          <Show
+            when={props.badgeLink}
+            fallback={
+              <span class="omni-badge" title={props.badgeTitle}>
+                {props.badge}
+              </span>
+            }
+          >
+            {(href) => (
+              <a
+                class="omni-badge link"
+                href={href()}
+                target="_blank"
+                rel="noopener"
+                title={props.badgeTitle}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {props.badge}
+              </a>
+            )}
+          </Show>
         </Show>
         <span class="omni-badge probe" ref={probe} aria-hidden="true">
           {props.badge}

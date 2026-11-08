@@ -1,6 +1,6 @@
 # Scripture text: tokenizer spec and build artifacts
 
-Status: **frozen for `kjv-1769-v2` and `bsb-2026-v1`** once any user has taggings (golden files
+Status: **frozen for `kjv-1769-v2`, `bsb-2026-v1` and `net-2026-v1`** once any user has taggings (golden files
 `fixtures/text/<text_id>.golden.json`). Changing anything below that affects a text's ordinals then requires a new
 `text_id` and a remap. (`kjv-1769-v1` numbered words by their position in the book and kept hyphenated words whole;
 it was replaced on 2026-10-12, before anyone had data, with no migration.)
@@ -8,7 +8,11 @@ it was replaced on 2026-10-12, before anyone had data, with no migration.)
 ## Input
 
 Each text (`text_build::SOURCES`: id, directory, name, rights line) is `data/source/<dir>/*.usfm` (see its
-`SOURCE.md`): KJV = `eng-kjv2006`, BSB (Berean Standard Bible, added 2026-10-23) = `engbsb`, both eBible.org USFM.
+`SOURCE.md`): KJV = `eng-kjv2006`, BSB (Berean Standard Bible, added 2026-10-23) = `engbsb`, NET (NET Bible, added
+2026-11-07; copyrighted, quoted under its non-commercial terms, without its notes) = `engnet`, all eBible.org USFM.
+A text's `fixes` correct known mistakes in its files as they are read (the files stay verbatim): each names its
+file, the exact text, which must occur once or the build fails, and its replacement. The NET has one (Ecclesiastes
+2:1's first words sit on its heading's line).
 66 books, one file per book, canonical order = filename order (`02-GEN` … `96-REV`). Each file is parsed on its own.
 
 ## Verse slots
@@ -19,11 +23,16 @@ The unit of the index is the **verse slot**. Every chapter has slots `0..=n`, wh
   116 Psalms have titles (1,034 tokens). Habakkuk 3:1 and 3:19 are ordinary verses (in the source too).
 - Verse numbers must increase. A number skipped (a verse the translation leaves out: 16 in the BSB, e.g. Matthew
   17:21, listed in its `SOURCE.md`) is an **empty slot**, so texts with the same versification have the same slots.
-  A repeat or a step back fails the build.
+  So is a verse whose only content is the NET's placeholder note `\f + \fr 17:21 \ft [[EMPTY]]\f*` (no note is
+  kept), except at the end of a book, where an empty slot would have no next verse to start at: there it is no slot
+  (NET 2 Corinthians 13:14; its 13:13 is the KJV's 13:14). A repeat or a step back fails the build.
+- A `\v` line with no text (the NET's `\v 15` then `\p The Israelite foremen …`) takes its words from the lines
+  after it; if none come before the next verse, it fails the build.
 
 Slots are numbered globally in canonical order (Gen 1:0 = slot 0, Gen 1:1 = slot 1, …). For KJV:
 1,189 chapters, 31,102 verses, 32,291 slots. The BSB has the same slots (tested: `bsb_shares_kjv_versification`),
-so a verse's address is the same in both and reading history, links and future cross-text tags can go by verse.
+so a verse's address is the same in both and reading history, links and future cross-text tags can go by verse. The
+NET has them too except 2 Corinthians 13:14 (32,290 slots), so its 13:13 is the others' 13:14.
 
 ## Tokens (ordinals)
 
@@ -66,7 +75,12 @@ current verse:
    of the word (both checked by the build). KJV has 785 hyphenated words, which become 1,593 tokens. Two kinds of
    punctuation-only piece are joined to a word instead (none occur in the KJV): right after a footnote that
    followed a space (`Sea \f …\f*).` = `Sea).`, 48 in the BSB), to the word before; opening a verse
-   (`... for`, BSB Ephesians 3:14 only), to the next (`...for`). Any other is a build error.
+   (`... for`, BSB Ephesians 3:14 only), to the next (`...for`). For the NET (2026-11-07; none occur in the KJV or
+   BSB): a spaced en or em dash stays with the word before, space included (`land –`), or opening a verse with the
+   word after (`– just`); its export's stray spaces inside punctuation are closed up: opening marks `“ ‘ ( [` join
+   the next word, even on a later line or in the next verse (`\p (` ending 2 Kings 14:14 opens 14:15), and
+   closing ones (any of `” ’ ) ] , . : ; ? ! *`) join the word before (`happened )` = `happened)`). Any other is a
+   build error.
 6. Token text is stored exactly as in the source (U+2019 `’`, U+00E6 `æ`, U+2014 `—` kept). Case-folding and
    apostrophe normalization are a search concern, not a tokenizer concern.
 
@@ -75,7 +89,9 @@ Any other marker inside a verse is a build error, so source surprises surface in
 ### Per-token flags (stored as half-open ordinal runs)
 
 - `italic`: any letter inside `\add` / `\+add` (KJV supplied words) or `\it` (BSB Habakkuk 3:19's last line).
-- `divine_name`: inside `\nd` / `\+nd` (LORD/GOD in small caps).
+- `divine_name`: inside `\nd` / `\+nd` (LORD/GOD in small caps), or `\sc` (small capitals; the NET's "sovereign
+  \sc Lord\sc*").
+- No flag but must balance: `\bd` (bold) and `\qt` (the NET's Old Testament quotations in the New).
 - `words_of_jesus`: inside `\wj`.
 - `joined` (a list of ordinals, not runs): the token ends with a hyphen and is followed by no space.
 
@@ -86,7 +102,7 @@ letters. (360 italic spans include trailing punctuation; the flag ignores punctu
 
 - `pilcrow` (per slot): the KJV's own paragraph mark `¶` (2,970; the KJV stops using them after Acts 20).
 - `break` (before a word; since 2026-10-23, when the BSB's poetry needed breaks inside verses): a line marker
-  `\p` `\m` `\pmo` `\pc` (paragraphs: indented, flush, embedded, centered), `\b` (blank line), `\q1` `\q2` `\qr`
+  `\p` `\m` `\pmo` `\pc` `\pi1` (paragraphs: indented, flush, embedded, centered, indented further), `\b` (blank line), `\q1` `\q2` `\qr`
   (poetry lines, the last right-aligned), `\li1` `\li2` (list items), anchored at the next word emitted. Text after
   the marker on its line continues the current verse (an error outside a verse). The KJV's are the CrossWire
   editors' layout, not the 1769 text, and always fall at a verse's first word.
@@ -95,13 +111,17 @@ letters. (360 italic spans include trailing punctuation; the flag ignores punctu
 
 - Book titles: `\mt1` (+ `\mt2` for 1–2 Kings), names from `\toc1` (long), `\toc2` (short), `\toc3` (abbr).
 - Headings, with their marker as `kind`: `\s1` sections, `\s2` subsections (in the Song of Songs a speaker, inside
-  a verse), `\r` parallel passages, `\ms1` + `\mr` the five books of Psalms and their ranges, `\qa` acrostic letters.
+  a verse), `\r` parallel passages, `\ms1` + `\mr` (or the NET's `\ms2`) the five books of Psalms and their ranges,
+  `\qa` acrostic letters. An empty heading (the NET's `\s1` before Psalms' "Book 1") is ignored.
   Anchored **before** the next word emitted (so possibly inside a verse); headings with no word after them in
   their book (the KJV's 14 epistle subscriptions) are anchored **after** the book's last word. KJV: 22 Psalm 119
   letter headings (`\s1`, `\tl` letter + name) + the subscriptions. Word attributes are removed from heading text.
 - An empty `\d` (BSB Zechariah 12) is ignored.
 - Notes (KJV marginal notes, `\f + \fr c.v \ft text\f*`, 6,959): anchored **after** the last token emitted before
-  the note (ordinal), with the `\ft` text.
+  the note (ordinal), with the `\ft` text. The NET labels its notes and the translations they cite (`\fl
+  Translator's Note`, `\+fl KJV`): the label is not part of the reference. A text whose license excludes its notes
+  (`Source.notes` false: the NET) still has them placed in the build, but its book files list none; notes never
+  affect ordinals, so publishing them later needs no new `text_id`.
 
 ## Artifacts (`text-build` output, `build/text/<text_id>/`)
 
@@ -146,7 +166,9 @@ The index holds no text, so it can be built for a text whose words cannot be red
 client offers and the Cloudflare Worker loads (the self-hosted server reads every `<text_id>/manifest.json`).
 
 `manifest.json` (not hashed; the entry point): `text_id`, `abbr`, `name`, `rights`, source info, `index` file name, `book_shift` (24), and for
-each book its code, id, first word's ordinal, names, chapter count, token count and file name.
+each book its code, id, first word's ordinal, names, chapter count, token count and file name. Both may carry
+`limits` (below) and `link`: the publisher's page the translation's name must link to (the NET's terms: "NET"
+hyperlinked to netbible.org), so the reader always shows that text's abbreviation at the top, linked there.
 
 ## Texts a license limits (2026-11-01)
 

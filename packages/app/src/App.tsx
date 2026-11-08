@@ -509,7 +509,8 @@ function Main(props: {
           }}
           onGo={goRef}
           badge={props.text.info.abbr}
-          badgeTitle={`${props.text.info.name} (menu: Translation)`}
+          badgeTitle={props.text.info.link ? `${props.text.info.name} (${props.text.info.link})` : `${props.text.info.name} (menu: Translation)`}
+          badgeLink={props.text.info.link}
           back={trail().i > 0 ? (backTo() ?? "") : undefined}
           onBack={() => history.back()}
         />

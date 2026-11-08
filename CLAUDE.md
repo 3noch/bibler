@@ -49,7 +49,12 @@ local-first. No WASM (decided: duplicate small algorithms in TS and Rust, keep t
   rebuild Rust. Cloudflare rebuilds on every push anyway, so its stamp is compiled in. Inside `nix-shell` on macOS
   the PATH's `git` is the Xcode stub that fails: add `git` (`nix-shell -p nodejs_22 git`).
 - **Translations** (2026-10-23): KJV and the Berean Standard Bible (public domain, eBible.org USFM like the KJV;
-  the NET and most modern translations need a license). `text-build` builds every text in its `SOURCES` into
+  most modern translations need a license). **NET** (2026-11-07, `net-2026-v1`, eBible.org `engnet`): copyrighted,
+  but its non-commercial terms (netbible.com/copyright, reviewed by the user) let the text be quoted whole without
+  permission with the acknowledgement (its rights line, in the menu), "NET" shown with it and linked to
+  netbible.org (`Source.link`: the top bar always shows its abbreviation, as that link), and **without the
+  translators' notes** (`Source.notes` false; eBible's export has only Isaiah 43's anyway, so placing the ~58,500
+  notes later needs another source; the user may later link notes to netbible.org instead). `text-build` builds every text in its `SOURCES` into
   `build/text/<text_id>/` plus `build/text/texts.json` (the list the client offers and the Worker loads; the
   self-hosted server loads every manifest). The client (`src/text.ts`) reads one text at a time, chosen per device
   (menu -> Translation, where the current one is marked "Reading"; localStorage), and switching keeps the verse at

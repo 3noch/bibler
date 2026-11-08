@@ -291,6 +291,8 @@ kbd { font: 0.8em var(--sans); padding: 0 0.3em; border: 1px solid var(--line); 
   flex: none; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--line);
   font: 600 0.72rem var(--sans); letter-spacing: 0.03em; color: var(--muted); white-space: nowrap;
 }
+a.omni-badge { text-decoration: none; color: var(--accent); }
+a.omni-badge:hover { border-color: var(--accent); }
 .omni-badge.probe { position: absolute; visibility: hidden; pointer-events: none; }
 @media (max-width: 560px) { .omni-kbd { display: none; } }
 .omnibox.focused .omni-field, .omnibox.searching .omni-field { background: var(--surface); border-color: var(--line); }

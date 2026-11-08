@@ -1,15 +1,20 @@
 use std::fs;
 use std::path::PathBuf;
 use text_build::{
-    build, golden, golden_path, index_bytes, make_ord, source_dir, Golden, HeadingPos, Source, Text, BSB, KJV,
+    build, golden, golden_path, index_bytes, make_ord, source_dir, write_artifacts, Fix, Golden, HeadingPos, Source,
+    Text, BSB, KJV, NET,
 };
 
 fn kjv() -> Text {
-    build(&source_dir(&KJV)).expect("build KJV")
+    build(&source_dir(&KJV), KJV.fixes).expect("build KJV")
 }
 
 fn bsb() -> Text {
-    build(&source_dir(&BSB)).expect("build BSB")
+    build(&source_dir(&BSB), BSB.fixes).expect("build BSB")
+}
+
+fn net() -> Text {
+    build(&source_dir(&NET), NET.fixes).expect("build NET")
 }
 
 /// The verses the BSB leaves out (empty slots).
@@ -47,12 +52,14 @@ fn check_golden(src: &Source, t: &Text) {
 fn golden_matches_vendored_source() {
     check_golden(&KJV, &kjv());
     check_golden(&BSB, &bsb());
+    check_golden(&NET, &net());
 }
 
 #[test]
 fn every_ordinal_round_trips() {
     check_ordinals(&kjv(), &[]);
     check_ordinals(&bsb(), &BSB_OMITS);
+    check_ordinals(&net(), &BSB_OMITS); // the NET leaves out the same verses (and 2 Corinthians 13:14: no slot)
 }
 
 /// Every word's ordinal is its address and intervals tile; verses >= 1 have words except `omitted`.
@@ -202,6 +209,68 @@ fn bsb_landmarks() {
     assert_eq!(italic.join(" "), "For the choirmaster. With stringed instruments.");
 }
 
+#[test]
+fn net_landmarks() {
+    let t = net();
+    let book = |c: &str| t.books.iter().position(|b| b.code == c).unwrap();
+    let words = |b: &str, c: u32, v: u32| {
+        let (s, e) = t.interval(book(b), c, v);
+        (s..e).filter_map(|o| t.word(o)).collect::<Vec<_>>().join(" ")
+    };
+    assert_eq!(words("GEN", 1, 1), "In the beginning God created the heavens and the earth.");
+    assert_eq!(words("JHN", 11, 35), "Jesus wept.");
+    assert!(words("GEN", 1, 30).contains("on the ground – everything"), "a spaced dash stays with the word before");
+    assert!(words("LEV", 4, 10).starts_with("– just as it is taken"), "or the word after, opening a verse");
+    assert!(words("LEV", 5, 1).contains("knew what had happened) and"), "a stray space before `)` is dropped");
+    assert!(words("MAT", 2, 6).starts_with("‘And you, Bethlehem,"), "and one after an opening quote");
+    assert!(words("MAT", 2, 15).contains("was fulfilled: “I called my Son"));
+    assert!(words("2KI", 14, 15).starts_with("(The rest of the events"), "`(` ending 14:14 opens 14:15");
+    assert!(words("EXO", 5, 15).starts_with("The Israelite foremen went"), "a `\\v` line's text on the next line");
+    assert_eq!(words("MAT", 17, 21), "", "an omitted verse (the NET's [[EMPTY]] note) is an empty slot");
+    assert!(words("ECC", 2, 1).starts_with("I thought to myself, “Come now,"), "the fix to Ecclesiastes 2:1");
+    let (s, _) = t.interval(book("ECC"), 2, 1);
+    assert!(t.headings.iter().any(|h| h.at == s && h.text == "Futility of Self-Indulgent Pleasure"));
+    assert!(t.headings.iter().all(|h| !h.text.is_empty() && !h.text.contains('\\')));
+    // 2 Corinthians 13 has 13 verses (its 13:13 is the KJV's 13:14; eBible's empty 13:14 is no slot).
+    let cor = t.books[book("2CO")].first_chapter as usize + 12;
+    assert_eq!(t.chapter_first_verse[cor + 1] - t.chapter_first_verse[cor], 14, "title slot + 13 verses");
+    assert!(words("2CO", 13, 13).starts_with("The grace of the Lord Jesus Christ"));
+    // `\\sc Lord\\sc*` (the NET's "sovereign Lord") is a divine name, like `\\nd`.
+    let (s, e) = t.interval(book("PSA"), 71, 5);
+    let first = t.books[book("PSA")].first_word;
+    let divine: Vec<&str> = (first..first + t.books[book("PSA")].tokens)
+        .filter(|&i| t.flags[i as usize] & 2 != 0 && (s..e).contains(&t.ord_of_word(i)))
+        .map(|i| t.words[i as usize].as_str())
+        .collect();
+    assert_eq!(divine, ["Lord,"]);
+}
+
+/// The NET's translators' notes are found (Isaiah 43's are in eBible's files) but never published: its license
+/// excludes them.
+#[test]
+fn net_notes_are_left_out() {
+    let t = net();
+    let isa = t.books.iter().position(|b| b.code == "ISA").unwrap();
+    let (s, e) = (t.interval(isa, 43, 1).0, t.interval(isa, 44, 1).0);
+    assert!(t.notes.len() > 20 && t.notes.iter().all(|n| (s..e).contains(&n.after)), "Isaiah 43's notes, placed");
+    assert!(
+        t.notes.iter().all(|n| n.reference.strip_prefix("43:").is_some_and(|v| v.parse::<u32>().is_ok())),
+        "the label isn't part of the reference (`43:13`, not `43:13 \\fl Translator's Note`)"
+    );
+    let dir = scratch_dir();
+    write_artifacts(&t, &NET, &dir).unwrap();
+    for f in fs::read_dir(&dir).unwrap() {
+        let path = f.unwrap().path();
+        if path.extension().is_some_and(|x| x == "json") && path.file_name().unwrap() != "manifest.json" {
+            let book: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(book["notes"], serde_json::json!([]), "{}", path.display());
+        }
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["link"], "https://netbible.org");
+}
+
 /// The BSB has the KJV's slots: the same verses (by address) in the same chapters, empty where it omits one.
 #[test]
 fn bsb_shares_kjv_versification() {
@@ -235,7 +304,7 @@ fn index_layout_is_exact() {
 fn synth(body: &str) -> Result<Text, String> {
     let dir = scratch_dir();
     fs::write(dir.join("02-TST.usfm"), format!("\\id TST Test\n\\toc1 Test\n\\toc2 Test\n\\toc3 Tst\n{body}")).unwrap();
-    build(&dir)
+    build(&dir, &[])
 }
 
 fn scratch_dir() -> PathBuf {
@@ -312,21 +381,57 @@ fn strictness() {
     assert!(err("\\c 1\n\\v 2 x\n\\v 1 back\n").contains("out of sequence"));
     assert!(err("\\c 1\n\\m text before a verse\n\\v 1 x\n").contains("outside a verse"));
     assert!(err("\\c 1\n\\v 1 x\n\\v 2 ... ;\n").contains("punctuation-only"));
-    assert!(
-        err("\\c 1\n\\v 1 x \\f + \\fr 1:1 \\ft n\\f* ;\n").contains("punctuation-only"),
-        "only right after the note"
-    );
+    assert!(err("\\c 1\n\\v 1 x \\f + \\fr 1:1 \\ft n\\f* +\n").contains("punctuation-only"));
     assert!(err("\\c 2\n\\v 1 x\n").contains("chapter 2 out of sequence"));
-    assert!(err("\\c 1\n\\v 1 x \\bd bold\\bd*\n").contains("unexpected marker"));
+    assert!(err("\\c 1\n\\v 1 x \\zz odd\\zz*\n").contains("unexpected marker"));
     assert!(err("\\c 1\n\\v 1 x\n\\zz y\n").contains("unexpected line marker"));
     assert!(err("\\c 1\n\\v 1 x ¶ y\n").contains("pilcrow"));
-    assert!(err("\\c 1\n\\v 1 x ;\n").contains("punctuation-only"));
+    assert!(err("\\c 1\n\\v 1 x +\n").contains("punctuation-only"));
+    assert!(err("\\c 1\n\\v 1 x (\n").contains("punctuation-only"), "an opening mark with no word after it");
+    assert!(err("\\c 1\n\\v 1\n\\v 2 x\n").contains("empty verse"), "a bare `\\v` line no line fills");
     assert!(err("\\c 1\n\\v 1 \\add x\n").contains("unclosed"));
     assert!(err("\\c 1\n\\v 1\n").contains("empty verse"));
     assert!(err("\\c 1\n\\v 1 x- y\n").contains("hyphen before a space"));
     assert!(err("\\c 1\n\\v 1 x y-\n").contains("hyphen at the end"));
     assert!(err("\\c 1\n\\v 1 x -;\n").contains("punctuation-only"));
     assert!(err("\\c 1\n\\v 1 x\n\\d late title\n").contains("precede verse 1"));
+}
+
+/// The NET's export: spaces inside punctuation, spaced dashes, a verse whose text starts on the next line,
+/// placeholders for omitted verses, small capitals.
+#[test]
+fn net_shapes() {
+    let t = synth(concat!(
+        "\\c 1\n\\p\n",
+        "\\v 1 – a – b ( c ) , d\n\\p (\n",
+        "\\v 2 \\f + \\fr 1:2 \\ft [[EMPTY]]\\f*\n",
+        "\\v 3\n\\p e \\sc Lord\\sc*\\sc !’\\sc* \\qt f \\bd g\\bd*\\qt* “ h\n",
+        "\\v 4 \\f + \\fr 1:4 \\ft [[EMPTY]]\\f*\n",
+    ))
+    .unwrap();
+    assert_eq!(t.words, ["– a –", "b", "(c),", "d", "(e", "Lord!’", "f", "g", "“h"]);
+    let at = |v, w| make_ord(2, 1, v, w);
+    assert_eq!(t.slot_words, [0, 4, 0, 5], "verse 2 omitted, verse 3 from the line after it, no slot for verse 4");
+    assert_eq!(t.book_end, [at(3, 5)]);
+    assert_eq!(t.breaks, [(at(1, 0), "p"), (at(3, 0), "p"), (at(3, 0), "p")].map(|(o, k)| (o, k.to_string())));
+    assert!(t.notes.is_empty(), "a placeholder is no note");
+    assert_eq!(
+        (t.flags[4], t.flags[5], t.flags[6], t.flags[7]),
+        (0, 2, 0, 0),
+        "\\sc is a divine name; \\qt, \\bd set none"
+    );
+}
+
+#[test]
+fn fixes_apply_exactly_once() {
+    let dir = scratch_dir();
+    fs::write(dir.join("02-TST.usfm"), "\\id TST\n\\c 1\n\\v 1 c\n\\s1 Head a b\n").unwrap();
+    let fix = |from| Fix { file: "02-TST", from, to: "Head\n\\p a", why: "test" };
+    let t = build(&dir, &[fix("Head a")]).unwrap();
+    assert_eq!(t.words, ["c", "a", "b"]);
+    assert_eq!(t.headings[0].text, "Head");
+    assert!(build(&dir, &[fix("Nowhere")]).unwrap_err().contains("no longer matches"));
+    assert!(build(&dir, &[fix("a")]).unwrap_err().contains("no longer matches"), "more than once");
 }
 
 /// A synthetic book body with `n` one-word chapters.

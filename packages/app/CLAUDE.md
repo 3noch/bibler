@@ -11,7 +11,9 @@
   step (`store.paint/erase/eraseAll` take a list of intervals).
 - Top bar (must fit a 320px phone): menu button, location field (shows "Psalm 23"; click/`/` to type a ref; at rest
   it is styled as a field with a magnifier, outline and `/` hint because a bare label didn't read as editable; the
-  translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins), sync
+  translation's abbreviation sits at its right end only when the full chapter name fits beside it: the chapter wins;
+  except for a text with a `link` (the NET, whose terms require "NET" shown, linked to netbible.org): its
+  abbreviation always shows, as that link in a new tab, and the chapter name shortens instead), sync
   dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
   side panel, no help text.
 - **Screen kept on while reading** (2026-11-02, the user's ask; `wake.ts`): the Screen Wake Lock API (Chrome, Edge,

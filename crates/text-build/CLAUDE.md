@@ -40,5 +40,15 @@ displayed text equals v1's token stream book by book.
   `\s2 \r \ms1 \mr \qa`, `\it`); word attributes stripped from heading text; an empty `\d` ignored. Its source has
   typos we keep verbatim (Psalm 3's title "A Psalms of David"). Mutation-checked (8/8: empty slots, break and
   heading anchors, footnote glue, verse-opening punctuation, numerals, `\it`, heading attributes).
+- NET `net-2026-v1` (2026-11-07): eBible.org `engnet`, vendored verbatim in `data/source/engnet/`; 753,329
+  tokens, 32,290 slots (2 Corinthians ends at 13:13, the KJV's 13:14; the BSB's 16 omitted verses are `[[EMPTY]]`
+  placeholder notes there, empty slots here). Its export needed: spaced dashes kept with a word (`land –`, `– just`),
+  stray spaces inside punctuation closed up (`happened )`, `‘ Man`; an opening mark may carry to the next verse),
+  `\v` lines whose text starts on the next line, `\sc` (divine name), `\bd`/`\qt` (no flag), `\pi1`, `\ms2`, empty
+  headings skipped, labelled notes (`\fl`), and one source `Fix` (Ecclesiastes 2:1's words on its heading's line).
+  None changes a KJV or BSB ordinal (their goldens are unchanged). Checked against helloao.org's independent
+  conversion of the same text: 31,001 of 31,102 verses identical, 68 differ only in those closed-up spaces, the
+  rest are their headings inlined in verses (and the 2 Kings 14:14/15 parenthesis). Its notes are found but not
+  published (`Source.notes`), and `Source.link` makes the reader show "NET" linked to netbible.org.
 - Adding another eBible.org text: vendor it with a `SOURCE.md`, add a `Source`, run `text-build --id <id>
   --write-golden`, and expect new markers or punctuation cases to fail the build first (that is the point).

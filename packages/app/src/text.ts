@@ -29,6 +29,9 @@ export interface TextInfo {
   rights: string;
   /** Set when its license limits how much may be shown at once: read a page at a time, online only. */
   limits?: Limits;
+  /** The publisher's page its name must link to (the NET's terms); such a text always shows its abbreviation at the
+   *  top of the reader, linked there. */
+  link?: string;
 }
 
 const storageGet = (k: string) => {
@@ -118,6 +121,7 @@ interface Manifest {
   name: string;
   rights: string;
   limits?: Limits;
+  link?: string;
   index: string;
   books: ManifestBook[];
 }
@@ -192,7 +196,7 @@ export function loadText(id: string): Promise<Text> {
     p = (async () => {
       const manifest = (await (await fetchOk(base + "manifest.json")).json()) as Manifest;
       const index = new TextIndex(await (await fetchOk(base + manifest.index)).arrayBuffer());
-      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights, limits: manifest.limits };
+      const info = { id, abbr: manifest.abbr, name: manifest.name, rights: manifest.rights, limits: manifest.limits, link: manifest.link };
       return { id, info, manifest, index };
     })();
     p.catch(() => texts.delete(id));
