@@ -12,14 +12,33 @@ export function memberName(m: Member | undefined): string {
   return m?.name ?? m?.email ?? "Anonymous";
 }
 
-/** The open group, named in the top bar (nothing in your own space): painting there is seen by its members. */
+/** Up to two letters for a group: the first of its first two words ("Bible Study" -> "BS"), else its first two
+ *  ("Smiths" -> "Sm"). */
+export function groupInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return words.slice(0, 2).map((w) => [...w][0]!.toUpperCase()).join("");
+  const [a = "?", b = ""] = [...(words[0] ?? "")];
+  return a.toUpperCase() + b.toLowerCase();
+}
+
+/** The open group, named in the top bar (nothing in your own space): painting there is seen by its members. On a
+ *  phone it is a fixed-size circle with the group's initials, so a long name doesn't take the search box's room. */
 export function SpaceButton(props: { store: TagStore; open: boolean; onToggle: () => void }) {
   return (
     <Show when={props.store.group()}>
       {(g) => (
-        <button class="space-btn group" classList={{ on: props.open }} onClick={props.onToggle} title={`Group: ${g().name}`} aria-label={`Group: ${g().name}`}>
+        <button
+          class="space-btn group"
+          classList={{ on: props.open, ro: props.store.readOnly() }}
+          onClick={props.onToggle}
+          title={`Group: ${g().name}${props.store.readOnly() ? " (view only)" : ""}`}
+          aria-label={`Group: ${g().name}`}
+        >
           <GroupIcon />
           <span class="space-name">{g().name}</span>
+          <span class="space-initials" aria-hidden="true">
+            {groupInitials(g().name)}
+          </span>
           <Show when={props.store.readOnly()}>
             <span class="ro-badge">view only</span>
           </Show>

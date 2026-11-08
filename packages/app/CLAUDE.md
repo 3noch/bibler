@@ -15,7 +15,9 @@
   except for a text with a `link` (the NET, whose terms require "NET" shown, linked to netbible.org): its
   abbreviation always shows, as that link in a new tab, and the chapter name shortens instead; browser-checked
   2026-11-07 with a narrowed field: "1 Thess 5" + NET), sync
-  dot (text only when offline), and the open group's name (only in a group; opens the spaces card). No permanent
+  dot (text only when offline), and the open group's name (only in a group; opens the spaces card; at <= 560px
+  a fixed 32px circle with its initials instead, `groupInitials`: "Wednesday Bible Study" -> "WB", "Smiths" ->
+  "Sm", dashed when view only; 2026-11-07, the user: a long name took the phone's room). No permanent
   side panel, no help text.
 - **Screen kept on while reading** (2026-11-02, the user's ask; `wake.ts`): the Screen Wake Lock API (Chrome, Edge,
   Safari 16.4+), held while the page is visible, let go 5 min after the last scroll/tap/key so a phone put down still

@@ -592,6 +592,7 @@ button.google:hover, button.secondary:hover { background: color-mix(in srgb, var
 .space-btn.group { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .space-btn.on, .space-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; }
+.space-initials { display: none; }
 .ro-badge { font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
 .spaces { max-height: calc(100dvh - var(--bar) - 32px); overflow-y: auto; }
 .spaces h2 { margin: 0 28px 8px 0; font-size: 1rem; }
@@ -620,7 +621,11 @@ button.google:hover, button.secondary:hover { background: color-mix(in srgb, var
 /* Narrow top bar: the search box keeps most of the room. */
 @media (max-width: 560px) {
   .local-text, .space-btn .ro-badge { display: none; }
-  .space-btn { max-width: 7.5rem; }
+  /* The open group as a fixed-size circle with its initials (dashed when view only). */
+  .space-btn.group { flex: none; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 50%; }
+  .space-btn.group svg, .space-btn.group .space-name { display: none; }
+  .space-btn.group .space-initials { display: inline; font: 700 0.8rem var(--sans); letter-spacing: 0.02em; }
+  .space-btn.group.ro { background: transparent; border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent); }
   .omnibox { min-width: 9rem; }
 }
 
