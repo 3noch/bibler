@@ -149,18 +149,16 @@ function Texts(props: { texts: TextInfo[]; text: TextInfo; onText: (id: string) 
                 <span class="muted rights">
                   <WithLinks text={t.rights} />
                 </span>
-                <Show when={t.no_notes}>
-                  <span class="muted text-access">Without the translators’ notes (its license)</span>
-                </Show>
                 <span class="muted text-access">
                   {t.limits ? <CloudIcon /> : <OfflineIcon />}
-                  {t.limits ? "Online only, a page at a time (its license)" : "Can be read offline"}
+                  {t.limits ? "Online, a page at a time" : "Works offline"}
+                  {t.no_notes ? " · No notes" : ""}
                 </span>
               </li>
             )}
           </For>
         </ul>
-        <p class="muted texts-note">Tags show in the translation they were made in.</p>
+        <p class="muted texts-note">Tags stay with their translation.</p>
       </Show>
     </nav>
   );

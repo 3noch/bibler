@@ -41,7 +41,7 @@
   `prefers-reduced-motion`. A reading setting under Aa ("Scroll" / "Chapter by chapter", per device) and always on for a
   limited text, whose pages come from `/api/text/<id>/page` (`loadPage`, never cached), whose license line ends each
   page, and whose snippets in lists show only the place ("Tap to read it on its page"): showing many places' words
-  at once would break its limits. The menu marks each translation "Can be read offline" or "Online only, a page at a
+  at once would break its limits. The menu marks each translation "Works offline" or "Online, a page at a
   time"; limited texts aren't kept offline and aren't offered in the offline-only build. Browser-checked (BSB-R John 3
   and Jude's three parts, only manifest/index/page requests, the KJV switched both ways, run-outs down and up with
   the shared verse kept in place within a few px). Not yet: a real trackpad or phone.
@@ -61,8 +61,8 @@
   or who you are + sign out; only when the server offers sign-in), space row (opens the spaces card),
   translation (collapsed; the texts on offer with their rights lines, and a note that tags show in the
   translation they were made in; a row's button covers it (`.text-pick::after`) so links can sit inside it: web
-  addresses in a rights line, and the abbreviation of a text with a `link` (the NET's, to netbible.org); a text with `no_notes` says "Without the
-  translators’ notes (its license)"), recent reading (collapsed; see below), contents. **Text font and size**
+  addresses in a rights line, and the abbreviation of a text with a `link` (the NET's, to netbible.org); a text with `no_notes` adds "· No notes" to its
+  "Works offline" line), recent reading (collapsed; see below), contents. **Text font and size**
   (2026-10-31, `reading.ts`: font Serif/Book/Sans, all system stacks
   so nothing downloads; size 80-190% in steps, the percentage resets to 100%; per device in localStorage
   `bible-tags/reading/v1`, decided with the user: not per account, group or translation, since the right size
