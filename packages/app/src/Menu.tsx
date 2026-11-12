@@ -96,7 +96,17 @@ export function Menu(props: {
 
 /** "Genesis 12:3–15:4": from where the entry's sitting began to where it got (or one verse). */
 function span(ix: TextIndex, e: HistoryEntry): string {
-  const [a, b] = [ix.slotOf(Math.min(e.anchor.ord, e.last.ord)), ix.slotOf(Math.max(e.anchor.ord, e.last.ord))];
+  let [a, b] = [ix.slotOf(Math.min(e.anchor.ord, e.last.ord)), ix.slotOf(Math.max(e.anchor.ord, e.last.ord))];
+  // A Psalm's title is where a jump to its chapter lands, or the top of the next chapter scrolling stopped at: neither
+  // is worth naming ("Psalm 69:title–34"). Read as verse 1 / the verse before, unless the span covers whole chapters.
+  const isTitle = (s: number) => ix.locateSlot(s).verse === 0;
+  const chapterEnds = (s: number) => s + 1 === ix.slots || ix.chapterOfVerse[s + 1] !== ix.chapterOfVerse[s];
+  if (b > a && isTitle(b)) b--;
+  if (b > a && isTitle(a) && !chapterEnds(b)) a++;
+  if (b === a && isTitle(a)) {
+    const l = ix.locateSlot(a);
+    return formatInterval(ix, ix.chapterInterval(l.book, l.chapter));
+  }
   return formatInterval(ix, [ix.verseStart[a]!, ix.slotEnd(b)]);
 }
 
